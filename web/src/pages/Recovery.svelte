@@ -97,7 +97,7 @@
 
 <div>
   <div class="mb-8">
-    <h1 class="text-2xl font-bold text-text">Recovery Guide</h1>
+    <h1 class="text-2xl font-bold text-text">Disaster Recovery</h1>
     <p class="text-sm text-text-muted mt-1">Your disaster recovery plan – what to do if your server dies.</p>
   </div>
 

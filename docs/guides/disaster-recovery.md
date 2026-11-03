@@ -6,7 +6,7 @@ a failed boot drive, a rebuilt array, or a full Unraid reinstall.
 ## The short version
 
 1. Reinstall Unraid and the Vault plugin.
-2. Open Vault and choose **Recover from a backup** (or Recovery → **Recover Vault**).
+2. Open Vault and choose **Recover from a backup** (or **Disaster Recovery** → **Recover Vault**).
 3. Reconnect the storage that holds your backups, enter your backup password,
    and restore your settings.
 4. Fix any folder paths that changed, then restore your data from the Restore page.
@@ -44,7 +44,7 @@ the `restore-db` API), which validates the backup and swaps it in atomically.
 
 ## Recovering with the wizard
 
-Open the **Recovery** page and click **Recover Vault** (or choose **Recover
+Open the **Disaster Recovery** page and click **Recover Vault** (or choose **Recover
 from a backup** on first run) to start the wizard. It is available any time —
 not just on a fresh install. Keep in mind that restoring **replaces** the
 jobs and storage destinations currently on this Vault; on a configured system

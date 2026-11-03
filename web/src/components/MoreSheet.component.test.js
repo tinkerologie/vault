@@ -8,7 +8,7 @@ import MoreSheet from './MoreSheet.svelte'
 
 const items = [
   { path: '/storage', label: 'Storage', icon: 'M0', section: 'Protect' },
-  { path: '/recovery', label: 'Recovery', icon: 'M0', section: 'Recover' },
+  { path: '/recovery', label: 'Disaster Recovery', icon: 'M0', section: 'Recover' },
   { path: '/logs', label: 'Logs', icon: 'M0', section: 'System' },
   { path: '/docs-external', label: 'Documentation', icon: 'M0', section: 'System', external: true, href: 'https://example.test/docs' },
 ]
@@ -57,7 +57,7 @@ describe('MoreSheet', () => {
     const docs = within(nav).getByRole('link', { name: 'Documentation (opens in a new tab)' })
     expect(docs.getAttribute('href')).toBe('https://example.test/docs')
     expect(docs.getAttribute('target')).toBe('_blank')
-    expect(nav.textContent).toMatch(/Protect\s*Storage\s*Recover\s*Recovery\s*System\s*Logs\s*Documentation/)
+    expect(nav.textContent).toMatch(/Protect\s*Storage\s*Recover\s*Disaster Recovery\s*System\s*Logs\s*Documentation/)
   })
 
   it('moves focus to the first entry', async () => {
@@ -73,7 +73,7 @@ describe('MoreSheet', () => {
 
   it('marks Recovery while the recover wizard is open', async () => {
     await open({ route: '/recover' })
-    expect(dialog().querySelector('[aria-current="page"]').textContent.trim()).toBe('Recovery')
+    expect(dialog().querySelector('[aria-current="page"]').textContent.trim()).toBe('Disaster Recovery')
   })
 
   it('closes when any entry is chosen', async () => {

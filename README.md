@@ -46,7 +46,7 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 
 **Web UI**
 
-- Dashboard, Jobs, Restore, Storage, History, Replication, Recovery, Logs, Settings
+- Dashboard, Jobs, Storage, Replication, Restore, History, Disaster Recovery, Logs, Settings
 - Live WebSocket progress streaming and runner queue visibility
 - Light/dark themes with mobile-responsive layout
 - Recovery plan that explains how to rebuild from scratch

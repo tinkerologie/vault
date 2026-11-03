@@ -11,7 +11,7 @@ describe('pageTitle', () => {
 
   it('names the page', () => {
     expect(pageTitle('/jobs')).toBe('Backup Jobs – Vault')
-    expect(pageTitle('/recovery')).toBe('Recovery Guide – Vault')
+    expect(pageTitle('/recovery')).toBe('Disaster Recovery – Vault')
     expect(pageTitle('/recover')).toBe('Recover Vault – Vault')
   })
 

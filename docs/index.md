@@ -12,7 +12,7 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 - **Send backups anywhere** — local disk, SFTP, SMB, NFS, WebDAV, or S3-compatible object storage, with per-destination bandwidth throttling.
 - **Choose a strategy** — full, incremental, and differential chains with simple-count or Long-Term Retention.
 - **Stay safe** — backups encrypted with your backup password (age encryption — a modern, audited standard), content-defined deduplication, and per-run SHA-256 verification.
-- **Monitor in real time** — live WebSocket progress streaming across Dashboard, Jobs, Restore, Storage, History, Replication, Recovery, Logs, and Settings pages.
+- **Monitor in real time** — live WebSocket progress streaming across Dashboard, Jobs, Storage, Replication, Restore, History, Disaster Recovery, Logs, and Settings pages.
 
 See [How Backup Works](how-backup-works.md) for the concepts behind these features.
 

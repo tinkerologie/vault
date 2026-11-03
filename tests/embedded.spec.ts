@@ -24,10 +24,10 @@ const REPLICATION_SOURCES = [{ id: 1, name: 'Primary Tower', url: 'http://tower.
 const PAGES = [
   { label: 'Jobs', hash: '#/jobs', heading: 'Backup Jobs', daemonOnly: true },
   { label: 'Storage', hash: '#/storage', heading: 'Storage Destinations' },
+  { label: 'Replication', hash: '#/replication', heading: 'Replication' },
   { label: 'Restore', hash: '#/restore', heading: 'Restore', daemonOnly: true },
   { label: 'History', hash: '#/history', heading: 'Backup & Restore History' },
-  { label: 'Recovery', hash: '#/recovery', heading: 'Recovery Guide', daemonOnly: true },
-  { label: 'Replication', hash: '#/replication', heading: 'Replication' },
+  { label: 'Disaster Recovery', hash: '#/recovery', heading: 'Disaster Recovery', daemonOnly: true },
   { label: 'Logs', hash: '#/logs', heading: 'Logs' },
   { label: 'Anomalies', hash: '#/anomalies', heading: 'Anomalies' },
   { label: 'Settings', hash: '#/settings', heading: 'Settings' },
