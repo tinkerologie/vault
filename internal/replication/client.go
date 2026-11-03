@@ -160,22 +160,6 @@ type RemoteRestorePoint struct {
 	CreatedAt  string `json:"created_at"`
 }
 
-// RemoteStorage mirrors the fields of a remote storage destination that
-// replication needs.
-type RemoteStorage struct {
-	ID           int64 `json:"id"`
-	DedupEnabled bool  `json:"dedup_enabled"`
-}
-
-// GetStorage returns a storage destination on the remote Vault instance.
-func (c *Client) GetStorage(storageID int64) (*RemoteStorage, error) {
-	var dest RemoteStorage
-	if err := c.getJSON(fmt.Sprintf("/api/v1/storage/%d", storageID), &dest); err != nil {
-		return nil, fmt.Errorf("get remote storage %d: %w", storageID, err)
-	}
-	return &dest, nil
-}
-
 // HealthResponse represents the remote /health endpoint response.
 type HealthResponse struct {
 	Status  string `json:"status"`

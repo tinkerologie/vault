@@ -409,19 +409,21 @@ func TestSyncSourceAdoptDestinationFails585(t *testing.T) {
 	}
 }
 
-// A deduplicated restore point is refused before anything is downloaded: its
-// data lives in the peer's _vault/packs, which replication does not copy, so
-// the replica could not restore it.
-func TestSyncSourceRefusesDedupPoints585(t *testing.T) {
+// A restore point whose data is in the dedup chunk store is refused before
+// anything is downloaded: replication does not copy the peer's _vault/packs,
+// so the replica could not restore it. A dedup destination alone is not a
+// reason: VM and ZFS backups there are written the classic way and replicate.
+func TestSyncSourceDedupPoints585(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name      string
-		rp        RemoteRestorePoint
-		dedupDest bool
+		name    string
+		rp      RemoteRestorePoint
+		refused bool
 	}{
-		{"item manifests", RemoteRestorePoint{ID: 1, BackupType: "full", StoragePath: "J/run1", Metadata: `{"items":1,"item_manifests":{"src":"ab"}}`}, false},
-		{"manifest id", RemoteRestorePoint{ID: 1, BackupType: "full", StoragePath: "J/run1", ManifestID: []byte{1, 2}}, false},
-		{"dedup destination", RemoteRestorePoint{ID: 1, BackupType: "full", StoragePath: "J/run1", Metadata: `{"items":1}`}, true},
+		{"dedup container", RemoteRestorePoint{ID: 1, BackupType: "full", StoragePath: "J/run1", Metadata: `{"items":1,"item_manifests":{"plex":"ab12"}}`}, true},
+		{"manifest id", RemoteRestorePoint{ID: 1, BackupType: "full", StoragePath: "J/run1", ManifestID: []byte{1, 2}}, true},
+		{"classic VM on a dedup destination", RemoteRestorePoint{ID: 1, BackupType: "full", StoragePath: "J/run1", Metadata: `{"items":1,"vm_checkpoints":{"win11":"c1"}}`}, false},
+		{"classic ZFS on a dedup destination", RemoteRestorePoint{ID: 1, BackupType: "full", StoragePath: "J/run1", Metadata: `{"items":1,"zfs_snapshots":{"tank/data":"s1"},"item_manifests":{"tank/data":""}}`}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -435,7 +437,9 @@ func TestSyncSourceRefusesDedupPoints585(t *testing.T) {
 				case "/api/v1/jobs/5/restore-points":
 					_ = json.NewEncoder(w).Encode([]RemoteRestorePoint{tc.rp})
 				case "/api/v1/storage/9":
-					_ = json.NewEncoder(w).Encode(RemoteStorage{ID: 9, DedupEnabled: tc.dedupDest})
+					// Every case sits on a dedup destination; only the
+					// point's own data may decide.
+					_ = json.NewEncoder(w).Encode(map[string]any{"id": 9, "dedup_enabled": true})
 				case "/api/v1/storage/9/list":
 					lists.Add(1)
 					_ = json.NewEncoder(w).Encode([]StorageFile{{Name: "f", Path: "J/run1/f", Size: 1}})
@@ -453,8 +457,18 @@ func TestSyncSourceRefusesDedupPoints585(t *testing.T) {
 			srcID, _ := d.CreateReplicationSource(db.ReplicationSource{Name: "P", URL: srv.URL, StorageDestID: destID})
 
 			res, err := NewSyncer(d, nil).SyncSource(srcID, nil)
-			if err != nil || res.JobsFailed != 1 || res.RestorePointsNew != 0 {
-				t.Fatalf("SyncSource = %+v, %v; want the point failed", res, err)
+			if err != nil {
+				t.Fatal(err)
+			}
+			src, _ := d.GetReplicationSource(srcID)
+			if !tc.refused {
+				if res.RestorePointsNew != 1 || res.JobsFailed != 0 || src.LastSyncStatus != "success" || downloads.Load() != 1 {
+					t.Fatalf("classic point: result %+v, status %q, downloads %d; want it replicated", res, src.LastSyncStatus, downloads.Load())
+				}
+				return
+			}
+			if res.JobsFailed != 1 || res.RestorePointsNew != 0 || src.LastSyncStatus != "failed" {
+				t.Fatalf("result %+v, status %q; want the point failed", res, src.LastSyncStatus)
 			}
 			if lists.Load()+downloads.Load() != 0 {
 				t.Errorf("listed %d and downloaded %d for a refused point", lists.Load(), downloads.Load())
@@ -465,12 +479,9 @@ func TestSyncSourceRefusesDedupPoints585(t *testing.T) {
 			if entries, _ := os.ReadDir(storageDir); len(entries) != 0 {
 				t.Errorf("files left on the replica: %v", entries)
 			}
-			if src, _ := d.GetReplicationSource(srcID); src.LastSyncStatus != "failed" {
-				t.Errorf("status = %q, want failed", src.LastSyncStatus)
-			}
 		})
 	}
-	if err := dedupUnsupported(RemoteRestorePoint{Metadata: `{"item_manifests":{"a":"b"}}`}, false); !errors.Is(err, errDedupUnsupported) || !strings.Contains(err.Error(), "deduplicated backups isn't supported yet") {
+	if err := dedupUnsupported(RemoteRestorePoint{Metadata: `{"item_manifests":{"a":"b"}}`}); !errors.Is(err, errDedupUnsupported) || !strings.Contains(err.Error(), "deduplicated backups isn't supported yet") {
 		t.Errorf("reason = %v", err)
 	}
 }

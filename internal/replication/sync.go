@@ -405,7 +405,6 @@ func (s *Syncer) syncJob(
 	var firstErr error
 	var totalBytes int64
 	var peerRuns map[int64]RemoteRun
-	var peerDedup bool
 
 	// Parents first, so an incremental or differential point can be linked to
 	// the local copy of the backup it builds on.
@@ -417,10 +416,9 @@ func (s *Syncer) syncJob(
 
 		if peerRuns == nil {
 			peerRuns = s.peerRuns(client, src.Name, rj)
-			peerDedup = s.peerDedupDestination(client, src.Name, rj)
 		}
 		// Checked before downloading, so a refused point leaves no files.
-		err := dedupUnsupported(rrp, peerDedup)
+		err := dedupUnsupported(rrp)
 		var parentID, rpID, bytes int64
 		if err == nil {
 			parentID, err = localParent(rrp, remoteByID, localIDs, normPath)
@@ -476,27 +474,22 @@ func (s *Syncer) peerRuns(client *Client, sourceName string, rj RemoteJob) map[i
 // restore it.
 var errDedupUnsupported = errors.New("replication of deduplicated backups isn't supported yet: their data is in the peer's _vault/packs, which replication doesn't copy")
 
-// peerDedupDestination reports whether the remote job writes to a
-// deduplicated destination on the peer. When the peer cannot say, each
-// restore point's own metadata still decides.
-func (s *Syncer) peerDedupDestination(client *Client, sourceName string, rj RemoteJob) bool {
-	dest, err := client.GetStorage(rj.StorageDestID)
-	if err != nil {
-		logx.Warnf("replication: storage destination of %q from %q unavailable, checking each restore point for deduplication instead: %v", rj.Name, sourceName, err)
-		return false
-	}
-	return dest.DedupEnabled
-}
-
-// dedupUnsupported returns errDedupUnsupported for a deduplicated restore
-// point: one on a dedup destination, or one whose metadata or row names dedup
-// manifests.
-func dedupUnsupported(rrp RemoteRestorePoint, dedupDestination bool) error {
+// dedupUnsupported returns errDedupUnsupported for a restore point whose
+// data is in the dedup chunk store: one whose metadata maps an item to a dedup
+// manifest ID, or whose row carries a manifest ID, the same signals restore
+// uses to choose the dedup reader. A dedup destination alone says nothing:
+// VM and ZFS backups are written the classic way there and replicate fine.
+func dedupUnsupported(rrp RemoteRestorePoint) error {
 	var meta struct {
 		ItemManifests map[string]any `json:"item_manifests"`
 	}
 	_ = json.Unmarshal([]byte(rrp.Metadata), &meta)
-	if dedupDestination || len(meta.ItemManifests) > 0 || len(rrp.ManifestID) > 0 {
+	for _, id := range meta.ItemManifests {
+		if hexID, ok := id.(string); ok && hexID != "" {
+			return errDedupUnsupported
+		}
+	}
+	if len(rrp.ManifestID) > 0 {
 		return errDedupUnsupported
 	}
 	return nil
