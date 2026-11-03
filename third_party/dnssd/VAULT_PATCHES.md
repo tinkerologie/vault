@@ -64,6 +64,12 @@ minimum version selection, so this changes only standalone builds and scans of
 this module. Dependabot and `make security-check` cover this module directly.
 Keep these requirements when re-syncing from upstream.
 
+The root module uses this copy through `replace`, so a dependency bump here can
+change the root `go.mod` and `go.sum`. Run `go mod tidy` in the root and commit
+the result in the same pull request. A Dependabot bump can't do that, so if its
+`Test` job fails with "updates to go.mod needed", add the root update to its
+branch rather than merging it as it is.
+
 ## Adding a patch
 
 Keep each patch small, mark it with a `Vault patch` comment, add a test in a
