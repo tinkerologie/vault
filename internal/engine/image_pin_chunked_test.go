@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -127,5 +128,198 @@ func TestBackupChunkedRecordsTheRunningImage(t *testing.T) {
 	}
 	if !strings.Contains(string(body), pinDigest) || !strings.Contains(string(body), `"nginx:1"`) {
 		t.Fatalf("image_meta = %s (inspected %v)", body, inspected)
+	}
+}
+
+// Issue #599: a chunked restore that fails after pinning puts the tag back on
+// the image it named before, and leaves Unraid's update badge alone.
+func TestFailedChunkedRestorePutsTheTagBack(t *testing.T) {
+	const before = `{"library/nginx:1":{"local":"sha256:prev","remote":"sha256:prev","status":"true"}}`
+	content := before
+	statusPath := withUpdateStatusPath458(t, &content)
+	repo, id := chunkedImageFixture(t, false)
+	r := newImageRegistry()
+	r.tags["nginx:1"] = "new-image"
+	r.remote[pinRef] = "old-image"
+	r.containerCreate = func(context.Context, client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+		if r.tags["nginx:1"] != "old-image" {
+			t.Errorf("created while the tag named %q", r.tags["nginx:1"])
+		}
+		return client.ContainerCreateResult{}, errFake458
+	}
+	ctx := WithRestoreTrust(t.Context(), RestoreTrust{ArtifactTrusted: true})
+	if err := (&ContainerHandler{cli: r}).RestoreChunked(ctx, BackupItem{Name: "web"}, repo, id, "", noopProgress); err == nil {
+		t.Fatal("restore succeeded")
+	}
+	if got := r.tags["nginx:1"]; got != "new-image" {
+		t.Errorf("tag left on %q after a failed restore", got)
+	}
+	if got := readFile458(t, statusPath); got != before {
+		t.Errorf("update status changed by a failed restore: %s", got)
+	}
+}
+
+// A pin whose own check fails after moving the tag puts it back before the
+// restore goes on, so an approved override does not run the backup-time image.
+func TestFailedPinCheckPutsTheTagBack(t *testing.T) {
+	r := newImageRegistry()
+	r.tags["nginx:1"] = "new-image"
+	r.tags[pinRef] = "old-image"
+	f := &tagLandsElsewhere{imageRegistry: r}
+	if err := pinBackupImage(t.Context(), f, "nginx:1", pinRef); err == nil || !strings.Contains(err.Error(), "backup-time image") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := r.tags["nginx:1"]; got != "new-image" {
+		t.Errorf("tag left on %q after a failed pin", got)
+	}
+	// A failure to put it back is logged, not raised over the pin error.
+	r.tagErr = errFake458
+	restoreImageTag(t.Context(), r, "nginx:1", "new-image")
+	if tagTarget(t.Context(), r, "nginx@"+pinDigest) != "" || tagTarget(t.Context(), r, "NOT A REF") != "" || tagTarget(t.Context(), r, "missing:1") != "" {
+		t.Error("tagTarget named an image for a digest, bad or missing reference")
+	}
+}
+
+// tagLandsElsewhere moves the tag to the digest's image somewhere other than
+// the pinned one on the first request, then behaves normally.
+type tagLandsElsewhere struct {
+	*imageRegistry
+	moved bool
+}
+
+func (s *tagLandsElsewhere) ImageTag(ctx context.Context, o client.ImageTagOptions) (client.ImageTagResult, error) {
+	if !s.moved {
+		s.moved = true
+		s.tags[o.Target] = "elsewhere"
+		return client.ImageTagResult{}, nil
+	}
+	return s.imageRegistry.ImageTag(ctx, o)
+}
+
+// Issue #599: after a chunked restore, Unraid's update-status cache names the
+// digest of the image the container runs, not the backup-time one.
+func TestChunkedRestoreSeedsTheRunningDigest(t *testing.T) {
+	const current = "sha256:" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	cases := []struct {
+		name      string
+		pinned    bool
+		tagDigest []string
+		want      any
+	}{
+		{name: "pinned", pinned: true, want: pinDigest},
+		{name: "override keeps the current tag", tagDigest: []string{"other/repo@" + pinDigest, "nginx@" + current}, want: current},
+		{name: "override with no digest for the tag", want: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			content := `{"library/nginx:1":{"local":"sha256:stale","remote":"` + current + `","status":"false"}}`
+			statusPath := withUpdateStatusPath458(t, &content)
+			repo, id := chunkedImageFixture(t, false)
+			r := newImageRegistry()
+			r.tags["nginx:1"] = "current-image"
+			ctx := WithRestoreTrust(t.Context(), RestoreTrust{ArtifactTrusted: true, AllowUnpinnedImage: true})
+			if tc.pinned {
+				r.remote[pinRef] = "old-image"
+			} else {
+				// The backup-time digest cannot be reached, nor the registry.
+				r.pullErr = errFake458
+			}
+			base := r.imageInspect
+			r.imageInspect = func(ctx context.Context, ref string) (client.ImageInspectResult, error) {
+				res, err := base(ctx, ref)
+				if ref == "nginx:1" && !tc.pinned {
+					res.RepoDigests = tc.tagDigest
+				}
+				return res, err
+			}
+			r.containerCreate = func(context.Context, client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+				return client.ContainerCreateResult{ID: "c1"}, nil
+			}
+			if err := (&ContainerHandler{cli: r}).RestoreChunked(ctx, BackupItem{Name: "web"}, repo, id, "", noopProgress); err != nil {
+				t.Fatal(err)
+			}
+			entry := readStatus458(t, statusPath)["library/nginx:1"]
+			if entry["local"] != tc.want {
+				t.Errorf("local = %v, want %v", entry["local"], tc.want)
+			}
+			wantStatus := "false"
+			if tc.want == current {
+				wantStatus = "true"
+			} else if tc.want == nil {
+				wantStatus = "undef"
+			}
+			if entry["status"] != wantStatus {
+				t.Errorf("status = %v, want %s", entry["status"], wantStatus)
+			}
+		})
+	}
+}
+
+// Issue #601: a restore reports that its approval checks are settled only once
+// it is past them, never when it was refused for want of approval.
+func TestRestoreReportsApprovalsSettledOnlyAfterTheGates(t *testing.T) {
+	settledCtx := func(t *testing.T, trust RestoreTrust) (context.Context, *bool) {
+		t.Helper()
+		settled := new(bool)
+		return WithApprovalsSettled(WithRestoreTrust(t.Context(), trust), func() { *settled = true }), settled
+	}
+	t.Run("chunked refusal for an unavailable digest", func(t *testing.T) {
+		repo, id := chunkedImageFixture(t, false)
+		r := newImageRegistry()
+		r.pullErr = errFake458
+		ctx, settled := settledCtx(t, RestoreTrust{ArtifactTrusted: true})
+		err := (&ContainerHandler{cli: r}).RestoreChunked(ctx, BackupItem{Name: "web"}, repo, id, "", noopProgress)
+		if !errors.Is(err, ErrRestoreNeedsApproval) || *settled {
+			t.Fatalf("err = %v, settled = %v", err, *settled)
+		}
+	})
+	t.Run("chunked refusal for host privileges", func(t *testing.T) {
+		repo, id := chunkedImageFixture(t, true)
+		ctx, settled := settledCtx(t, RestoreTrust{})
+		err := (&ContainerHandler{cli: newImageRegistry()}).RestoreChunked(ctx, BackupItem{Name: "web"}, repo, id, "", noopProgress)
+		if !errors.Is(err, ErrRestoreNeedsApproval) || *settled {
+			t.Fatalf("err = %v, settled = %v", err, *settled)
+		}
+	})
+	t.Run("classic refusal for host privileges", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile458(t, filepath.Join(dir, "image.tar"), "x")
+		writeFile458(t, filepath.Join(dir, "config.json"), `{"Name":"/x","Config":{"Image":"a:1"},"HostConfig":{"Privileged":true}}`)
+		ctx, settled := settledCtx(t, RestoreTrust{})
+		err := (&ContainerHandler{cli: &fakeDocker458{}}).Restore(ctx, BackupItem{Name: "x"}, dir, noopProgress)
+		if !errors.Is(err, ErrRestoreNeedsApproval) || *settled {
+			t.Fatalf("err = %v, settled = %v", err, *settled)
+		}
+	})
+	t.Run("chunked restore past the gates", func(t *testing.T) {
+		repo, id := chunkedImageFixture(t, false)
+		r := newImageRegistry()
+		r.remote[pinRef] = "old-image"
+		ctx, settled := settledCtx(t, RestoreTrust{ArtifactTrusted: true})
+		var settledAtCreate bool
+		r.containerCreate = func(context.Context, client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+			settledAtCreate = *settled
+			return client.ContainerCreateResult{ID: "c1"}, nil
+		}
+		if err := (&ContainerHandler{cli: r}).RestoreChunked(ctx, BackupItem{Name: "web"}, repo, id, "", noopProgress); err != nil {
+			t.Fatal(err)
+		}
+		if !settledAtCreate {
+			t.Error("approvals not settled before the container was created")
+		}
+	})
+	ApprovalsSettled(t.Context()) // nothing registered: a no-op
+}
+
+// Clearing a digest never creates an entry, and the guards are no-ops.
+func TestForgetUnraidLocalDigest(t *testing.T) {
+	content := `{"library/other:1":{"local":"sha256:x","remote":"sha256:x","status":"true"}}`
+	statusPath := withUpdateStatusPath458(t, &content)
+	forgetUnraidLocalDigest("")
+	forgetUnraidLocalDigest("nginx:1")
+	seedRestoredImageStatus(t.Context(), nil, "", "")
+	seedRestoredImageStatus(t.Context(), nil, "nginx:1", "")
+	if got := readFile458(t, statusPath); got != content {
+		t.Errorf("status file changed: %s", got)
 	}
 }

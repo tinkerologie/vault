@@ -31,6 +31,8 @@ type MCPServer struct {
 	intake *jobintake.Intake
 	server *mcp.Server
 	config Config
+	// startRestore starts a restore_item restore; tests stand in for the runner.
+	startRestore func(ctx context.Context, rp db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...runner.RestoreItemOptions) error
 }
 
 // Config controls MCP metadata exposed to clients.
@@ -55,6 +57,7 @@ func New(database *db.DB, r *runner.Runner, intake *jobintake.Intake, configs ..
 		intake: intake,
 		config: cfg,
 	}
+	s.startRestore = r.StartRestoreItem
 
 	mcpSrv := mcp.NewServer(
 		&mcp.Implementation{
@@ -507,8 +510,8 @@ func (in restoreItemInput) options() runner.RestoreItemOptions {
 func (s *MCPServer) addRestoreItemTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "restore_item",
-		Description: "Restore an item from a specific restore point. The destination is replaced by default; pass clean_destination=false to merge into its existing contents instead. A container restore that needs approval (host-level access from an imported or replicated backup, or a missing backed-up image digest) cannot be approved here: the user must approve it in the Vault UI's Restore wizard.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input restoreItemInput) (*mcp.CallToolResult, any, error) {
+		Description: "Restore an item from a specific restore point. The destination is replaced by default; pass clean_destination=false to merge into its existing contents instead. The call returns once the restore is past its approval checks, and the restore then carries on in the background. A container restore that needs approval (host-level access from an imported or replicated backup, or a backed-up image digest that is missing or cannot be obtained) is refused with an error and nothing is changed: it cannot be approved here, and the user must approve it in the Vault UI's Restore wizard under Container approvals.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input restoreItemInput) (*mcp.CallToolResult, any, error) {
 		rps, err := s.db.ListRestorePoints(input.JobID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("listing restore points: %w", err)
@@ -523,12 +526,12 @@ func (s *MCPServer) addRestoreItemTool() {
 		if found == nil {
 			return nil, nil, fmt.Errorf("restore point %d not found", input.RestorePointID)
 		}
-		go func() {
-			if err := s.runner.RestoreItem(*found, input.ItemName, input.ItemType, input.Destination, input.Passphrase,
-				input.options()); err != nil {
-				log.Printf("mcp: restore failed: %v", err)
-			}
-		}()
+		// The approval checks run before this returns, so a refusal reaches
+		// the caller rather than only the log (#601).
+		if err := s.startRestore(ctx, *found, input.ItemName, input.ItemType, input.Destination, input.Passphrase,
+			input.options()); err != nil {
+			return nil, nil, err
+		}
 		r, _ := textResult(map[string]any{"message": "restore started"})
 		return r, nil, nil
 	})

@@ -65,17 +65,54 @@ func pinBackupImage(ctx context.Context, cli dockerClient, image, digestRef stri
 			return nil
 		}
 	}
+	priorID := tagTarget(ctx, cli, image)
 	if _, err := cli.ImageTag(ctx, client.ImageTagOptions{Source: digestRef, Target: image}); err != nil {
 		return fmt.Errorf("pointing %s at %s: %w", image, digestRef, err)
 	}
+	// From here the tag may have moved, so a failed check puts it back.
 	tagged, err := cli.ImageInspect(ctx, image)
 	if err != nil {
+		restoreImageTag(ctx, cli, image, priorID)
 		return fmt.Errorf("inspecting %s: %w", image, err)
 	}
 	if tagged.ID != pinned.ID {
+		restoreImageTag(ctx, cli, image, priorID)
 		return fmt.Errorf("%s resolves to %s, not the backup-time image %s", image, tagged.ID, pinned.ID)
 	}
 	return nil
+}
+
+// tagTarget returns the image ID that the tag image names now, or "" when
+// image is a digest reference or the tag does not exist on this server.
+func tagTarget(ctx context.Context, cli dockerClient, image string) string {
+	named, err := reference.ParseNormalizedNamed(image)
+	if err != nil {
+		return ""
+	}
+	if _, isDigest := named.(reference.Canonical); isDigest {
+		return ""
+	}
+	res, err := cli.ImageInspect(ctx, image)
+	if err != nil {
+		return ""
+	}
+	return res.ID
+}
+
+// restoreImageTag points image back at priorID, the image it named before a
+// restore pinned it, so a restore that fails leaves later pulls and
+// recreations of the tag where they were (#599). It runs even after the
+// restore's context is cancelled. A tag that did not exist before (priorID
+// "") is left on the backup-time image, which is still on this server.
+func restoreImageTag(ctx context.Context, cli dockerClient, image, priorID string) {
+	if priorID == "" {
+		return
+	}
+	if _, err := cli.ImageTag(context.WithoutCancel(ctx), client.ImageTagOptions{Source: priorID, Target: image}); err != nil {
+		log.Printf("engine: chunked restore: could not point %s back at %s: %v", image, priorID, err)
+		return
+	}
+	log.Printf("engine: chunked restore: pointed %s back at %s", image, priorID)
 }
 
 // familiarRef renders a canonical reference the way Docker lists RepoDigests for

@@ -133,6 +133,45 @@ func seedUnraidUpdateStatus(imageTag, sha string) {
 	if imageTag == "" || sha == "" {
 		return
 	}
+	writeUnraidLocalDigest(imageTag, sha)
+}
+
+// forgetUnraidLocalDigest clears the recorded local digest for imageTag when
+// Vault cannot tell which digest the restored image carries. Unraid keeps a
+// recorded digest even through "Check for Updates", and only inspects the
+// image when none is recorded, so a stale one would stick (#599).
+func forgetUnraidLocalDigest(imageTag string) {
+	if imageTag == "" {
+		return
+	}
+	writeUnraidLocalDigest(imageTag, "")
+}
+
+// seedRestoredImageStatus records in Unraid's update-status cache the digest
+// of the image a chunked restore left the container on: the pinned
+// backup-time digest, or, when the current tag was accepted instead, the
+// digest that tag carries now. Seeding the backup-time digest after an
+// override would make the badge describe an image that is not running (#599).
+func seedRestoredImageStatus(ctx context.Context, cli dockerClient, image, pinnedRef string) {
+	if image == "" {
+		return
+	}
+	ref := pinnedRef
+	if ref == "" && cli != nil {
+		if res, err := cli.ImageInspect(ctx, image); err == nil {
+			ref, _ = backupImageRef(image, res.RepoDigests)
+		}
+	}
+	if sha := extractSHA(ref); sha != "" {
+		seedUnraidUpdateStatus(image, sha)
+		return
+	}
+	forgetUnraidLocalDigest(image)
+}
+
+// writeUnraidLocalDigest sets the local digest for imageTag, or clears it when
+// sha is empty, and re-derives the status. Clearing never creates an entry.
+func writeUnraidLocalDigest(imageTag, sha string) {
 	// Only touch the status file if it already exists — i.e. we're on
 	// Unraid with the dockerMan plugin active.
 	statusBytes, err := os.ReadFile(unraidUpdateStatusPath) // #nosec G304 — fixed Unraid path
@@ -154,19 +193,26 @@ func seedUnraidUpdateStatus(imageTag, sha string) {
 	key := ensureUnraidImageTag(imageTag)
 	entry, ok := status[key]
 	if !ok {
+		if sha == "" {
+			return
+		}
 		entry = map[string]any{}
 	}
-	entry["local"] = sha
+	if sha == "" {
+		entry["local"] = nil
+	} else {
+		entry["local"] = sha
+	}
 	if _, hasRemote := entry["remote"]; !hasRemote {
 		entry["remote"] = nil
 	}
 	// Re-derive status from local/remote so the UI badge updates immediately
 	// when both are present, matching Unraid's own reloadUpdateStatus() logic.
 	remote, _ := entry["remote"].(string)
-	switch remote {
-	case "":
+	switch {
+	case remote == "" || sha == "":
 		entry["status"] = "undef"
-	case sha:
+	case remote == sha:
 		entry["status"] = "true"
 	default:
 		entry["status"] = "false"
@@ -186,6 +232,10 @@ func seedUnraidUpdateStatus(imageTag, sha string) {
 	if err := os.Rename(tmp, unraidUpdateStatusPath); err != nil {
 		log.Printf("engine: update-status: renaming %s -> %s: %v", tmp, unraidUpdateStatusPath, err)
 		_ = os.Remove(tmp)
+		return
+	}
+	if sha == "" {
+		log.Printf("engine: update-status: cleared local digest for %s", key)
 		return
 	}
 	log.Printf("engine: update-status: seeded local digest for %s (%s)", key, shortSHA(sha))

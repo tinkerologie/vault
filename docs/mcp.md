@@ -167,6 +167,8 @@ The MCP surface is intentionally curated rather than a 1:1 mirror of every REST 
 | `list_restore_points` | List restore points for a job |
 | `restore_item`        | Restore a backup item         |
 
+`restore_item` returns once the restore is past its approval checks and then carries on in the background; follow it with `get_runner_status` or `get_activity_log`. A container restore that needs approval (host-level access from an imported or replicated backup, or a deduplicated backup's image digest that is missing or can't be pulled) comes back as a tool error and changes nothing. MCP can't approve it: approve it in the Vault UI's Restore wizard under **Container approvals**. For a deduplicated container restore the call can take as long as pulling the backed-up image, and for a classic container restore from an imported or replicated backup, as long as downloading it.
+
 ### Replication
 
 | Tool                 | Description                 |

@@ -1730,6 +1730,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	if err := enforceRestorePrivileges(ctx, item, inspect); err != nil {
 		return err
 	}
+	ApprovalsSettled(ctx)
 
 	// Step 2: Load image.
 	progress(item.Name, 15, "loading image")
@@ -2863,7 +2864,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 // in-place restore). When set, volumes are extracted under
 // destPath/<volume-name> rather than their original bind sources, matching
 // the bind-mount rewrite recreateAndStartContainer applies.
-func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
+func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) (retErr error) {
 	if repo == nil {
 		return fmt.Errorf("container: dedup repo is nil")
 	}
@@ -2896,25 +2897,26 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	//    digest is the only link to the code that was backed up; the tag may
 	//    have moved since.
 	var meta imageMeta
-	hasMeta := false
 	if metaEntry, ok := m.Files[containerImageMetaKey]; ok && len(metaEntry.Chunks) > 0 {
 		if metaBody, mErr := repo.Get(metaEntry.Chunks[0]); mErr == nil {
-			hasMeta = json.Unmarshal(metaBody, &meta) == nil
+			_ = json.Unmarshal(metaBody, &meta)
 		}
 	}
+	// Pinning moves the tag. If the restore then fails, the tag goes back to
+	// the image it named before, so a later pull or recreation of the tag is
+	// not quietly left on the backup-time image (#599).
+	priorImageID := tagTarget(ctx, h.cli, inspect.Config.Image)
 	inspect.pinnedImage, err = h.resolveChunkedImage(ctx, item, inspect.Config.Image, meta.RepoDigests, progress)
 	if err != nil {
 		return err
 	}
-
-	// 3. Seed Unraid update-status from the captured image_meta (only used
-	//    when no digest pull populated RepoDigests — e.g. offline registry).
-	//    Reuses the existing seedUnraidUpdateStatus helper so the on-disk
-	//    update-status.json format stays in sync with the classic path.
-	if hasMeta && len(meta.RepoDigests) > 0 {
-		if sha := extractSHA(meta.RepoDigests[0]); sha != "" {
-			seedUnraidUpdateStatus(inspect.Config.Image, sha)
-		}
+	ApprovalsSettled(ctx)
+	if inspect.pinnedImage != "" {
+		defer func() {
+			if retErr != nil {
+				restoreImageTag(ctx, h.cli, inspect.Config.Image, priorImageID)
+			}
+		}()
 	}
 
 	// Resolve custom restore destination: explicit destPath parameter wins,
@@ -2965,6 +2967,9 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, sidecarDir, progress); err != nil {
 		return err
 	}
+	// 6. Record in Unraid's update-status cache the digest of the image the
+	//    container now runs, once the restore has succeeded.
+	seedRestoredImageStatus(ctx, h.cli, inspect.Config.Image, inspect.pinnedImage)
 	if progress != nil {
 		progress(item.Name, 100, "container restored")
 	}

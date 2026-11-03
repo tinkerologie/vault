@@ -436,7 +436,17 @@ func (s *SFTPAdapter) Delete(path string) (retErr error) {
 	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, fullPath); err != nil {
 		return err
 	}
-	return client.Remove(fullPath)
+	return wrapSFTPDeleteError(client.Remove(fullPath), fullPath)
+}
+
+// wrapSFTPDeleteError marks a delete of a path that is already gone with
+// fs.ErrNotExist, so cleanup can treat it as done (#603). Other errors are
+// returned unchanged.
+func wrapSFTPDeleteError(err error, fullPath string) error {
+	if isSFTPNotFound(err) {
+		return fmt.Errorf("sftp: delete %s: %w: %w", fullPath, fs.ErrNotExist, err)
+	}
+	return err
 }
 
 func isSFTPNotFound(err error) bool {

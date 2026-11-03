@@ -193,3 +193,19 @@ func TestSFTPAdapterList(t *testing.T) {
 		}
 	})
 }
+
+// Issue #603: deleting a path that is already gone is reported as not-found,
+// so cleanup can treat it as done; other failures are left alone.
+func TestWrapSFTPDeleteError(t *testing.T) {
+	t.Parallel()
+	if err := wrapSFTPDeleteError(nil, "/x"); err != nil {
+		t.Errorf("nil = %v", err)
+	}
+	if err := wrapSFTPDeleteError(&sftp.StatusError{Code: 2}, "/gone"); !IsNotExist(err) {
+		t.Errorf("no such file = %v, want not-exist", err)
+	}
+	denied := sftp.ErrSSHFxPermissionDenied
+	if err := wrapSFTPDeleteError(denied, "/x"); !errors.Is(err, denied) || IsNotExist(err) {
+		t.Errorf("permission denied = %v", err)
+	}
+}

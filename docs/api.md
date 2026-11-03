@@ -207,7 +207,7 @@ Responses never contain a source's API key: `config` shows `••••••�
 
 ### Restore approvals (`/jobs/{id}/restore`)
 
-Two optional booleans in the restore body approve what a container restore otherwise refuses. Both default to `false` and apply to every item in the request. The MCP `restore_item` tool has no equivalent, so an agent cannot approve its own restore; a refused MCP restore says to approve it in the Vault UI:
+Two optional booleans in the restore body approve what a container restore otherwise refuses. Both default to `false` and apply to every item in the request. The MCP `restore_item` tool has no equivalent, so an agent cannot approve its own restore. It waits until the restore is past these checks, so a restore that needs approval comes back as a tool error that says to approve it in the Vault UI under Restore → Container approvals, rather than as "restore started":
 
 - `allow_host_privileges` — restore host-level settings (privileged mode, host network, IPC or PID, added capabilities, devices, host paths outside `/mnt`) from a backup this server did not make: imported or replicated.
 - `allow_unpinned_image` — for a deduplicated container backup whose recorded image digest is missing or cannot be pulled, use the image the tag points to now.

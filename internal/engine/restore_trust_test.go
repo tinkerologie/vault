@@ -176,7 +176,11 @@ func (r *imageRegistry) ImageTag(_ context.Context, o client.ImageTagOptions) (c
 	if r.tagErr != nil {
 		return client.ImageTagResult{}, r.tagErr
 	}
-	r.tags[o.Target] = r.tags[o.Source]
+	id, ok := r.tags[o.Source]
+	if !ok {
+		id = o.Source // tagging by image ID
+	}
+	r.tags[o.Target] = id
 	return client.ImageTagResult{}, nil
 }
 

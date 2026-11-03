@@ -391,15 +391,6 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	return nil
 }
 
-// pluginPlgFilePath resolves where the plugin's .plg installer lives:
-// <pluginsDir>/<name>.plg. Tests redirect it by overriding the pluginsDir var.
-func pluginPlgFilePath(name string) string {
-	if name == "" {
-		return ""
-	}
-	return filepath.Join(pluginsDir, name+".plg")
-}
-
 // BackupChunked walks the plugin's config directory tree and chunks every
 // regular file into the dedup repo, then records the plugin's .plg installer
 // file in the manifest's Installer field so a dedup-only restore can reinstate
@@ -448,15 +439,22 @@ func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 		return dedup.ID{}, fmt.Errorf("plugin: chunking config for %q: %w", item.Name, err)
 	}
 
-	// Record the .plg installer out-of-tree in the manifest (best-effort).
-	// Attached before PutManifest because the config manifest is not yet
-	// flushed and so cannot be read back mid-run.
-	if plgData, rErr := os.ReadFile(pluginPlgFilePath(safeName)); rErr == nil { // #nosec G304 — path is pluginsDir + a name validated above
+	// Record the .plg installer out-of-tree in the manifest. A missing
+	// installer is optional; anything else that is not a plain regular file
+	// (a planted symlink, FIFO or directory) fails the backup, through the same
+	// pinned reader as the classic backup (#595). Attached before PutManifest
+	// because the config manifest is not yet flushed and so cannot be read back
+	// mid-run.
+	plgData, rErr := readPluginInstaller(safeName)
+	switch {
+	case rErr == nil:
 		chunkID, pErr := repo.Put(plgData)
 		if pErr != nil {
 			return dedup.ID{}, fmt.Errorf("plugin: storing .plg for %q: %w", item.Name, pErr)
 		}
 		m.Installer = &dedup.ManifestEntry{Size: int64(len(plgData)), Chunks: []dedup.ID{chunkID}}
+	case !errors.Is(rErr, os.ErrNotExist):
+		return dedup.ID{}, fmt.Errorf("plugin: reading .plg for %q: %w", item.Name, rErr)
 	}
 	manifestID, err := repo.PutManifest(item.Name, m)
 	if err != nil {

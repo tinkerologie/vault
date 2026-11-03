@@ -271,7 +271,17 @@ func (s *SMBAdapter) Delete(path string) error {
 	if err != nil {
 		return err
 	}
-	return share.Remove(fullPath)
+	return wrapSMBDeleteError(share.Remove(fullPath), fullPath)
+}
+
+// wrapSMBDeleteError marks a delete of a path that is already gone with
+// fs.ErrNotExist, so cleanup can treat it as done (#603). Other errors are
+// returned unchanged.
+func wrapSMBDeleteError(err error, fullPath string) error {
+	if isSMBNotFound(err) {
+		return fmt.Errorf("smb: delete %s: %w: %w", fullPath, fs.ErrNotExist, err)
+	}
+	return err
 }
 
 func isSMBNotFound(err error) bool {

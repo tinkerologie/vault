@@ -142,3 +142,20 @@ func TestWrapSMBListError(t *testing.T) {
 		t.Errorf("wrapSMBListError(generic) = %v, want non-ErrNotExist", genericErr)
 	}
 }
+
+// Issue #603: deleting a path that is already gone is reported as not-found,
+// so cleanup can treat it as done; other failures are left alone.
+func TestWrapSMBDeleteError(t *testing.T) {
+	t.Parallel()
+	if err := wrapSMBDeleteError(nil, `\x`); err != nil {
+		t.Errorf("nil = %v", err)
+	}
+	gone := &os.PathError{Op: "remove", Path: `\gone`, Err: &smb2.ResponseError{Code: 0xC0000034}}
+	if err := wrapSMBDeleteError(gone, `\gone`); !IsNotExist(err) {
+		t.Errorf("name not found = %v, want not-exist", err)
+	}
+	denied := &smb2.ResponseError{Code: 0xC0000022}
+	if err := wrapSMBDeleteError(denied, `\x`); !errors.Is(err, denied) || IsNotExist(err) {
+		t.Errorf("access denied = %v", err)
+	}
+}
