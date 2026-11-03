@@ -3,9 +3,11 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	imagetypes "github.com/moby/moby/api/types/image"
@@ -90,9 +92,9 @@ func TestSeedUnraidUpdateStatusIOFailures458(t *testing.T) {
 	})
 	t.Run("temp file cannot be written", func(t *testing.T) {
 		path := withUpdateStatusPath458(t, strPtr458("{}"))
-		if err := os.Mkdir(path+".tmp", 0o750); err != nil {
-			t.Fatal(err)
-		}
+		orig := createTempFile
+		createTempFile = func(string, string) (*os.File, error) { return nil, errFake458 }
+		t.Cleanup(func() { createTempFile = orig })
 		seedUnraidUpdateStatus("nginx", sha458)
 		if got := readFile458(t, path); got != "{}" {
 			t.Errorf("status file changed despite the failed write: %q", got)
@@ -176,5 +178,25 @@ func TestBuildImageMetaInspectError458(t *testing.T) {
 	meta := buildImageMeta(t.Context(), f, "nginx:latest")
 	if meta.ImageTag != "nginx:latest" || len(meta.RepoDigests) != 0 {
 		t.Errorf("meta = %+v", meta)
+	}
+}
+
+// Restores that finish together each keep their entry in Unraid's
+// update-status file, and no temporary file is left behind (Aikido review of
+// #606).
+func TestConcurrentUpdateStatusWritesKeepEveryEntry(t *testing.T) {
+	path := withUpdateStatusPath458(t, strPtr458("{}"))
+	const n = 40
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() { seedUnraidUpdateStatus(fmt.Sprintf("app%d", i), sha458) })
+	}
+	wg.Wait()
+	if got := len(readStatus458(t, path)); got != n {
+		t.Errorf("entries = %d, want %d", got, n)
+	}
+	leftovers, _ := filepath.Glob(path + ".*.tmp")
+	if len(leftovers) != 0 {
+		t.Errorf("temporary files left behind: %v", leftovers)
 	}
 }

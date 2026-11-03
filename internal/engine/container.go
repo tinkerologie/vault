@@ -1730,6 +1730,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	if err := enforceRestorePrivileges(ctx, item, inspect); err != nil {
 		return err
 	}
+	ApprovalsSettled(ctx)
 
 	// Step 2: Load image.
 	progress(item.Name, 15, "loading image")
@@ -2006,7 +2007,14 @@ func (ri restoreInspect) mountInfos() []mountInfo {
 	return out
 }
 
-// recreateAndStartContainer is the shared post-volume-restore pipeline:
+// recreateAndStartContainer is recreateAndStartContainerID for callers that
+// do not need the new container's ID.
+func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item BackupItem, inspect restoreInspect, restoreDest, sourceDir string, progress ProgressFunc) error {
+	_, err := h.recreateAndStartContainerID(ctx, item, inspect, restoreDest, sourceDir, progress)
+	return err
+}
+
+// recreateAndStartContainerID is the shared post-volume-restore pipeline:
 //
 //  1. Remove any existing container with the same name.
 //  2. Build typed Config / HostConfig / NetworkingConfig from the decoded
@@ -2022,15 +2030,12 @@ func (ri restoreInspect) mountInfos() []mountInfo {
 //
 // Hoisted from the classic Restore method so the dedup-chunked
 // RestoreChunked path uses the same code, avoiding a 200-LOC copy.
-func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item BackupItem, inspect restoreInspect, restoreDest, sourceDir string, progress ProgressFunc) error {
+func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item BackupItem, inspect restoreInspect, restoreDest, sourceDir string, progress ProgressFunc) (string, error) {
 	progress(item.Name, 55, "recreating container")
-	containerName := strings.TrimPrefix(inspect.Name, "/")
-	if containerName == "" {
-		containerName = item.Name
-	}
+	containerName := restoredContainerName(item, inspect)
 	safeContainerName, err := normalizeRestoreComponent(containerName)
 	if err != nil {
-		return err
+		return "", err
 	}
 	containerName = safeContainerName
 
@@ -2039,7 +2044,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 	// It runs before the existing container is removed, so a failure leaves it in place.
 	if inspect.pinnedImage != "" {
 		if err := pinBackupImage(ctx, h.cli, inspect.Config.Image, inspect.pinnedImage); err != nil {
-			return fmt.Errorf("re-checking backup-time image: %w", err)
+			return "", fmt.Errorf("re-checking backup-time image: %w", err)
 		}
 	}
 
@@ -2095,7 +2100,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 			if len(parts) == 2 {
 				sourceName, err := normalizeRestoreComponent(filepath.Base(parts[0]))
 				if err != nil {
-					return err
+					return "", err
 				}
 				newSource := filepath.Join(restoreDest, sourceName)
 				rewritten = append(rewritten, newSource+":"+parts[1])
@@ -2191,7 +2196,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 		Name:             containerName,
 	})
 	if err != nil {
-		return fmt.Errorf("creating container: %w", err)
+		return "", fmt.Errorf("creating container: %w", err)
 	}
 
 	// Step 5: Restore the Unraid template XML. Both formats reach this one
@@ -2259,7 +2264,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 	if inspect.State.Running {
 		progress(item.Name, 90, "starting container")
 		if _, err := h.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-			return fmt.Errorf("starting restored container: %w", err)
+			return created.ID, fmt.Errorf("starting restored container: %w", err)
 		}
 
 		// Step 7: reload a logical database dump, if the backup requested it.
@@ -2287,7 +2292,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 				// error, or full disk part-way through leaves tables dropped
 				// and only partly recreated; returning nil here would report
 				// that as a completed restore.
-				return fmt.Errorf("reloading database dump for %s: %w (the database is partially reloaded — "+
+				return created.ID, fmt.Errorf("reloading database dump for %s: %w (the database is partially reloaded — "+
 					"its contents are not the restored state and should not be relied on)", item.Name, err)
 			} else {
 				// Reloaded successfully; nothing left to preserve.
@@ -2311,7 +2316,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 			log.Printf("engine: %s: database dump not reloaded (%s) and no durable restore location was available; it remains only in the temporary staging directory", item.Name, dumpReason)
 		}
 	}
-	return nil
+	return created.ID, nil
 }
 
 // preserveDatabaseDump copies a database dump that will not be auto-reloaded
@@ -2863,7 +2868,7 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 // in-place restore). When set, volumes are extracted under
 // destPath/<volume-name> rather than their original bind sources, matching
 // the bind-mount rewrite recreateAndStartContainer applies.
-func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
+func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) (retErr error) {
 	if repo == nil {
 		return fmt.Errorf("container: dedup repo is nil")
 	}
@@ -2896,25 +2901,48 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	//    digest is the only link to the code that was backed up; the tag may
 	//    have moved since.
 	var meta imageMeta
-	hasMeta := false
 	if metaEntry, ok := m.Files[containerImageMetaKey]; ok && len(metaEntry.Chunks) > 0 {
 		if metaBody, mErr := repo.Get(metaEntry.Chunks[0]); mErr == nil {
-			hasMeta = json.Unmarshal(metaBody, &meta) == nil
+			_ = json.Unmarshal(metaBody, &meta)
+		}
+	}
+	// Pinning moves the tag. If the restore then fails, the tag goes back to
+	// the image it named before, so a later pull or recreation of the tag is
+	// not quietly left on the backup-time image (#599).
+	// Only a restore that will pin needs the prior image, and one that cannot
+	// tell what the tag names stops here, before anything changed.
+	var priorImageID string
+	if _, digestErr := backupImageRef(inspect.Config.Image, meta.RepoDigests); digestErr == nil {
+		if priorImageID, err = tagTarget(ctx, h.cli, inspect.Config.Image); err != nil {
+			return fmt.Errorf("container restore: %w; nothing was changed", err)
 		}
 	}
 	inspect.pinnedImage, err = h.resolveChunkedImage(ctx, item, inspect.Config.Image, meta.RepoDigests, progress)
 	if err != nil {
 		return err
 	}
-
-	// 3. Seed Unraid update-status from the captured image_meta (only used
-	//    when no digest pull populated RepoDigests — e.g. offline registry).
-	//    Reuses the existing seedUnraidUpdateStatus helper so the on-disk
-	//    update-status.json format stays in sync with the classic path.
-	if hasMeta && len(meta.RepoDigests) > 0 {
-		if sha := extractSHA(meta.RepoDigests[0]); sha != "" {
-			seedUnraidUpdateStatus(inspect.Config.Image, sha)
+	ApprovalsSettled(ctx)
+	if inspect.pinnedImage != "" {
+		// The rollback only undoes Vault's own pin: it needs the pinned image's
+		// ID to tell whether someone else has moved the tag since.
+		// Bounded and immune to cancellation, like the rollback itself, so a
+		// restore cancelled right after pinning still gets its tag back.
+		var pinnedID string
+		inspectCtx, cancelInspect := context.WithTimeout(context.WithoutCancel(ctx), imageTagRollbackTimeout)
+		if pinned, pErr := h.cli.ImageInspect(inspectCtx, inspect.pinnedImage); pErr == nil {
+			pinnedID = pinned.ID
 		}
+		cancelInspect()
+		defer func() {
+			if retErr == nil {
+				return
+			}
+			if pinnedID == "" {
+				log.Printf("engine: chunked restore: left %s as it is: the pinned image %s could not be inspected", inspect.Config.Image, inspect.pinnedImage)
+				return
+			}
+			restoreImageTag(ctx, h.cli, inspect.Config.Image, priorImageID, pinnedID)
+		}()
 	}
 
 	// Resolve custom restore destination: explicit destPath parameter wins,
@@ -2962,9 +2990,15 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 		defer cleanupSidecars()
 	}
 
-	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, sidecarDir, progress); err != nil {
+	containerID, err := h.recreateAndStartContainerID(ctx, item, inspect, restoreDest, sidecarDir, progress)
+	if err != nil {
 		return err
 	}
+	// 6. Record in Unraid's update-status cache the digest of the image the
+	//    container now runs, once the restore has succeeded. The ID from
+	//    ContainerCreate, not the name, so a container recreated under the
+	//    same name meanwhile cannot stand in for it.
+	seedRestoredImageStatus(ctx, h.cli, inspect.Config.Image, containerID)
 	if progress != nil {
 		progress(item.Name, 100, "container restored")
 	}
@@ -4295,4 +4329,13 @@ func (h *ContainerHandler) readStatsSample(ctx context.Context, containerID stri
 		return nil, fmt.Errorf("decoding stats for %s: %w", containerID, err)
 	}
 	return &s, nil
+}
+
+// restoredContainerName is the name a restore gives the container: the one in
+// its backed-up config, or the item's name when the config has none.
+func restoredContainerName(item BackupItem, inspect restoreInspect) string {
+	if name := strings.TrimPrefix(inspect.Name, "/"); name != "" {
+		return name
+	}
+	return item.Name
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/moby/moby/client"
 )
@@ -28,6 +29,10 @@ import (
 // of the real Unraid path; production never reassigns it. Mirrors
 // dockerTemplatesDir in container.go.
 var unraidUpdateStatusPath = "/var/lib/docker/unraid-update-status.json"
+
+// unraidUpdateStatusMu serialises Vault's read-modify-write of the
+// update-status file.
+var unraidUpdateStatusMu sync.Mutex
 
 // imageMeta is the on-disk shape of `image_meta.json` placed alongside
 // `image.tar` in each container backup. It captures the image's
@@ -133,6 +138,54 @@ func seedUnraidUpdateStatus(imageTag, sha string) {
 	if imageTag == "" || sha == "" {
 		return
 	}
+	writeUnraidLocalDigest(imageTag, sha)
+}
+
+// forgetUnraidLocalDigest clears the recorded local digest for imageTag when
+// Vault cannot tell which digest the restored image carries. Unraid keeps a
+// recorded digest even through "Check for Updates", and only inspects the
+// image when none is recorded, so a stale one would stick (#599).
+func forgetUnraidLocalDigest(imageTag string) {
+	if imageTag == "" {
+		return
+	}
+	writeUnraidLocalDigest(imageTag, "")
+}
+
+// seedRestoredImageStatus records in Unraid's update-status cache the digest
+// of the image the restored container was created from. It reads the image ID
+// from the container itself, by the ID ContainerCreate returned, not from the
+// tag, which another pull can move after the container is created, nor by
+// name, which a replacement container could take. So the badge never
+// describes an image the restored container is not running (#599). When no
+// digest for the image's repository is known, the recorded one is cleared so
+// Unraid inspects the image itself.
+func seedRestoredImageStatus(ctx context.Context, cli dockerClient, image, containerID string) {
+	if image == "" {
+		return
+	}
+	var ref string
+	if cli != nil && containerID != "" {
+		if c, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{}); err == nil && c.Container.Image != "" {
+			if res, err := cli.ImageInspect(ctx, c.Container.Image); err == nil {
+				ref, _ = backupImageRef(image, res.RepoDigests)
+			}
+		}
+	}
+	if sha := extractSHA(ref); sha != "" {
+		seedUnraidUpdateStatus(image, sha)
+		return
+	}
+	forgetUnraidLocalDigest(image)
+}
+
+// writeUnraidLocalDigest sets the local digest for imageTag, or clears it when
+// sha is empty, and re-derives the status. Clearing never creates an entry.
+func writeUnraidLocalDigest(imageTag, sha string) {
+	// Restores can finish side by side (an untracked MCP restore alongside a
+	// tracked one), so the read-modify-write of the shared file is serialised.
+	unraidUpdateStatusMu.Lock()
+	defer unraidUpdateStatusMu.Unlock()
 	// Only touch the status file if it already exists — i.e. we're on
 	// Unraid with the dockerMan plugin active.
 	statusBytes, err := os.ReadFile(unraidUpdateStatusPath) // #nosec G304 — fixed Unraid path
@@ -154,19 +207,26 @@ func seedUnraidUpdateStatus(imageTag, sha string) {
 	key := ensureUnraidImageTag(imageTag)
 	entry, ok := status[key]
 	if !ok {
+		if sha == "" {
+			return
+		}
 		entry = map[string]any{}
 	}
-	entry["local"] = sha
+	if sha == "" {
+		entry["local"] = nil
+	} else {
+		entry["local"] = sha
+	}
 	if _, hasRemote := entry["remote"]; !hasRemote {
 		entry["remote"] = nil
 	}
 	// Re-derive status from local/remote so the UI badge updates immediately
 	// when both are present, matching Unraid's own reloadUpdateStatus() logic.
 	remote, _ := entry["remote"].(string)
-	switch remote {
-	case "":
+	switch {
+	case remote == "" || sha == "":
 		entry["status"] = "undef"
-	case sha:
+	case remote == sha:
 		entry["status"] = "true"
 	default:
 		entry["status"] = "false"
@@ -178,14 +238,12 @@ func seedUnraidUpdateStatus(imageTag, sha string) {
 		log.Printf("engine: update-status: marshalling: %v", err)
 		return
 	}
-	tmp := unraidUpdateStatusPath + ".tmp"
-	if err := os.WriteFile(tmp, out, 0o644); err != nil { // #nosec G306 — match Unraid's existing perms (0644)
-		log.Printf("engine: update-status: writing %s: %v", tmp, err)
+	if err := replaceFileAtomically(unraidUpdateStatusPath, out); err != nil {
+		log.Printf("engine: update-status: writing %s: %v", unraidUpdateStatusPath, err)
 		return
 	}
-	if err := os.Rename(tmp, unraidUpdateStatusPath); err != nil {
-		log.Printf("engine: update-status: renaming %s -> %s: %v", tmp, unraidUpdateStatusPath, err)
-		_ = os.Remove(tmp)
+	if sha == "" {
+		log.Printf("engine: update-status: cleared local digest for %s", key)
 		return
 	}
 	log.Printf("engine: update-status: seeded local digest for %s (%s)", key, shortSHA(sha))
@@ -256,4 +314,31 @@ func populateRepoDigestsViaPull(ctx context.Context, cli dockerClient, imageRef 
 		seedUnraidUpdateStatus(ref, sha)
 	}
 	return true
+}
+
+// createTempFile is os.CreateTemp; a var so tests can make it fail.
+var createTempFile = os.CreateTemp
+
+// replaceFileAtomically writes data to a uniquely named temporary file next to
+// path and renames it over path, so concurrent writers never share a temporary
+// file and readers see either the old or the new contents. The file keeps the
+// 0644 mode Unraid gives it.
+func replaceFileAtomically(path string, data []byte) error {
+	tmp, err := createTempFile(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil { // #nosec G302 — match Unraid's existing perms (0644)
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

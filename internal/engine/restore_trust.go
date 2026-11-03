@@ -106,3 +106,21 @@ func enforceRestorePrivileges(ctx context.Context, item BackupItem, ri restoreIn
 	}
 	return fmt.Errorf("%w: restoring %s would grant host access from a backup this server cannot vouch for (imported or replicated): %s; nothing was changed. Review these settings, then restart the restore with \"Allow host-level access\" enabled (API: allow_host_privileges)", ErrRestoreNeedsApproval, item.Name, summary)
 }
+
+type approvalsSettledKey struct{}
+
+// WithApprovalsSettled registers fn to be told when a restore is past every
+// check that could refuse it for want of a person's approval, so a caller that
+// cannot approve anything, such as MCP, can wait for that point and report a
+// refusal instead of "started" (#601). fn may be called more than once.
+func WithApprovalsSettled(ctx context.Context, fn func()) context.Context {
+	return context.WithValue(ctx, approvalsSettledKey{}, fn)
+}
+
+// ApprovalsSettled tells the function registered on ctx, if any, that the
+// restore can no longer be refused for want of approval.
+func ApprovalsSettled(ctx context.Context) {
+	if fn, _ := ctx.Value(approvalsSettledKey{}).(func()); fn != nil {
+		fn()
+	}
+}

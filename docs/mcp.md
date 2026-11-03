@@ -167,6 +167,12 @@ The MCP surface is intentionally curated rather than a 1:1 mirror of every REST 
 | `list_restore_points` | List restore points for a job |
 | `restore_item`        | Restore a backup item         |
 
+`restore_item` returns once the restore is past its approval checks, and the restore then carries on in the background. A container restore that needs approval (host-level access from an imported or replicated backup, or a deduplicated backup's image digest that is missing or can't be pulled) comes back straight away as a tool error and changes nothing. MCP can't approve it: approve it in the Vault UI's Restore wizard under **Container approvals**. A restore that fails before those checks, for example because the job or storage can't be found, also comes back as an error.
+
+Once it has started, an MCP restore isn't a tracked run: it doesn't appear in `get_runner_status` or in run history, and it can't be cancelled. Its outcome reaches `get_activity_log` (as "Restore completed" or "Restore failed") only when notifications are enabled in Settings; otherwise it's only in the Vault daemon log. To restore with progress, history and cancellation, use the Restore wizard or `POST /jobs/{id}/restore`.
+
+For a deduplicated container restore, the call can take as long as pulling the backed-up image. For a classic container restore from an imported or replicated backup, it can take as long as downloading the backup.
+
 ### Replication
 
 | Tool                 | Description                 |

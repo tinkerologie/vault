@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/tinkerologie/vault/internal/dedup"
 )
@@ -129,5 +131,76 @@ func TestPluginsRootAndInstallerRefuseSymlinks(t *testing.T) {
 	}
 	if got, err := readPluginInstaller("good"); err != nil || string(got) != "<PLUGIN/>" {
 		t.Errorf("readPluginInstaller = %q, %v", got, err)
+	}
+}
+
+// Issue #595: the chunked plugin backup must read the installer through the
+// same pinned, regular-file-only reader as the classic backup. A symlinked,
+// FIFO or directory .plg fails the backup, while a missing one stays optional.
+func TestPluginChunkedRefusesUnsafeInstaller(t *testing.T) {
+	cases := []struct {
+		name  string
+		plant func(t *testing.T, plg string)
+	}{
+		{"symlink to a readable file", func(t *testing.T, plg string) {
+			secret := filepath.Join(t.TempDir(), "secret")
+			if err := os.WriteFile(secret, []byte("top-secret"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(secret, plg); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"dangling symlink", func(t *testing.T, plg string) {
+			if err := os.Symlink(filepath.Join(t.TempDir(), "gone"), plg); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"fifo", func(t *testing.T, plg string) {
+			if err := syscall.Mkfifo(plg, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"directory", func(t *testing.T, plg string) {
+			if err := os.Mkdir(plg, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			orig := pluginsDir
+			pluginsDir = base
+			t.Cleanup(func() { pluginsDir = orig })
+			if err := os.Mkdir(filepath.Join(base, "p"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tc.plant(t, filepath.Join(base, "p.plg"))
+
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
+			done := make(chan struct{})
+			var id dedup.ID
+			var err error
+			go func() {
+				defer close(done)
+				id, err = (&PluginHandler{}).BackupChunked(t.Context(), BackupItem{Name: "p", Settings: map[string]any{}}, r, nil, noopProgress)
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("chunked backup blocked on the installer")
+			}
+			if err == nil {
+				t.Fatal("chunked backup accepted an unsafe installer")
+			}
+			if id != (dedup.ID{}) {
+				t.Errorf("manifest ID = %v, want zero", id)
+			}
+			if strings.Contains(err.Error(), "top-secret") {
+				t.Errorf("error leaks the link target: %v", err)
+			}
+		})
 	}
 }

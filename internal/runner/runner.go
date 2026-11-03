@@ -4317,19 +4317,88 @@ type RestoreItemOptions struct {
 // in order (base full → incremental/differential overlays).
 // The destination is replaced unless opts says otherwise (issue #321).
 func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...RestoreItemOptions) error {
+	// Deliberately context.Background(): this is the un-tracked scripted/MCP
+	// entry point with no registered cancel func or stall watchdog. The tracked
+	// RunRestore path threads its own cancellable ctx through the chain.
+	return r.restoreItem(context.Background(), restorePoint, itemName, itemType, destination, passphrase, opts...)
+}
+
+// restoreItem is RestoreItem on a caller-supplied context, which must carry no
+// approvals: an agent driving it must not be able to approve its own privileged
+// restore, so refusals point the person to the Vault UI.
+func (r *Runner) restoreItem(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...RestoreItemOptions) error {
 	cleanDestination := true
 	for _, o := range opts {
 		if o.CleanDestination != nil {
 			cleanDestination = *o.CleanDestination
 		}
 	}
-	// Deliberately context.Background(): this is the un-tracked scripted/MCP
-	// entry point with no registered cancel func or stall watchdog. The tracked
-	// RunRestore path threads its own cancellable ctx through the chain.
-	//
-	// It carries no approvals: an agent driving it must not be able to approve
-	// its own privileged restore, so refusals point the person to the Vault UI.
-	return approvalInUI(r.restoreItemWithReporter(context.Background(), restorePoint, itemName, itemType, destination, passphrase, nil, cleanDestination, restoreProgressReporter{}))
+	return approvalInUI(r.restoreItemWithReporter(ctx, restorePoint, itemName, itemType, destination, passphrase, nil, cleanDestination, restoreProgressReporter{}))
+}
+
+// StartRestoreItem runs RestoreItem in the background. It returns nil once the
+// restore is past every check that could refuse it for want of approval, or
+// the error that ended the restore before then, so a caller that cannot
+// approve anything hears about a refusal straight away instead of being told
+// the restore started (#601). A refusal names the Vault UI step that approves
+// it. ctx bounds only the wait: the restore carries on without it, and its
+// later failures are logged.
+func (r *Runner) StartRestoreItem(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...RestoreItemOptions) error {
+	return startUntilApprovalsSettled(ctx, itemName, func(restoreCtx context.Context) error {
+		return r.restoreItem(restoreCtx, restorePoint, itemName, itemType, destination, passphrase, opts...)
+	})
+}
+
+// startUntilApprovalsSettled runs restore in the background and waits until
+// it reports its approval checks settled, it ends, or ctx is done.
+func startUntilApprovalsSettled(ctx context.Context, itemName string, restore func(context.Context) error) error {
+	settled := make(chan struct{})
+	var once sync.Once
+	restoreCtx := engine.WithApprovalsSettled(context.Background(), func() { once.Do(func() { close(settled) }) })
+	done := make(chan error, 1)
+	go func() { done <- restore(restoreCtx) }()
+	logLater := func() {
+		go func() {
+			if err := <-done; err != nil {
+				log.Printf("runner: restore of %s failed: %v", itemName, err)
+			}
+		}()
+	}
+	isSettled := func() bool {
+		select {
+		case <-settled:
+			return true
+		default:
+			return false
+		}
+	}
+	select {
+	case err := <-done:
+		// A restore that got past its checks has started, whatever happened
+		// next; only one that ended before them reports its error here.
+		if err != nil && isSettled() {
+			log.Printf("runner: restore of %s failed: %v", itemName, err)
+			return nil
+		}
+		return err
+	case <-settled:
+		logLater()
+		return nil
+	case <-ctx.Done():
+		logLater()
+		return fmt.Errorf("restore of %s is still running its checks; its outcome is in the Vault log: %w", itemName, ctx.Err())
+	}
+}
+
+// settleApprovalsIfNoneApply tells a waiting caller the restore cannot be
+// refused for want of approval. Only a container restore can be: a chunked one
+// may need its image's current tag approved, and a classic one needs approval
+// only for host access from a backup this server cannot vouch for. Otherwise
+// the container handler reports it once past its own checks.
+func settleApprovalsIfNoneApply(ctx context.Context, itemType string, chunked bool) {
+	if itemType != "container" || (!chunked && engine.RestoreTrustFrom(ctx).ArtifactTrusted) {
+		engine.ApprovalsSettled(ctx)
+	}
 }
 
 // approvalInUI points a refusal that needs approval at the Vault UI, the only
@@ -4374,12 +4443,14 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 			r.runLog(reporter.RunID, runLogLevelInfo,
 				fmt.Sprintf("Restore point %d carries a complete dedup manifest — restoring %s directly (no chain replay)", restorePoint.ID, itemName),
 				map[string]any{"restore_point_id": restorePoint.ID, "item_name": itemName})
+			settleApprovalsIfNoneApply(ctx, itemType, true)
 			return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
 		}
 		// A chain replay can take its config from any step, so every step has
 		// to be this server's own, not just the one selected.
 		trust.ArtifactTrusted = trust.ArtifactTrusted && r.chainProvenanceLocal(chain, itemName)
 		ctx = engine.WithRestoreTrust(ctx, trust)
+		settleApprovalsIfNoneApply(ctx, itemType, false)
 		if usesMergedRestoreChain(itemType) {
 			return r.restoreMergedChain(ctx, chain, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
 		}
@@ -4418,6 +4489,8 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		}
 		return nil
 	}
+	_, chunked := resolveManifestID(restorePoint, itemName)
+	settleApprovalsIfNoneApply(ctx, itemType, chunked)
 	return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
 }
 
@@ -6395,14 +6468,17 @@ func (r *Runner) DeleteStorageDir(adapter storage.Adapter, prefix string) error 
 			}
 			continue
 		}
-		if e := adapter.Delete(fi.Path); e != nil {
+		// A file or directory already gone is deleted as far as cleanup is
+		// concerned: another cleanup, such as the job's own, may have got
+		// there first (#603).
+		if e := adapter.Delete(fi.Path); e != nil && !storage.IsNotExist(e) {
 			log.Printf("runner: failed to delete storage file %s: %v", fi.Path, e)
 			errs = append(errs, fmt.Errorf("delete %s: %w", fi.Path, e))
 		}
 	}
 
 	// Remove the now-empty directory itself.
-	if e := adapter.Delete(prefix); e != nil {
+	if e := adapter.Delete(prefix); e != nil && !storage.IsNotExist(e) {
 		log.Printf("runner: failed to remove storage directory %s: %v", prefix, e)
 		errs = append(errs, fmt.Errorf("delete %s: %w", prefix, e))
 	}
