@@ -72,6 +72,9 @@ type NFSAdapter struct {
 	config   NFSConfig
 	mountDir string
 	local    *LocalAdapter
+	// basePath is the adapter root inside the mount, as joined from the
+	// config. ready re-checks it before every operation.
+	basePath string
 	mu       sync.Mutex
 	mounted  bool
 	// stale holds mount points a refused mount could not unmount; unmount
@@ -170,17 +173,67 @@ func (n *NFSAdapter) mountLocked() error {
 		}
 	}
 
-	// Symlinks inside the export resolve on this host, so a base path that
-	// names one could point at a protected directory. Validate the resolved
-	// root and refuse the mount if it is unsafe (#514).
+	// Symlinks inside the export resolve on this host, and the NFS server
+	// controls them. Validate the resolved root (#514), and require it to stay
+	// inside the mounted export.
 	local, err := NewValidatedLocalAdapter(basePath)
 	if err != nil {
+		return n.abortMount(dir, fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err))
+	}
+	if err := checkBaseWithinMount(dir, basePath); err != nil {
 		return n.abortMount(dir, fmt.Errorf("nfs: invalid base path %q: %w", n.config.BasePath, err))
 	}
 
 	n.mountDir = dir
 	n.local = local
+	n.basePath = basePath
 	n.mounted = true
+	return nil
+}
+
+// ready mounts the share if needed and re-checks that the base path still
+// resolves inside the export. The NFS server controls the export's contents and
+// can replace the base with a symlink after the first mount, so the mount-time
+// check alone does not hold for the adapter's lifetime.
+func (n *NFSAdapter) ready() error {
+	if err := n.mount(); err != nil {
+		return err
+	}
+	n.mu.Lock()
+	mountDir, basePath := n.mountDir, n.basePath
+	n.mu.Unlock()
+	if mountDir == "" {
+		return errors.New("nfs: share is not mounted")
+	}
+	if basePath == "" {
+		basePath = mountDir
+	}
+	if err := checkBaseWithinMount(mountDir, basePath); err != nil {
+		return fmt.Errorf("nfs: base path %q: %w", n.config.BasePath, err)
+	}
+	return nil
+}
+
+// checkBaseWithinMount rejects a base path whose symlinks lead out of the mount.
+func checkBaseWithinMount(mountDir, basePath string) error {
+	realMount, err := filepath.EvalSymlinks(mountDir)
+	if err != nil {
+		return fmt.Errorf("resolving mount: %w", err)
+	}
+	cur, suffix := basePath, ""
+	realBase, err := filepath.EvalSymlinks(cur)
+	for errors.Is(err, os.ErrNotExist) && cur != mountDir {
+		suffix = filepath.Join(filepath.Base(cur), suffix)
+		cur = filepath.Dir(cur)
+		realBase, err = filepath.EvalSymlinks(cur)
+	}
+	if err != nil {
+		return fmt.Errorf("resolving base path: %w", err)
+	}
+	realBase = filepath.Join(realBase, suffix)
+	if realBase != realMount && !strings.HasPrefix(realBase, realMount+string(filepath.Separator)) {
+		return errors.New("it resolves outside the mounted export")
+	}
 	return nil
 }
 
@@ -229,7 +282,7 @@ func (n *NFSAdapter) unmountLocked() {
 }
 
 func (n *NFSAdapter) Write(path string, reader io.Reader) error {
-	if err := n.mount(); err != nil {
+	if err := n.ready(); err != nil {
 		return err
 	}
 	return n.local.Write(path, reader)
@@ -240,42 +293,42 @@ func (n *NFSAdapter) WriteFrom(path string, open func() (io.ReadCloser, error)) 
 }
 
 func (n *NFSAdapter) Read(path string) (io.ReadCloser, error) {
-	if err := n.mount(); err != nil {
+	if err := n.ready(); err != nil {
 		return nil, err
 	}
 	return n.local.Read(path)
 }
 
 func (n *NFSAdapter) ReadRange(path string, offset, length int64) (io.ReadCloser, error) {
-	if err := n.mount(); err != nil {
+	if err := n.ready(); err != nil {
 		return nil, err
 	}
 	return n.local.ReadRange(path, offset, length)
 }
 
 func (n *NFSAdapter) Delete(path string) error {
-	if err := n.mount(); err != nil {
+	if err := n.ready(); err != nil {
 		return err
 	}
 	return n.local.Delete(path)
 }
 
 func (n *NFSAdapter) List(prefix string) ([]FileInfo, error) {
-	if err := n.mount(); err != nil {
+	if err := n.ready(); err != nil {
 		return nil, err
 	}
 	return n.local.List(prefix)
 }
 
 func (n *NFSAdapter) Stat(path string) (FileInfo, error) {
-	if err := n.mount(); err != nil {
+	if err := n.ready(); err != nil {
 		return FileInfo{}, err
 	}
 	return n.local.Stat(path)
 }
 
 func (n *NFSAdapter) TestConnection() error {
-	if err := n.mount(); err != nil {
+	if err := n.ready(); err != nil {
 		return err
 	}
 	defer n.unmount()
@@ -305,7 +358,7 @@ func (n *NFSAdapter) Close() error {
 // directly to the wrapped LocalAdapter, which calls unix.Statfs on
 // the mount point. The share is mounted on demand if it is not already.
 func (n *NFSAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
-	if err := n.mount(); err != nil {
+	if err := n.ready(); err != nil {
 		return Capacity{}, err
 	}
 	return n.local.GetCapacity(ctx)
@@ -315,7 +368,7 @@ func (n *NFSAdapter) GetCapacity(ctx context.Context) (Capacity, error) {
 // LocalAdapter. The NFS share is mounted on demand if not already mounted.
 // os.Remove fails on a non-empty directory, which is the desired guard.
 func (n *NFSAdapter) RemoveEmptyDir(dir string) error {
-	if err := n.mount(); err != nil {
+	if err := n.ready(); err != nil {
 		return err
 	}
 	return n.local.RemoveEmptyDir(dir)

@@ -31,6 +31,7 @@ import (
 	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/replication"
 	"github.com/tinkerologie/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/scheduler"
 	"github.com/tinkerologie/vault/internal/storage"
 	"github.com/tinkerologie/vault/internal/tempdir"
@@ -175,11 +176,7 @@ var daemonCmd = &cobra.Command{
 			// Read the snapshot path from vault.cfg BEFORE any restoration.
 			// This resolves the chicken-and-egg problem where the snapshot_path_override
 			// setting is stored inside the database that hasn't been restored yet.
-			snapshotPath = defaultSnapPath
-			if cfgSnapPath := config.ReadCfgValue(cfgPath, "SNAPSHOT_PATH", ""); cfgSnapPath != "" {
-				snapshotPath = cfgSnapPath
-				log.Printf("Using snapshot path from vault.cfg: %s", snapshotPath)
-			}
+			snapshotPath = snapshotPathFromCfg(cfgPath, defaultSnapPath)
 
 			// First-run migration: if the USB DB exists and no snapshot exists
 			// yet, copy the USB DB to the snapshot path so it becomes the seed.
@@ -1042,4 +1039,21 @@ func applyLogLevel(database *db.DB) {
 	if lvl, err := database.GetSetting("log_level", docsmeta.DefaultFor("log_level")); err == nil {
 		logx.SetLevelString(lvl)
 	}
+}
+
+// snapshotPathFromCfg returns the snapshot path configured in vault.cfg, or
+// fallback when it is unset or fails the location policy. It is revalidated on
+// every start because an earlier version or a manual edit may have written it.
+func snapshotPathFromCfg(cfgPath, fallback string) string {
+	cfgSnapPath := config.ReadCfgValue(cfgPath, "SNAPSHOT_PATH", "")
+	if cfgSnapPath == "" {
+		return fallback
+	}
+	checked, err := safepath.CheckSnapshotLocation(cfgSnapPath)
+	if err != nil {
+		log.Printf("Warning: ignoring SNAPSHOT_PATH from vault.cfg: %v", err)
+		return fallback
+	}
+	log.Printf("Using snapshot path from vault.cfg: %s", checked)
+	return checked
 }

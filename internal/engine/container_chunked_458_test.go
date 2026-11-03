@@ -138,7 +138,11 @@ func TestContainerRestoreChunkedManifestErrors458(t *testing.T) {
 		work := t.TempDir()
 		m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{}}
 		for k, v := range files {
-			m.Files[k] = chunkTestFile(t, repo, filepath.Join(work, strings.Trim(k, "_")), v)
+			path := filepath.Join(work, strings.Trim(k, "_"))
+			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			m.Files[k] = chunkTestFile(t, repo, path, v)
 		}
 		id, err := repo.PutManifest("x", m)
 		if err != nil {
@@ -159,6 +163,8 @@ func TestContainerRestoreChunkedManifestErrors458(t *testing.T) {
 		{name: "no inspect entry", files: map[string]string{containerImageMetaKey: meta}, wantErr: "manifest missing __inspect"},
 		{name: "inspect not json", files: map[string]string{containerInspectKey: "{"}, wantErr: "parse inspect"},
 		{name: "bad restore destination", files: map[string]string{containerInspectKey: `{"Name":"/x","Config":{"Image":"nginx"}}`, containerImageMetaKey: meta}, dest: "not/absolute", wantErr: "invalid restore path"},
+		{name: "system restore destination", files: map[string]string{containerInspectKey: `{"Name":"/x","Config":{"Image":"nginx"}}`, containerImageMetaKey: meta}, dest: "/etc/vault-restore", wantErr: "outside the approved locations"},
+		{name: "backup-controlled mount source", files: map[string]string{containerInspectKey: `{"Name":"/x","Config":{"Image":"nginx"},"Mounts":[{"Type":"bind","Source":"/etc/cron.d","Destination":"/c"}]}`, containerImageMetaKey: meta, containerVolPrefix + "/c": "x"}, wantErr: "refusing in-place restore"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -273,5 +274,330 @@ func TestRestoreFromSnapshotAndPathErrors_458(t *testing.T) {
 	}
 	if err := sm.RestoreFromPath(garbage); err == nil {
 		t.Error("closed DB should fail RestoreFromPath")
+	}
+}
+
+// Issue #543: a snapshot path reached through a symlink must not be restored
+// from or written to.
+func TestSnapshotRefusesSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(filepath.Join(dir, "working.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	real := filepath.Join(dir, "real.db")
+	sm := NewSnapshotManager(database, real, real)
+	if err := sm.SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.RestoreFromPath(real); err != nil {
+		t.Fatalf("regular snapshot refused: %v", err)
+	}
+	if err := sm.RestoreFromSnapshot(); err != nil {
+		t.Fatalf("regular snapshot refused: %v", err)
+	}
+
+	link := filepath.Join(dir, "link.db")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.RestoreFromPath(link); err == nil {
+		t.Error("RestoreFromPath followed a symlink")
+	}
+	linked := NewSnapshotManager(database, link, real)
+	if err := linked.RestoreFromSnapshot(); err == nil {
+		t.Error("RestoreFromSnapshot followed a symlink")
+	}
+	if err := linked.SaveSnapshot(); err == nil {
+		t.Error("SaveSnapshot wrote through a symlink")
+	}
+
+	etc := filepath.Join(dir, "etc")
+	if err := os.Symlink("/etc", etc); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sm.SetSnapshotPath(filepath.Join(etc, "vault.db")); err == nil {
+		t.Error("SetSnapshotPath accepted a symlink out of the approved roots")
+	}
+	if err := NewSnapshotManager(database, "/etc/vault.db", real).SaveSnapshot(); err == nil {
+		t.Error("SaveSnapshot accepted a system path")
+	}
+	if err := sm.RestoreFromPath("/etc/hosts"); err == nil {
+		t.Error("RestoreFromPath accepted a system path")
+	}
+}
+
+func TestCopySnapshotPrivately(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "snap.db")
+	if err := os.WriteFile(src, []byte("bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	copied, remove, err := copySnapshotPrivately(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(copied)
+	if err != nil || string(got) != "bytes" {
+		t.Fatalf("copy = %q, %v", got, err)
+	}
+	info, err := os.Stat(copied)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("copy mode = %v, %v", info, err)
+	}
+	remove()
+	if _, err := os.Stat(copied); !os.IsNotExist(err) {
+		t.Fatalf("copy not removed: %v", err)
+	}
+	for name, bad := range map[string]string{
+		"system path": "/etc/hosts",
+		"directory":   dir,
+		"missing":     filepath.Join(dir, "missing.db"),
+		"no parent":   filepath.Join(dir, "gone", "x.db"),
+	} {
+		if _, _, err := copySnapshotPrivately(bad); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+// Committed changes still in the -wal sidecar must survive a restore.
+func TestRestoreFromPathKeepsWALChanges(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "source.db")
+	source, err := Open(srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = source.Close() })
+	if err := source.SetSetting("wal_marker", "committed"); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(srcPath + "-wal"); err != nil || info.Size() == 0 {
+		t.Skipf("no WAL content to test with: %v", err)
+	}
+	target, err := Open(filepath.Join(dir, "target.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = target.Close() })
+	if err := NewSnapshotManager(target, srcPath, srcPath).RestoreFromPath(srcPath); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := target.GetSetting("wal_marker", ""); got != "committed" {
+		t.Fatalf("wal_marker = %q; the WAL was dropped", got)
+	}
+}
+
+// Issue #545: a planted "rotated" symlink must not receive copies or lose files.
+func TestRotateSnapshotRefusesSymlinkedRotatedDir(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(filepath.Join(dir, "working.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	snapDir := filepath.Join(dir, "snap")
+	snap := filepath.Join(snapDir, "vault.db")
+	sm := NewSnapshotManager(database, snap, snap)
+	if err := sm.SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	victim := t.TempDir()
+	for i := range rotatedSnapshotsKept + 3 {
+		if err := os.WriteFile(filepath.Join(victim, fmt.Sprintf("a%02d", i)), []byte("keep"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rotated := filepath.Join(snapDir, "rotated")
+	if err := os.RemoveAll(rotated); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, rotated); err != nil {
+		t.Fatal(err)
+	}
+	sm.rotateSnapshot()
+	sm.pruneRotated(rotated)
+	entries, err := os.ReadDir(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != rotatedSnapshotsKept+3 {
+		t.Fatalf("victim directory changed: %d entries", len(entries))
+	}
+}
+
+// A configured snapshot path whose directory does not exist yet is created.
+func TestSaveSnapshotCreatesMissingParent(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(filepath.Join(dir, "working.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	snap := filepath.Join(dir, "new", "sub", "vault.db")
+	if err := NewSnapshotManager(database, snap, snap).SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(snap); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRotationHelpersRefuseBadEntries(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+	if err := os.WriteFile(filepath.Join(dir, "file"), []byte("snap"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"file", "link", "missing"} {
+		if sub, err := openRealSubdir(root, name); err == nil {
+			_ = sub.Close()
+			t.Errorf("openRealSubdir(%q) succeeded", name)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(dir, "out"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	out, err := openRealSubdir(root, "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = out.Close() })
+	if err := copyIntoRoot(root, "file", out, "copy"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "out", "copy")); string(got) != "snap" {
+		t.Fatalf("copy = %q", got)
+	}
+	if err := copyIntoRoot(root, "file", out, "copy"); err == nil {
+		t.Fatal("existing copy overwritten")
+	}
+	if err := copyIntoRoot(root, "missing", out, "other"); err == nil {
+		t.Fatal("missing source copied")
+	}
+	sm := &SnapshotManager{}
+	sm.pruneRotated(filepath.Join(dir, "link"))
+	sm.pruneRotated(filepath.Join(dir, "gone", "rotated"))
+	sm.pruneRotated(filepath.Join(dir, "missing"))
+}
+
+func TestCopySnapshotPrivatelyCarriesWAL(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "snap.db")
+	for name, body := range map[string]string{src: "main", src + "-wal": "wal"} {
+		if err := os.WriteFile(name, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	copied, remove, err := copySnapshotPrivately(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remove()
+	if got, _ := os.ReadFile(copied + "-wal"); string(got) != "wal" {
+		t.Fatalf("wal copy = %q", got)
+	}
+	if err := os.Remove(src + "-wal"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(src+"-wal", 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := copySnapshotPrivately(src); err == nil {
+		t.Fatal("non-regular WAL accepted")
+	}
+}
+
+func TestSnapshotHelpersPermissionFailures(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions and a non-root user")
+	}
+	dir := t.TempDir()
+	database, err := Open(filepath.Join(dir, "working.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	// Rotation in a snapshot directory that cannot take a "rotated" child.
+	roDir := filepath.Join(dir, "ro")
+	snap := filepath.Join(roDir, "vault.db")
+	sm := NewSnapshotManager(database, snap, snap)
+	if err := sm.SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(roDir, "rotated")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(roDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(roDir, 0o700) })
+	sm.rotateSnapshot()
+	if _, err := os.Lstat(filepath.Join(roDir, "rotated")); !os.IsNotExist(err) {
+		t.Fatalf("rotated created in a read-only directory: %v", err)
+	}
+	_ = os.Chmod(roDir, 0o700)
+
+	// A read-only "rotated" refuses both the link and the copy.
+	if err := os.Mkdir(filepath.Join(roDir, "rotated"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	sm.rotateSnapshot()
+	entries, _ := os.ReadDir(filepath.Join(roDir, "rotated"))
+	if len(entries) != 0 {
+		t.Fatalf("copied into a read-only rotated directory: %v", entries)
+	}
+
+	// An unreadable subdirectory cannot be opened.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	if sub, err := openRealSubdir(root, "locked"); err == nil {
+		_ = sub.Close()
+		t.Fatal("opened an unreadable directory")
+	}
+
+	// An unreadable snapshot cannot be copied.
+	unreadable := filepath.Join(dir, "unreadable.db")
+	if err := os.WriteFile(unreadable, []byte("x"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := copySnapshotPrivately(unreadable); err == nil {
+		t.Fatal("copied an unreadable snapshot")
+	}
+}
+
+func TestCopySnapshotPrivatelyNeedsTempDir(t *testing.T) {
+	// The snapshot lives under /tmp, which stays approved after TMPDIR moves.
+	dir, err := os.MkdirTemp("/tmp", "vault-snap-")
+	if err != nil {
+		t.Skipf("no /tmp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	src := filepath.Join(dir, "snap.db")
+	if err := os.WriteFile(src, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	if _, _, err := copySnapshotPrivately(src); err == nil {
+		t.Fatal("copied without a usable temp directory")
 	}
 }

@@ -3,10 +3,12 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // SettingCleanDestination is the BackupItem.Settings key that asks a restore to
@@ -69,9 +71,11 @@ func clearRestoreTarget(target string) error {
 		return fmt.Errorf("%w: %s is only %d level(s) below the filesystem root", errUnsafeToClean, normalized, depth)
 	}
 
-	root, err := os.OpenRoot(normalized)
+	// Pinned component by component, so an ancestor swapped for a symlink after
+	// the checks above fails here rather than redirecting the deletion.
+	root, err := safepath.OpenPinnedDir(normalized)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return fmt.Errorf("opening restore target %s: %w", normalized, err)

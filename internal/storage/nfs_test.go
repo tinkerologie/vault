@@ -12,8 +12,9 @@ func TestNFSGetCapacity(t *testing.T) {
 	// a temp dir directly into the struct (white-box, same package).
 	dir := t.TempDir()
 	a := &NFSAdapter{
-		local:   NewLocalAdapter(dir),
-		mounted: true,
+		mountDir: dir,
+		local:    NewLocalAdapter(dir),
+		mounted:  true,
 	}
 	cap, err := a.GetCapacity(context.Background())
 	if err != nil {

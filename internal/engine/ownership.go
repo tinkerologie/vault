@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // Restoring a backup has to put back what the backup captured, and on Unraid
@@ -29,6 +30,97 @@ import (
 
 var chownWarnOnce sync.Once
 
+// restoredMeta is the metadata to put back on one restored path. A nil mode
+// leaves the mode alone, negative ids follow chown(2) ("leave unchanged"), and a
+// zero time leaves the mtime alone.
+type restoredMeta struct {
+	mode    *os.FileMode
+	uid     int
+	gid     int
+	modTime time.Time
+}
+
+// applyRestoredMeta applies m to path through a handle pinned to its parent, so
+// a directory swapped for a symlink after validation cannot redirect the update
+// outside the restore. base is the restore tree path must stay in; empty means
+// the approved restore roots. Symlinks are chowned themselves and otherwise left
+// alone. Failures are logged, never fatal: the bytes are already back.
+func applyRestoredMeta(base, path string, m restoredMeta) {
+	if !restorePathSafe(path) {
+		log.Printf("engine: restore: refusing to set metadata on suspicious path %q", path)
+		return
+	}
+	root, name, err := pinRestoredParent(base, path)
+	if err != nil {
+		log.Printf("engine: restore: refusing to set metadata on %s: %v", path, err)
+		return
+	}
+	defer root.Close()
+	info, err := root.Lstat(name)
+	if err != nil {
+		log.Printf("engine: restore: could not inspect %s: %v", path, err)
+		return
+	}
+	isLink := info.Mode()&os.ModeSymlink != 0
+	if m.mode != nil && !isLink {
+		if err := root.Chmod(name, m.mode.Perm()); err != nil {
+			log.Printf("engine: restore: could not set mode on %s: %v", path, err)
+		}
+	}
+	if m.uid >= 0 || m.gid >= 0 {
+		if err := root.Lchown(name, m.uid, m.gid); err != nil {
+			chownWarnOnce.Do(func() {
+				log.Printf("engine: restore: could not set ownership of %s to %d:%d: %v "+
+					"(restored files keep the daemon's own owner; further occurrences are not logged)", path, m.uid, m.gid, err)
+			})
+		}
+	}
+	if !m.modTime.IsZero() {
+		if isLink {
+			log.Printf("engine: restore: refusing to set mtime on symlink %q", path)
+		} else if err := root.Chtimes(name, m.modTime, m.modTime); err != nil {
+			log.Printf("engine: restore: setting mtime on %s: %v", path, err)
+		}
+	}
+}
+
+// pinRestoredParent resolves path's parent, checks it stays inside base (or the
+// approved roots), and returns a pinned handle to it with path's final component.
+func pinRestoredParent(base, path string) (*os.Root, string, error) {
+	cleaned := filepath.Clean(path)
+	parent, err := evalExistingPrefix(filepath.Dir(cleaned))
+	if err != nil {
+		return nil, "", err
+	}
+	name := filepath.Base(cleaned)
+	if base != "" {
+		resolvedBase, err := evalExistingPrefix(base)
+		if err != nil {
+			return nil, "", err
+		}
+		if !pathWithin(resolvedBase, filepath.Join(parent, name)) {
+			return nil, "", fmt.Errorf("resolves outside %s", base)
+		}
+	} else {
+		allowed, err := restorePathWithinAllowedRoots(parent)
+		if err != nil {
+			return nil, "", err
+		}
+		if !allowed {
+			return nil, "", fmt.Errorf("resolves outside the approved restore roots")
+		}
+	}
+	root, err := safepath.OpenPinnedDir(parent)
+	if err != nil {
+		return nil, "", err
+	}
+	return root, name, nil
+}
+
+func pathWithin(base, p string) bool {
+	return p == base || strings.HasPrefix(p, base+string(filepath.Separator))
+}
+
 // applyOwner chowns path to uid/gid, following the same "negative means leave
 // alone" convention as chown(2), so an unknown owner (-1, recorded by backups
 // taken before ownership was captured) is a no-op rather than a reset to root.
@@ -37,16 +129,7 @@ func applyOwner(path string, uid, gid int) {
 	if uid < 0 && gid < 0 {
 		return
 	}
-	if !restorePathSafe(path) {
-		log.Printf("engine: restore: refusing to set ownership of suspicious path %q", path)
-		return
-	}
-	if err := os.Lchown(path, uid, gid); err != nil {
-		chownWarnOnce.Do(func() {
-			log.Printf("engine: restore: could not set ownership of %s to %d:%d: %v "+
-				"(restored files keep the daemon's own owner; further occurrences are not logged)", path, uid, gid, err)
-		})
-	}
+	applyRestoredMeta("", path, restoredMeta{uid: uid, gid: gid})
 }
 
 // applyVolumeRootMeta restores the mode and ownership of a container volume's
@@ -118,36 +201,17 @@ func restorePathSafe(p string) bool {
 // rather than os.Chmod directly: OpenFile only applies its mode when it
 // creates the file and MkdirAll leaves an existing directory alone, so
 // restoring over an existing tree would otherwise keep the stale permissions.
-// A failure is logged, never fatal — the bytes are already back.
 func applyMode(path string, mode os.FileMode) {
-	if !restorePathSafe(path) {
-		log.Printf("engine: restore: refusing to set mode on suspicious path %q", path)
-		return
-	}
-	if err := os.Chmod(path, mode.Perm()); err != nil {
-		log.Printf("engine: restore: could not set mode on %s: %v", path, err)
-	}
+	applyRestoredMeta("", path, restoredMeta{mode: &mode, uid: -1, gid: -1})
 }
 
-// applyModTimeFromTime sets a restored path's modification time from a time.Time.
-// Restores go through this rather than os.Chtimes directly: like applyMode,
-// applyOwner, and applyModTime, it validates the path through restorePathSafe and
-// swallows chtimes errors so time-setting never fails a restore whose bytes are already back.
+// applyModTimeFromTime sets a restored path's modification time from a time.Time,
+// through the same pinned handle as applyMode.
 func applyModTimeFromTime(path string, t time.Time) {
-	if !restorePathSafe(path) || strings.Contains(path, "../") || strings.Contains(path, "..\\") {
-		log.Printf("engine: restore: refusing to set mtime on suspicious path %q", path)
-		return
-	}
 	if t.IsZero() {
 		return
 	}
-	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		log.Printf("engine: restore: refusing to set mtime on symlink %q", path)
-		return
-	}
-	if err := chtimesNoFollow(path, t); err != nil {
-		log.Printf("engine: restore: setting mtime on %s: %v", path, err)
-	}
+	applyRestoredMeta("", path, restoredMeta{uid: -1, gid: -1, modTime: t})
 }
 
 // applyModTime sets a restored path's modification time. Restores go through
@@ -165,6 +229,9 @@ func applyModTime(path string, mtime string) {
 // have to be written, and a directory restored read-only would lock the
 // extractor out of its own children. applyMode puts the recorded mode back
 // once nothing more will be written inside.
+//
+// The tree is created through a handle pinned to the deepest existing ancestor,
+// so a swapped ancestor cannot redirect the creation.
 func mkdirRestored(path string, mode os.FileMode) error {
 	if !restorePathSafe(path) || strings.Contains(path, "../") || strings.Contains(path, "..\\") {
 		return fmt.Errorf("refusing to create suspicious path %q", path)
@@ -172,5 +239,34 @@ func mkdirRestored(path string, mode os.FileMode) error {
 	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("refusing to restore directory through symlink at %s", path)
 	}
-	return os.MkdirAll(path, mode.Perm()|0o700)
+	resolved, err := evalExistingPrefix(path)
+	if err != nil {
+		return fmt.Errorf("resolving %s: %w", path, err)
+	}
+	allowed, err := restorePathWithinAllowedRoots(resolved)
+	if err != nil {
+		return fmt.Errorf("checking %s: %w", path, err)
+	}
+	if !allowed {
+		return fmt.Errorf("refusing to create %s: it resolves outside the approved restore roots", path)
+	}
+	existing, rest := resolved, ""
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspecting %s: %w", existing, err)
+		}
+		rest = filepath.Join(filepath.Base(existing), rest)
+		existing = filepath.Dir(existing)
+	}
+	root, err := safepath.OpenPinnedDir(existing)
+	if err != nil {
+		return fmt.Errorf("refusing to create %s: %w", path, err)
+	}
+	defer root.Close()
+	if rest == "" {
+		return nil
+	}
+	return root.MkdirAll(rest, mode.Perm()|0o700)
 }

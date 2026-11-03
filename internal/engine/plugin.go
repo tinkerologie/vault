@@ -7,14 +7,17 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // entityDeclPattern matches DOCTYPE <!ENTITY name "value"> declarations in .plg files.
@@ -77,6 +80,68 @@ func pluginPath(name string) string {
 		return ""
 	}
 	return filepath.Join(pluginsDir, name)
+}
+
+// checkPluginConfigDir refuses a plugin config directory that is not where it
+// claims to be: it must pass the folder policy and resolve inside pluginsDir, so
+// a symlink planted at the plugin's name cannot lead to another tree.
+func checkPluginConfigDir(dir string) error {
+	if _, err := safepath.CheckFolderLocation(dir); err != nil {
+		return err
+	}
+	base, err := pluginsRoot()
+	if err != nil {
+		return err
+	}
+	resolved, err := evalExistingPrefix(dir)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(resolved, base+string(filepath.Separator)) {
+		return fmt.Errorf("plugin config directory %s resolves outside %s", dir, pluginsDir)
+	}
+	return nil
+}
+
+// pluginsRoot returns pluginsDir after checking that no symlink leads to it, so
+// a replaced plugins directory cannot carry backups or restores elsewhere.
+func pluginsRoot() (string, error) {
+	clean := filepath.Clean(pluginsDir)
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return "", err
+	}
+	if resolved != clean {
+		return "", fmt.Errorf("plugins directory %s is reached through a symlink", pluginsDir)
+	}
+	return resolved, nil
+}
+
+// openPluginsRoot opens pluginsDir through a handle that follows no symlinks.
+func openPluginsRoot() (*os.Root, error) {
+	dir, err := pluginsRoot()
+	if err != nil {
+		return nil, err
+	}
+	return safepath.OpenPinnedDir(dir)
+}
+
+// readPluginInstaller reads <pluginsDir>/<name>.plg, refusing anything but a
+// regular file so a planted symlink cannot pull another file into the backup.
+func readPluginInstaller(name string) ([]byte, error) {
+	root, err := openPluginsRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	info, err := root.Lstat(name + ".plg")
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s.plg is not a regular file", name)
+	}
+	return root.ReadFile(name + ".plg")
 }
 
 // PluginPath returns the canonical config directory for a plugin under
@@ -166,12 +231,12 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	progress(item.Name, 10, "copying plugin file")
 	plgSrc := filepath.Join(pluginsDir, pluginName+".plg")
 	plgDst := filepath.Join(destDir, pluginName+".plg")
-	if _, err := os.Stat(plgSrc); err != nil {
+	data, err := readPluginInstaller(pluginName)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("plugin file not found: %w", err)
 	}
-	data, err := os.ReadFile(plgSrc) // #nosec G304 — pluginName validated by normalizeRestoreComponent above
 	if err != nil {
-		return nil, fmt.Errorf("reading plugin file: %w", err)
+		return nil, fmt.Errorf("reading plugin file %s: %w", plgSrc, err)
 	}
 	if err := os.WriteFile(plgDst, data, 0644); err != nil {
 		return nil, fmt.Errorf("writing plugin file: %w", err)
@@ -181,6 +246,9 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	// Step 2: Archive the config directory if it exists.
 	progress(item.Name, 40, "archiving config")
 	configDir := pluginPath(pluginName)
+	if err := checkPluginConfigDir(configDir); err != nil {
+		return nil, fmt.Errorf("refusing to back up plugin config: %w", err)
+	}
 	if info, err := os.Stat(configDir); err == nil && info.IsDir() {
 		effectiveCompression := MaybeDowngradeCompression(configDir, item.Compression)
 		archivePath := filepath.Join(destDir, "config.tar"+archiveExt(effectiveCompression))
@@ -280,8 +348,7 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	progress(item.Name, 30, "restoring plugin file")
 	plgSrc := filepath.Join(sourceDir, pluginName+".plg")
 	if data, err := os.ReadFile(plgSrc); err == nil { // #nosec G304 — pluginName validated by normalizeRestoreComponent above
-		plgDst := filepath.Join(pluginsDir, pluginName+".plg")
-		if err := os.WriteFile(plgDst, data, 0644); err != nil {
+		if err := writePluginInstaller(pluginName, data); err != nil {
 			return fmt.Errorf("writing plugin file: %w", err)
 		}
 	} else {
@@ -304,6 +371,9 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 			}
 			normalized, err := normalizeRestorePath(restoreDest)
 			if err != nil {
+				return err
+			}
+			if _, err := safepath.CheckCustomRestoreDestination(restoreDest); err != nil {
 				return err
 			}
 			configDir = normalized
@@ -344,12 +414,18 @@ func pluginPlgFilePath(name string) string {
 // manifest holds only the config files, exactly as the folder backup produced
 // before this change, so existing restore points are unaffected.
 func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error) {
+	safeName, err := normalizeRestoreComponent(item.Name)
+	if err != nil {
+		return dedup.ID{}, fmt.Errorf("invalid plugin name: %w", err)
+	}
 	src, _ := item.Settings["path"].(string)
 	if src == "" {
-		src = pluginPath(item.Name)
-	}
-	if src == "" {
-		return dedup.ID{}, fmt.Errorf("plugin: cannot resolve directory for %q", item.Name)
+		if err := checkPluginConfigDir(pluginPath(safeName)); err != nil {
+			return dedup.ID{}, fmt.Errorf("plugin: %w", err)
+		}
+		src = pluginPath(safeName)
+	} else if _, err := safepath.CheckFolderLocation(src); err != nil {
+		return dedup.ID{}, fmt.Errorf("plugin: %w", err)
 	}
 	// Forward the incremental cut-off and exclusions into the folder proxy.
 	// Dropping changed_since here is what made every dedup plugin backup a
@@ -375,7 +451,7 @@ func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	// Record the .plg installer out-of-tree in the manifest (best-effort).
 	// Attached before PutManifest because the config manifest is not yet
 	// flushed and so cannot be read back mid-run.
-	if plgData, rErr := os.ReadFile(pluginPlgFilePath(item.Name)); rErr == nil { // #nosec G304 — path is pluginsDir + item name, no request-controlled component
+	if plgData, rErr := os.ReadFile(pluginPlgFilePath(safeName)); rErr == nil { // #nosec G304 — path is pluginsDir + a name validated above
 		chunkID, pErr := repo.Put(plgData)
 		if pErr != nil {
 			return dedup.ID{}, fmt.Errorf("plugin: storing .plg for %q: %w", item.Name, pErr)
@@ -397,6 +473,9 @@ func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 // (pluginPath(item.Name)) so production restore lands in
 // /boot/config/plugins/<name>/. Tests pass a t.TempDir().
 func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
+	if _, err := normalizeRestoreComponent(item.Name); err != nil {
+		return fmt.Errorf("invalid plugin name: %w", err)
+	}
 	if destPath == "" {
 		// Mirror ContainerHandler.RestoreChunked: honour restore_destination as
 		// a fallback before the well-known directory, so the parameter and the
@@ -410,6 +489,13 @@ func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	if destPath == "" {
 		return fmt.Errorf("plugin: cannot resolve restore directory for %q", item.Name)
 	}
+	if custom, _ := item.Settings["restore_destination"].(string); custom != "" {
+		if _, err := safepath.CheckCustomRestoreDestination(custom); err != nil {
+			return err
+		}
+	} else if _, err := safepath.CheckFolderLocation(destPath); err != nil {
+		return err
+	}
 	// Propagate the partial-restore file picker through the proxy item so a
 	// selection made on a dedup plugin restore reaches FolderHandler.
 	// RestoreChunked, which honours restore_file_paths. Without this the
@@ -420,7 +506,7 @@ func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	}
 	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: proxySettings}
 	fh := &FolderHandler{}
-	if err := fh.RestoreChunked(ctx, proxy, repo, manifestID, destPath, progress); err != nil {
+	if err := fh.restoreChunkedTree(ctx, proxy, repo, manifestID, destPath, progress); err != nil {
 		return fmt.Errorf("plugin: restoring config for %q: %w", item.Name, err)
 	}
 	return h.restorePluginInstaller(ctx, item, repo, manifestID)
@@ -455,9 +541,28 @@ func (h *PluginHandler) restorePluginInstaller(ctx context.Context, item BackupI
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	dst := filepath.Join(pluginsDir, safeName+".plg")
-	if err := os.WriteFile(dst, data, 0644); err != nil { // #nosec G306 — .plg is installed world-readable, matching classic Restore
+	if err := writePluginInstaller(safeName, data); err != nil {
 		return fmt.Errorf("plugin: writing .plg for %q: %w", item.Name, err)
 	}
 	return nil
+}
+
+// writePluginInstaller writes <pluginsDir>/<name>.plg through a handle on the
+// plugins directory, refusing to follow a symlink at that name. name must already
+// be a validated single component.
+func writePluginInstaller(name string, data []byte) error {
+	root, err := openPluginsRoot()
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	f, err := root.OpenFile(name+".plg", os.O_CREATE|os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, 0o644) // .plg is installed world-readable
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/docsmeta"
 	"github.com/tinkerologie/vault/internal/mount"
+	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/tempdir"
 	"github.com/tinkerologie/vault/internal/unraid"
 )
@@ -138,7 +140,7 @@ func runUninstallCleanup(cfg uninstallCleanupConfig) error {
 	}
 
 	for _, path := range managedSnapshotPaths(cfg, state) {
-		if err := removeDatabaseArtifacts(path); err != nil {
+		if err := removeSnapshotArtifacts(path, path == normalizePath(cfg.DefaultSnapshotDB)); err != nil {
 			return err
 		}
 	}
@@ -362,6 +364,74 @@ func removeDatabaseArtifacts(path string) error {
 	}
 
 	pruneEmpty(filepath.Dir(path))
+	return nil
+}
+
+// sqliteMagic starts every SQLite database file.
+const sqliteMagic = "SQLite format 3\x00"
+
+// removeSnapshotArtifacts deletes a snapshot database and its sidecars. The path
+// comes from a persisted setting, so unlike Vault's fixed paths it is not taken
+// on trust: it must pass the snapshot location policy, the file must really be a
+// SQLite database, and everything is unlinked through a handle pinned to its
+// directory. It never removes a directory recursively.
+//
+// orphanSidecars allows removing -wal, -shm and -journal files when the database
+// itself is gone. Only Vault's own default location gets that: a persisted
+// override has to prove it names a database first.
+func removeSnapshotArtifacts(path string, orphanSidecars bool) error {
+	path = normalizePath(path)
+	if path == "" {
+		return nil
+	}
+	cleaned, err := safepath.CheckSnapshotLocation(path)
+	if err != nil {
+		log.Printf("cleanup-uninstall: keeping %s: %v", path, err)
+		return nil
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(cleaned))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	name := filepath.Base(cleaned)
+	// Checked again in resolved form: the handle below follows no symlinks.
+	if _, err := safepath.CheckSnapshotLocation(filepath.Join(dir, name)); err != nil {
+		log.Printf("cleanup-uninstall: keeping %s: %v", path, err)
+		return nil
+	}
+	root, err := safepath.OpenPinnedDir(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	f, err := root.Open(name)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// Sidecars can outlive the database; they are removed below only at
+		// the default location, which is Vault's own.
+		if !orphanSidecars {
+			return nil
+		}
+	case err != nil:
+		return err
+	default:
+		header := make([]byte, len(sqliteMagic))
+		_, readErr := io.ReadFull(f, header)
+		_ = f.Close()
+		if readErr != nil || string(header) != sqliteMagic {
+			log.Printf("cleanup-uninstall: keeping %s: not a SQLite database", path)
+			return nil
+		}
+	}
+	for _, candidate := range []string{name, name + "-wal", name + "-shm", name + "-journal"} {
+		if err := root.Remove(candidate); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove %s: %w", filepath.Join(dir, candidate), err)
+		}
+	}
+	pruneEmpty(dir)
 	return nil
 }
 

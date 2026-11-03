@@ -150,6 +150,7 @@ func selectItems(p Point, names []string) ([]Item, error) {
 type extractor struct {
 	ctx      context.Context
 	root     string
+	handle   *os.Root // pinned to root; every write goes through it
 	names    *namer
 	include  []string
 	report   *ItemReport
@@ -171,9 +172,15 @@ func (s *Session) extractItem(ctx context.Context, p Point, item Item, root stri
 	if err := prepareRoot(root, opts.Overwrite); err != nil {
 		return err
 	}
+	handle, err := openItemRoot(root)
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
 	x := &extractor{
 		ctx:      ctx,
 		root:     root,
+		handle:   handle,
 		names:    newNamer(safe, safe || caseInsensitiveFS()),
 		report:   rep,
 		progress: opts.Progress,
@@ -268,6 +275,34 @@ func prepareRoot(root string, overwrite bool) error {
 	return os.MkdirAll(root, 0o750)
 }
 
+// openItemRoot pins the item folder, confirming the handle is the real directory
+// prepareRoot inspected. os.Root then keeps a raced symlink from leading a write
+// outside the folder.
+func openItemRoot(root string) (*os.Root, error) {
+	info, err := os.Lstat(root)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%s is not a real folder", root)
+	}
+	handle, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := handle.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		_ = handle.Close()
+		return nil, fmt.Errorf("%s changed while being opened", root)
+	}
+	return handle, nil
+}
+
+// rel converts a path produced by target() to one relative to the item folder.
+func (x *extractor) rel(full string) (string, error) {
+	return filepath.Rel(x.root, full)
+}
+
 func (x *extractor) say(format string, args ...any) {
 	if x.progress != nil {
 		x.progress(fmt.Sprintf(format, args...))
@@ -345,7 +380,11 @@ func (x *extractor) mkdir(display string, mode os.FileMode, modTime time.Time) e
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(full, 0o750); err != nil {
+	rel, err := x.rel(full)
+	if err != nil {
+		return err
+	}
+	if err := x.handle.MkdirAll(rel, 0o750); err != nil {
 		return err
 	}
 	x.dirTimes[full] = dirMeta{mode: mode, modTime: modTime}
@@ -358,13 +397,17 @@ func (x *extractor) writeFile(display string, r io.Reader, mode os.FileMode, mod
 	if err != nil {
 		return 0, err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+	rel, err := x.rel(full)
+	if err != nil {
 		return 0, err
 	}
-	if info, err := os.Lstat(full); err == nil && !info.Mode().IsRegular() {
+	if err := x.handle.MkdirAll(filepath.Dir(rel), 0o750); err != nil {
+		return 0, err
+	}
+	if info, err := x.handle.Lstat(rel); err == nil && !info.Mode().IsRegular() {
 		return 0, fmt.Errorf("refusing to replace %s, which is not a regular file", full)
 	}
-	f, err := os.OpenFile(full, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // #nosec G304 -- full is confined to the item folder by target()
+	f, err := x.handle.OpenFile(rel, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return 0, err
 	}
@@ -375,20 +418,25 @@ func (x *extractor) writeFile(display string, r io.Reader, mode os.FileMode, mod
 	if err != nil {
 		return n, fmt.Errorf("write %s: %w", full, err)
 	}
-	applyFileMeta(full, mode, modTime)
+	x.applyMeta(rel, mode, modTime)
 	x.written[display] = full
 	x.sizes[display] = n
 	return n, nil
 }
 
-// applyFileMeta restores permission bits (not on Windows, where they would
-// only make recovered files read-only) and the modification time.
-func applyFileMeta(full string, mode os.FileMode, modTime time.Time) {
+// applyMeta restores permission bits (not on Windows, where they would only
+// make recovered files read-only) and the modification time. A symlink swapped
+// in at rel is left alone rather than followed.
+func (x *extractor) applyMeta(rel string, mode os.FileMode, modTime time.Time) {
+	info, err := x.handle.Lstat(rel)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		return
+	}
 	if runtime.GOOS != "windows" && mode != 0 {
-		_ = os.Chmod(full, mode.Perm()|0o200)
+		_ = x.handle.Chmod(rel, mode.Perm()|0o200)
 	}
 	if !modTime.IsZero() {
-		_ = os.Chtimes(full, modTime, modTime)
+		_ = x.handle.Chtimes(rel, modTime, modTime)
 	}
 }
 
@@ -407,7 +455,11 @@ func (x *extractor) finish() error {
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
 	for _, d := range dirs {
-		applyFileMeta(d, x.dirTimes[d].mode|0o700, x.dirTimes[d].modTime)
+		rel, err := x.rel(d)
+		if err != nil {
+			return err
+		}
+		x.applyMeta(rel, x.dirTimes[d].mode|0o700, x.dirTimes[d].modTime)
 	}
 	return x.ctx.Err()
 }
@@ -651,7 +703,11 @@ func (x *extractor) symlink(display, linkname string) string {
 	if err != nil {
 		return err.Error()
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+	rel, err := x.rel(full)
+	if err != nil {
+		return err.Error()
+	}
+	if err := x.handle.MkdirAll(filepath.Dir(rel), 0o750); err != nil {
 		return err.Error()
 	}
 	// The link is created in a real directory inside the item: resolve any
@@ -669,15 +725,15 @@ func (x *extractor) symlink(display, linkname string) string {
 	if realTarget, err := filepath.EvalSymlinks(filepath.Join(realDir, filepath.FromSlash(linkname))); err == nil && !isWithin(realRoot, realTarget) {
 		return "resolves outside the item, not recreated"
 	}
-	if info, err := os.Lstat(full); err == nil {
+	if info, err := x.handle.Lstat(rel); err == nil {
 		if info.Mode()&os.ModeSymlink == 0 {
 			return "a file already exists at this path"
 		}
-		if err := os.Remove(full); err != nil {
+		if err := x.handle.Remove(rel); err != nil {
 			return err.Error()
 		}
 	}
-	if err := os.Symlink(filepath.FromSlash(linkname), filepath.Join(realDir, filepath.Base(full))); err != nil {
+	if err := x.handle.Symlink(filepath.FromSlash(linkname), rel); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -690,7 +746,11 @@ func (x *extractor) copyHardlink(display, linkTarget string, mode os.FileMode, m
 	if !ok {
 		return fmt.Errorf("target %s was not extracted", linkTarget)
 	}
-	f, err := os.Open(src) // #nosec G304 -- src was written by this extraction
+	srcRel, err := x.rel(src)
+	if err != nil {
+		return err
+	}
+	f, err := x.handle.Open(srcRel)
 	if err != nil {
 		return err
 	}

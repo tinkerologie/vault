@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/dedup"
@@ -14,8 +16,14 @@ import (
 
 func newTestExtractor(t *testing.T) *extractor {
 	t.Helper()
+	root := t.TempDir()
+	handle, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
 	return &extractor{
-		ctx: context.Background(), root: t.TempDir(), names: newNamer(false, false),
+		ctx: context.Background(), root: root, handle: handle, names: newNamer(false, false),
 		report: &ItemReport{}, written: map[string]string{}, sizes: map[string]int64{},
 		fromTree: map[string]bool{}, dirTimes: map[string]dirMeta{}, checked: map[string]bool{},
 	}
@@ -94,5 +102,121 @@ func TestExtractDedupSkipsUnmappableNames(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(x.root, "bad\uFFFD.txt")); err != nil {
 		t.Fatalf("the non-UTF-8 name should be recovered as U+FFFD: %v", err)
+	}
+}
+
+func TestOpenItemRootRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "item")
+	if err := os.Symlink(t.TempDir(), link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openItemRoot(link); err == nil {
+		t.Fatal("symlinked item folder accepted")
+	}
+	if _, err := openItemRoot(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("missing folder accepted")
+	}
+	handle, err := openItemRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = handle.Close()
+}
+
+// Issue #545: once a folder has been checked, swapping it for a symlink must not
+// lead later writes out of the item.
+func TestWriteFileSurvivesSwappedDirectory(t *testing.T) {
+	x := newTestExtractor(t)
+	outside := t.TempDir()
+	if _, err := x.writeFile("sub/first", strings.NewReader("a"), 0o640, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(x.root, "sub")
+	if err := os.Rename(sub, sub+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, sub); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.writeFile("sub/second", strings.NewReader("b"), 0o640, time.Time{}); err == nil {
+		t.Fatal("wrote through a swapped symlink")
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "second")); !os.IsNotExist(err) {
+		t.Fatalf("file created outside the item: %v", err)
+	}
+}
+
+func TestExtractorWritesThroughItemHandle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("links are never recreated on Windows")
+	}
+	x := newTestExtractor(t)
+	stamp := time.Unix(1000, 0)
+	if err := x.mkdir("d/e", 0o750, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.writeFile("d/f", strings.NewReader("data"), 0o640, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.copyHardlink("d/g", "d/f", 0o640, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if reason := x.symlink("d/link", "f"); reason != "" {
+		t.Fatalf("symlink: %s", reason)
+	}
+	// Replacing an existing link is allowed; replacing a file is not.
+	if reason := x.symlink("d/link", "g"); reason != "" {
+		t.Fatalf("relink: %s", reason)
+	}
+	if reason := x.symlink("d/f", "g"); reason == "" {
+		t.Fatal("symlink replaced a regular file")
+	}
+	if _, err := x.writeFile("d/link", strings.NewReader("x"), 0o640, stamp); err == nil {
+		t.Fatal("file written over a symlink")
+	}
+	if err := x.finish(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(x.root, "d", "e"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(stamp) {
+		t.Fatalf("directory mtime = %v", info.ModTime())
+	}
+	// Metadata is never applied through a symlink.
+	x.applyMeta(filepath.Join("d", "link"), 0o777, stamp)
+	target, err := os.Stat(filepath.Join(x.root, "d", "g"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Mode().Perm() == 0o777 {
+		t.Fatal("followed the link")
+	}
+	x.applyMeta("missing", 0o777, stamp)
+}
+
+func TestOpenItemRootRefusesFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openItemRoot(file); err == nil {
+		t.Fatal("regular file accepted as an item folder")
+	}
+}
+
+func TestOpenItemRootUnreadable(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions and a non-root user")
+	}
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	if _, err := openItemRoot(locked); err == nil {
+		t.Fatal("opened an unreadable item folder")
 	}
 }
