@@ -182,7 +182,12 @@ func chunkedVolumeSources(m dedup.Manifest, inspect restoreInspect, selection []
 					continue
 				}
 			}
-			written := v.Size != volumeSkippedSize && (len(v.Chunks) > 0 || (isFile && v.Size == 0))
+			written := v.Size != volumeSkippedSize && len(v.Chunks) > 0
+			if isFile {
+				// Must match the skip in restoreChunkedVolumes exactly: any other
+				// entry there opens the target for writing, even with no chunks.
+				written = v.Size != volumeSkippedSize && (v.Size <= 0 || len(v.Chunks) > 0)
+			}
 			if dest == mnt.Destination && written {
 				sources = append(sources, mnt.Source)
 				break

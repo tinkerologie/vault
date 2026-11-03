@@ -144,6 +144,18 @@ func TestChunkedVolumeSources(t *testing.T) {
 	}
 }
 
+// A file entry with a negative size and no chunks would still truncate its target.
+func TestChunkedVolumeSourcesCountsEmptyFileEntries(t *testing.T) {
+	t.Parallel()
+	inspect := inspectFromJSON(t, `{"Mounts":[{"Type":"bind","Source":"/etc/passwd","Destination":"/f"}]}`)
+	for _, size := range []int64{-2, 0} {
+		m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{containerVolFilePrefix + "/f": {Size: size}}}
+		if got := chunkedVolumeSources(m, inspect, nil); len(got) != 1 {
+			t.Errorf("size %d: sources = %v", size, got)
+		}
+	}
+}
+
 func TestChunkedVolumeSourcesHonourSelection(t *testing.T) {
 	t.Parallel()
 	m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{
