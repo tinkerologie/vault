@@ -434,11 +434,15 @@ describe('poll mode', () => {
         return jsonResponse({ active: false, queue: [] })
       })
       const bulk = []
-      ws.onWsMessage((m) => { if (m.type === 'anomaly.bulk_resolved') bulk.push(m) })
+      ws.onWsMessage((m) => { if (m.type.startsWith('anomaly.bulk_')) bulk.push(m) })
       ws.connectWs()
       await vi.advanceTimersByTimeAsync(15 * 2000) // baseline: 201 open
       await vi.advanceTimersByTimeAsync(15 * 2000) // all gone: over the limit
-      expect(bulk).toHaveLength(1)
+      // Not bulk_resolved, which makes the Dashboard card replace the
+      // complete shared list with one page.
+      expect(bulk.map((m) => m.type)).toEqual(['anomaly.bulk_acked'])
+      expect(bulk[0].data.ids).toEqual(many.map((a) => a.id))
+      expect(anomalies.handleBulkAcked).toHaveBeenCalledWith({ ids: many.map((a) => a.id) })
       expect(lookups).toBe(0)
       await vi.advanceTimersByTimeAsync(15 * 2000) // nothing left queued
       expect(lookups).toBe(0)

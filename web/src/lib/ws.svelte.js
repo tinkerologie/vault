@@ -175,9 +175,11 @@ async function pollAnomalies() {
     const newlyGone = [...knownAnomalies.keys()].filter((id) => !next.has(id) && !goneAnomalies.includes(id))
     goneAnomalies = [...goneAnomalies, ...newlyGone].filter((id) => !next.has(id))
     if (goneAnomalies.length > ANOMALY_POLL_MAX_QUEUED) {
-      // Too many to report one by one: have listeners reload their lists.
+      // Too many to report one by one. bulk_acked makes the Anomalies page
+      // reload and drops these ids from the shared list; bulk_resolved would
+      // also make the Dashboard card swap this complete list for one page.
+      emitMessage({ type: 'anomaly.bulk_acked', data: { ids: goneAnomalies } })
       goneAnomalies = []
-      emitMessage({ type: 'anomaly.bulk_resolved', data: {} })
     }
     // This batch moves to the back, so a lookup that keeps failing is retried
     // after the rest rather than holding them up.
