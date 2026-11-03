@@ -358,7 +358,22 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.db.UpdateReplicationSource(src); err != nil {
+	update := func() error { return h.db.UpdateReplicationSource(src) }
+	var syncer *replication.Syncer
+	if h.getSyncer != nil {
+		syncer = h.getSyncer()
+	}
+	if syncer != nil && src.StorageDestID != stored.StorageDestID {
+		// Checked under the syncer's lock, so no sync of this source can be
+		// writing to the old destination when its jobs move.
+		apply := update
+		update = func() error { return syncer.ChangeSourceDestination(id, apply) }
+	}
+	if err := update(); err != nil {
+		if errors.Is(err, replication.ErrSyncInProgress) {
+			respondError(w, http.StatusConflict, err.Error())
+			return
+		}
 		if errors.Is(err, db.ErrReplicationDestinationInUse) {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return

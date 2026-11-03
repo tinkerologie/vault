@@ -2,6 +2,7 @@ package replication
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -259,5 +260,91 @@ func TestSyncSourceFlushesBoundDestination600(t *testing.T) {
 	}
 	if got := flushes.Load(); got != 1 {
 		t.Errorf("flushes = %d, want 1: one for the binding, none for a sync that changed none", got)
+	}
+}
+
+// peerHook600 is peer585 with a hook run while each file is downloaded.
+func peerHook600(t *testing.T, onDownload func()) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+		case "/api/v1/jobs":
+			_ = json.NewEncoder(w).Encode([]RemoteJob{{ID: 5, Name: "J", StorageDestID: 9}})
+		case "/api/v1/jobs/5/restore-points":
+			_ = json.NewEncoder(w).Encode([]RemoteRestorePoint{{ID: 1, BackupType: "full", StoragePath: "J/run1"}})
+		case "/api/v1/storage/9/list":
+			_ = json.NewEncoder(w).Encode([]StorageFile{{Name: "f", Path: r.URL.Query().Get("prefix") + "/f", Size: 1}})
+		case "/api/v1/storage/9/files":
+			onDownload()
+			_, _ = w.Write([]byte("x"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A source's destination cannot change while a sync of it runs, so no sync
+// is left writing to the old destination after its jobs move.
+func TestChangeSourceDestinationWhileSyncing600(t *testing.T) {
+	t.Parallel()
+	downloading, release := make(chan struct{}), make(chan struct{})
+	var once atomic.Bool
+	srv := peerHook600(t, func() {
+		if once.CompareAndSwap(false, true) {
+			close(downloading)
+		}
+		<-release
+	})
+	d, srcID := setup585(t, srv.URL)
+	s := NewSyncer(d, nil)
+	done := make(chan error, 1)
+	go func() { _, err := s.SyncSource(srcID, nil); done <- err }()
+	<-downloading
+
+	applied := false
+	if err := s.ChangeSourceDestination(srcID, func() error { applied = true; return nil }); !errors.Is(err, ErrSyncInProgress) || applied {
+		t.Fatalf("change during a sync = %v (applied %v), want ErrSyncInProgress", err, applied)
+	}
+	// Another source is not held up.
+	if err := s.ChangeSourceDestination(srcID+1, func() error { return nil }); err != nil {
+		t.Fatalf("change of another source: %v", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ChangeSourceDestination(srcID, func() error { applied = true; return nil }); err != nil || !applied {
+		t.Fatalf("change after the sync = %v (applied %v)", err, applied)
+	}
+}
+
+// If a job's destination changes while its files download anyway, the restore
+// point is not recorded against a destination that lacks them.
+func TestSyncSourceJobMovedDuringDownload600(t *testing.T) {
+	t.Parallel()
+	var d *db.DB
+	var other int64
+	srv := peerHook600(t, func() {
+		if _, err := d.Exec(`UPDATE jobs SET storage_dest_id = ? WHERE name = '[P] J'`, other); err != nil {
+			t.Error(err)
+		}
+	})
+	var srcID int64
+	d, srcID = setup585(t, srv.URL)
+	var err error
+	other, err = d.CreateStorageDestination(db.StorageDestination{Name: "other", Type: "local", Config: `{"path":"` + t.TempDir() + `"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := NewSyncer(d, nil).SyncSource(srcID, nil)
+	if err != nil || res.JobsFailed != 1 || res.RestorePointsNew != 0 {
+		t.Fatalf("SyncSource = %+v, %v; want the point refused", res, err)
+	}
+	if n := countRows(t, d, "restore_points"); n != 0 {
+		t.Errorf("restore_points = %d, want 0", n)
 	}
 }

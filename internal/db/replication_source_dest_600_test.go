@@ -22,7 +22,7 @@ func TestUpdateReplicationSourceDestination600(t *testing.T) {
 	empty, _ := d.CreateReplicatedJob(Job{Name: "[s] empty", SourceID: srcID, StorageDestID: a})
 	if _, _, err := d.CreateReplicatedRestorePoint(
 		JobRun{JobID: withPoints, Status: "success", BackupType: "full"},
-		RestorePoint{JobID: withPoints, BackupType: "full", StoragePath: "J/r1", SourceID: srcID}, time.Time{}); err != nil {
+		RestorePoint{JobID: withPoints, BackupType: "full", StoragePath: "J/r1", SourceID: srcID}, time.Time{}, 0); err != nil {
 		t.Fatal(err)
 	}
 	src, err := d.GetReplicationSource(srcID)
@@ -75,5 +75,60 @@ func TestUpdateReplicationSourceDestination600(t *testing.T) {
 	_ = d.Close()
 	if err := d.UpdateReplicationSource(src); err == nil {
 		t.Error("want an error from a closed database")
+	}
+}
+
+// Edits that keep the destination never check or move jobs, even where an
+// older version left a job with restore points on another destination.
+func TestUpdateReplicationSourceKeepsDestination600(t *testing.T) {
+	t.Parallel()
+	d := setupTestDB(t)
+	a, _ := d.CreateStorageDestination(StorageDestination{Name: "a", Type: "local", Config: "{}"})
+	b, _ := d.CreateStorageDestination(StorageDestination{Name: "b", Type: "local", Config: "{}"})
+	srcID, err := d.CreateReplicationSource(ReplicationSource{Name: "s", Type: "remote_vault", URL: "http://x", StorageDestID: b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, _ := d.CreateReplicatedJob(Job{Name: "[s] legacy", SourceID: srcID, StorageDestID: a})
+	if _, _, err := d.CreateReplicatedRestorePoint(JobRun{JobID: legacy, Status: "success", BackupType: "full"},
+		RestorePoint{JobID: legacy, BackupType: "full", StoragePath: "J/r1", SourceID: srcID}, time.Time{}, 0); err != nil {
+		t.Fatal(err)
+	}
+	src, _ := d.GetReplicationSource(srcID)
+	src.Enabled = false
+	src.Schedule = "0 4 * * *"
+	if err := d.UpdateReplicationSource(src); err != nil {
+		t.Fatalf("schedule-only edit: %v", err)
+	}
+	if j, _ := d.GetJob(legacy); j.StorageDestID != a {
+		t.Errorf("legacy job moved to %d by an edit that kept the destination", j.StorageDestID)
+	}
+	if err := d.UpdateReplicationSource(ReplicationSource{ID: srcID + 99, Name: "x"}); err == nil {
+		t.Error("want an error for a missing source")
+	}
+}
+
+// A replicated restore point is recorded only if its job still uses the
+// destination the files were copied to.
+func TestCreateReplicatedRestorePointChecksDestination600(t *testing.T) {
+	t.Parallel()
+	d := setupTestDB(t)
+	a, _ := d.CreateStorageDestination(StorageDestination{Name: "a", Type: "local", Config: "{}"})
+	b, _ := d.CreateStorageDestination(StorageDestination{Name: "b", Type: "local", Config: "{}"})
+	jobID, _ := d.CreateReplicatedJob(Job{Name: "[s] j", SourceID: 1, StorageDestID: b})
+	run := JobRun{JobID: jobID, Status: "success", BackupType: "full"}
+	rp := RestorePoint{JobID: jobID, BackupType: "full", StoragePath: "J/r1"}
+	if _, _, err := d.CreateReplicatedRestorePoint(run, rp, time.Time{}, a); !errors.Is(err, ErrReplicatedJobMoved) {
+		t.Fatalf("record on a moved job = %v, want ErrReplicatedJobMoved", err)
+	}
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM job_runs`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("job_runs = %d, %v after a refused record", n, err)
+	}
+	if _, _, err := d.CreateReplicatedRestorePoint(run, rp, time.Time{}, b); err != nil {
+		t.Fatalf("record on the job's destination: %v", err)
+	}
+	if _, _, err := d.CreateReplicatedRestorePoint(JobRun{JobID: 9999, BackupType: "full"}, RestorePoint{BackupType: "full", StoragePath: "x/y"}, time.Time{}, a); err == nil {
+		t.Error("want an error for a missing job")
 	}
 }

@@ -43,6 +43,46 @@ type Syncer struct {
 	// onConfigChange flushes the database to flash after sync changes
 	// configuration. Nil when there is nothing to flush to.
 	onConfigChange func()
+
+	// syncing counts the syncs running per source. A source's destination
+	// changes only under the same lock, while none is running, so no sync can
+	// be writing to the old destination when its jobs move.
+	syncingMu sync.Mutex
+	syncing   map[int64]int
+}
+
+// ErrSyncInProgress refuses changing a source's storage destination while a
+// sync of that source is running.
+var ErrSyncInProgress = errors.New("a sync of this replication source is running; wait for it to finish before changing its storage destination")
+
+// beginSync records a running sync of sourceID and returns its end.
+func (s *Syncer) beginSync(sourceID int64) (end func()) {
+	s.syncingMu.Lock()
+	defer s.syncingMu.Unlock()
+	if s.syncing == nil {
+		s.syncing = map[int64]int{}
+	}
+	s.syncing[sourceID]++
+	return func() {
+		s.syncingMu.Lock()
+		defer s.syncingMu.Unlock()
+		if s.syncing[sourceID]--; s.syncing[sourceID] <= 0 {
+			delete(s.syncing, sourceID)
+		}
+	}
+}
+
+// ChangeSourceDestination runs apply, the update that changes a source's
+// storage destination, only while no sync of that source is running, and
+// holds off new syncs of it until apply returns. It returns
+// ErrSyncInProgress, without calling apply, while one runs.
+func (s *Syncer) ChangeSourceDestination(sourceID int64, apply func() error) error {
+	s.syncingMu.Lock()
+	defer s.syncingMu.Unlock()
+	if s.syncing[sourceID] > 0 {
+		return ErrSyncInProgress
+	}
+	return apply()
 }
 
 // SetConfigChangeHook registers the daemon's configuration flush. Call it
@@ -100,6 +140,9 @@ type SyncResult struct {
 // SyncSource performs a sync operation for a replication source.
 // It pulls backups from the remote Vault instance.
 func (s *Syncer) SyncSource(sourceID int64, progress ProgressFunc) (result *SyncResult, err error) {
+	// Registered before the source is read, so a destination change either
+	// finishes first, and this sync reads the new destination, or is refused.
+	defer s.beginSync(sourceID)()
 	src, err := s.db.GetReplicationSource(sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("get replication source: %w", err)
@@ -714,7 +757,7 @@ func (s *Syncer) syncRestorePoint(
 		ParentRestorePointID: parentID,
 		SourceID:             src.ID,
 	}
-	_, rpID, err = s.db.CreateReplicatedRestorePoint(run, rp, createdAt)
+	_, rpID, err = s.db.CreateReplicatedRestorePoint(run, rp, createdAt, destID)
 	if err != nil {
 		return 0, totalBytes, fmt.Errorf("record restore point: %w", err)
 	}

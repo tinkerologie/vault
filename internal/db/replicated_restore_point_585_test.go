@@ -30,7 +30,7 @@ func TestCreateReplicatedRestorePoint585(t *testing.T) {
 		JobRun{JobID: jobID, Status: "partial", BackupType: "full", Log: "replicated",
 			ItemsTotal: 3, ItemsDone: 2, ItemsFailed: 1, SizeBytes: 42},
 		RestorePoint{JobRunID: 999, JobID: jobID, BackupType: "full", StoragePath: "j/run", Metadata: "{}", SizeBytes: 42, SourceID: 1},
-		ts)
+		ts, 0)
 	if err != nil {
 		t.Fatalf("CreateReplicatedRestorePoint: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestCreateReplicatedRestorePoint585(t *testing.T) {
 	before := time.Now().Add(-time.Minute)
 	runID2, _, err := d.CreateReplicatedRestorePoint(
 		JobRun{JobID: jobID, Status: "success", BackupType: "full"},
-		RestorePoint{JobID: jobID, BackupType: "full", StoragePath: "j/run2"}, time.Time{})
+		RestorePoint{JobID: jobID, BackupType: "full", StoragePath: "j/run2"}, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestCreateReplicatedRestorePointRollsBack585(t *testing.T) {
 
 	_, _, err := d.CreateReplicatedRestorePoint(
 		JobRun{JobID: jobID, Status: "success", BackupType: "full"},
-		RestorePoint{JobID: jobID, BackupType: "full", StoragePath: "j/run"}, time.Now())
+		RestorePoint{JobID: jobID, BackupType: "full", StoragePath: "j/run"}, time.Now(), 0)
 	if err == nil {
 		t.Fatal("want an error when the restore point insert fails")
 	}
@@ -112,7 +112,7 @@ func TestCreateReplicatedRestorePointRollsBack585(t *testing.T) {
 	// A run for a job that does not exist fails before any restore point.
 	if _, _, err := d.CreateReplicatedRestorePoint(
 		JobRun{JobID: 9999, Status: "success", BackupType: "full"},
-		RestorePoint{JobID: 9999, BackupType: "full", StoragePath: "x/y"}, time.Now()); err == nil {
+		RestorePoint{JobID: 9999, BackupType: "full", StoragePath: "x/y"}, time.Now(), 0); err == nil {
 		t.Error("want an error for a missing job")
 	}
 }
@@ -122,7 +122,7 @@ func TestCreateReplicatedRestorePointClosedDB585(t *testing.T) {
 	d, jobID := replicatedFixture(t)
 	_ = d.Close()
 	if _, _, err := d.CreateReplicatedRestorePoint(JobRun{JobID: jobID, Status: "success", BackupType: "full"},
-		RestorePoint{JobID: jobID, BackupType: "full", StoragePath: "j/run"}, time.Now()); err == nil {
+		RestorePoint{JobID: jobID, BackupType: "full", StoragePath: "j/run"}, time.Now(), 0); err == nil {
 		t.Fatal("want an error from a closed database")
 	}
 }
@@ -140,7 +140,7 @@ func TestCreateReplicatedRestorePointJobFromRun585(t *testing.T) {
 
 	runID, _, err := d.CreateReplicatedRestorePoint(
 		JobRun{JobID: jobID, Status: "success", BackupType: "full"},
-		RestorePoint{BackupType: "full", StoragePath: "j/run"}, time.Now())
+		RestorePoint{BackupType: "full", StoragePath: "j/run"}, time.Now(), 0)
 	if err != nil {
 		t.Fatalf("zero rp.JobID: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestCreateReplicatedRestorePointJobFromRun585(t *testing.T) {
 
 	if _, _, err := d.CreateReplicatedRestorePoint(
 		JobRun{JobID: jobID, Status: "success", BackupType: "full"},
-		RestorePoint{JobID: otherID, BackupType: "full", StoragePath: "j/run2"}, time.Now()); err == nil {
+		RestorePoint{JobID: otherID, BackupType: "full", StoragePath: "j/run2"}, time.Now(), 0); err == nil {
 		t.Fatal("want an error when rp.JobID names another job")
 	}
 	if n := countRunsAndPoints(t, d); n != 2 {

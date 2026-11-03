@@ -114,15 +114,24 @@ func (d *DB) UpdateReplicationSource(src ReplicationSource) error {
 		return fmt.Errorf("update replication source %d: begin tx: %w", src.ID, err)
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after a successful Commit is a no-op
-	var stranded int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM jobs j WHERE j.source_id = ?
-		AND COALESCE(j.storage_dest_id, 0) != ?
-		AND EXISTS (SELECT 1 FROM restore_points rp WHERE rp.job_id = j.id)`,
-		src.ID, src.StorageDestID).Scan(&stranded); err != nil {
-		return fmt.Errorf("update replication source %d: check replicated jobs: %w", src.ID, err)
+	var storedDest int64
+	if err := tx.QueryRow(`SELECT COALESCE(storage_dest_id, 0) FROM replication_sources WHERE id = ?`, src.ID).Scan(&storedDest); err != nil {
+		return fmt.Errorf("update replication source %d: %w", src.ID, err)
 	}
-	if stranded > 0 {
-		return ErrReplicationDestinationInUse
+	// Only a destination change moves jobs. Other edits leave them alone, even
+	// on a database where an older version left jobs on another destination.
+	moving := storedDest != src.StorageDestID
+	if moving {
+		var stranded int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM jobs j WHERE j.source_id = ?
+			AND COALESCE(j.storage_dest_id, 0) != ?
+			AND EXISTS (SELECT 1 FROM restore_points rp WHERE rp.job_id = j.id)`,
+			src.ID, src.StorageDestID).Scan(&stranded); err != nil {
+			return fmt.Errorf("update replication source %d: check replicated jobs: %w", src.ID, err)
+		}
+		if stranded > 0 {
+			return ErrReplicationDestinationInUse
+		}
 	}
 	if _, err := tx.Exec(
 		`UPDATE replication_sources SET name=?, type=?, url=?, config=?, storage_dest_id=?,
@@ -132,10 +141,12 @@ func (d *DB) UpdateReplicationSource(src ReplicationSource) error {
 	); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE jobs SET storage_dest_id = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE source_id = ? AND COALESCE(storage_dest_id, 0) != ?`,
-		destID, src.ID, src.StorageDestID); err != nil {
-		return fmt.Errorf("update replication source %d: rebind replicated jobs: %w", src.ID, err)
+	if moving {
+		if _, err := tx.Exec(`UPDATE jobs SET storage_dest_id = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE source_id = ? AND COALESCE(storage_dest_id, 0) != ?`,
+			destID, src.ID, src.StorageDestID); err != nil {
+			return fmt.Errorf("update replication source %d: rebind replicated jobs: %w", src.ID, err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("update replication source %d: commit: %w", src.ID, err)

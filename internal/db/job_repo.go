@@ -396,8 +396,10 @@ func (d *DB) CreateImportedJobRun(run JobRun, ts time.Time) (int64, error) {
 // the peer took the backup; it becomes the run's start and end time and the
 // restore point's creation time. A zero ts means now. rp.JobRunID is ignored,
 // and the restore point takes its job from the run: a non-zero rp.JobID that
-// names another job is an error.
-func (d *DB) CreateReplicatedRestorePoint(run JobRun, rp RestorePoint, ts time.Time) (runID, rpID int64, err error) {
+// names another job is an error. A non-zero destID is the storage destination
+// the files were copied to: if the job no longer uses it, nothing is recorded
+// and the error is ErrReplicatedJobMoved, since restore would look elsewhere.
+func (d *DB) CreateReplicatedRestorePoint(run JobRun, rp RestorePoint, ts time.Time, destID int64) (runID, rpID int64, err error) {
 	runType := run.RunType
 	if runType == "" {
 		runType = "backup"
@@ -417,6 +419,16 @@ func (d *DB) CreateReplicatedRestorePoint(run JobRun, rp RestorePoint, ts time.T
 		return 0, 0, fmt.Errorf("create replicated restore point: begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after a successful Commit is a no-op
+
+	if destID != 0 {
+		var jobDest int64
+		if err := tx.QueryRow(`SELECT COALESCE(storage_dest_id, 0) FROM jobs WHERE id = ?`, run.JobID).Scan(&jobDest); err != nil {
+			return 0, 0, fmt.Errorf("create replicated restore point: read job %d destination: %w", run.JobID, err)
+		}
+		if jobDest != destID {
+			return 0, 0, fmt.Errorf("%w: job %d now uses storage destination %d, but this backup was copied to %d", ErrReplicatedJobMoved, run.JobID, jobDest, destID)
+		}
+	}
 
 	res, err := tx.Exec(
 		`INSERT INTO job_runs (job_id, status, backup_type, run_type, log, items_total,
@@ -452,6 +464,10 @@ func (d *DB) CreateReplicatedRestorePoint(run JobRun, rp RestorePoint, ts time.T
 	}
 	return runID, rpID, nil
 }
+
+// ErrReplicatedJobMoved refuses recording a replicated restore point on a job
+// whose storage destination changed while its files were being copied.
+var ErrReplicatedJobMoved = errors.New("the replicated job moved to another storage destination during the copy, so this backup was not recorded")
 
 func (d *DB) UpdateJobRun(run JobRun) error {
 	_, err := d.Exec(
