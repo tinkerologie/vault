@@ -57,7 +57,7 @@ test.describe('Backup History & Run Inspector', () => {
     await page.goto('/#/history');
 
     // Click run card for Docker & Appdata
-    const dockerRunCard = page.locator('div[role="button"]', { hasText: 'Docker & Appdata' }).first();
+    const dockerRunCard = page.getByRole('button', { name: /^Docker & Appdata completed/ }).first();
     await expect(dockerRunCard).toBeVisible();
     await dockerRunCard.click();
 

@@ -417,8 +417,8 @@
         </p>
       {/if}
       <div class="flex items-center justify-center gap-3">
-        <button type="button" class="btn btn-primary" onclick={() => navigate('/restore')}>Go to Restore</button>
-        <button type="button" class="btn btn-secondary" onclick={() => navigate('/')}>Go to Dashboard</button>
+        <a href="#/restore" class="btn btn-primary">Go to Restore</a>
+        <a href="#/" class="btn btn-secondary">Go to Dashboard</a>
       </div>
     </div>
   {/if}

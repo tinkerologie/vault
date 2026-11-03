@@ -509,15 +509,12 @@
                 {@const icon = statusIcon(run.status)}
                 {@const anomalyCounts = runAnomalyCounts(run.id)}
                 {@const speed = runSpeed(run)}
-                <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-                <div
-                  class="bg-surface-2 border border-border rounded-xl p-4 hover:border-vault/30 transition-all {hasLogDetails(run) ? 'cursor-pointer' : ''}"
-                  role={hasLogDetails(run) ? 'button' : undefined}
-                  tabindex={hasLogDetails(run) ? 0 : undefined}
-                  onclick={() => hasLogDetails(run) && toggleRunExpand(run.id)}
-                  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && hasLogDetails(run) && toggleRunExpand(run.id)}
-                >
-                  <div class="flex items-start justify-between gap-3">
+                {@const expandable = hasLogDetails(run)}
+                <div class="bg-surface-2 border border-border rounded-xl p-4 hover:border-vault/30 transition-all">
+                  <!-- With details to show, the run's name is the disclosure button and its
+                       ::after stretches over this row, so the whole summary stays clickable
+                       while the anomaly badge remains a sibling control, not a nested one. -->
+                  <div class="relative flex items-start justify-between gap-3">
                     <div class="flex items-center gap-3 min-w-0 flex-1">
                       <!-- Status icon -->
                       <svg aria-hidden="true" class="w-5 h-5 shrink-0 {icon.cls}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -525,8 +522,21 @@
                       </svg>
                       <div class="min-w-0 flex-1">
                         <div class="flex items-center gap-2 flex-wrap">
-                          <span class="text-sm font-medium text-text">{run.jobName}</span>
-                          <span class="{statusBadge(run.status)} text-xs">{run.status}</span>
+                          {#if expandable}
+                            <button
+                              type="button"
+                              onclick={() => toggleRunExpand(run.id)}
+                              aria-expanded={expandedRunIds.has(run.id)}
+                              aria-controls={expandedRunIds.has(run.id) ? `run-details-${run.id}` : undefined}
+                              class="flex items-center gap-2 text-left cursor-pointer after:absolute after:inset-0 after:content-['']"
+                            >
+                              <span class="text-sm font-medium text-text">{run.jobName}</span>
+                              <span class="{statusBadge(run.status)} text-xs">{run.status}</span>
+                            </button>
+                          {:else}
+                            <span class="text-sm font-medium text-text">{run.jobName}</span>
+                            <span class="{statusBadge(run.status)} text-xs">{run.status}</span>
+                          {/if}
                           {#if run.retry_attempt > 0}
                             <span
                               class="text-xs px-2 py-0.5 rounded-full font-medium bg-info/15 text-info"
@@ -545,15 +555,17 @@
                           {/if}
                           <!-- Anomaly badge for this run -->
                           {#if anomalyCounts.critical > 0 || anomalyCounts.warning > 0 || anomalyCounts.info > 0}
-                            <Tooltip text={formatAnomalyTooltip(anomalyCounts)}>
-                              <span class="inline-flex items-center gap-1">
-                                {#each ['critical', 'warning', 'info'] as sev (sev)}
-                                  {#if anomalyCounts[sev] > 0}
-                                    <AnomalyBadge count={anomalyCounts[sev]} severity={sev} />
-                                  {/if}
-                                {/each}
-                              </span>
-                            </Tooltip>
+                            <span class="relative">
+                              <Tooltip text={formatAnomalyTooltip(anomalyCounts)}>
+                                <span class="inline-flex items-center gap-1">
+                                  {#each ['critical', 'warning', 'info'] as sev (sev)}
+                                    {#if anomalyCounts[sev] > 0}
+                                      <AnomalyBadge count={anomalyCounts[sev]} severity={sev} />
+                                    {/if}
+                                  {/each}
+                                </span>
+                              </Tooltip>
+                            </span>
                           {/if}
                         </div>
                         <div class="flex items-center gap-4 mt-1.5 text-xs text-text-dim">
@@ -582,7 +594,7 @@
                         {/if}
                       </div>
                     </div>
-                    {#if hasLogDetails(run)}
+                    {#if expandable}
                       <svg aria-hidden="true" class="w-4 h-4 text-text-dim shrink-0 transition-transform {expandedRunIds.has(run.id) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                       </svg>
@@ -590,9 +602,9 @@
                   </div>
 
                   <!-- Expandable log details -->
-                  {#if expandedRunIds.has(run.id) && hasLogDetails(run)}
+                  {#if expandedRunIds.has(run.id) && expandable}
                     {@const items = tryParseJSON(run.log)}
-                    <div class="mt-3 pt-3 border-t border-border">
+                    <div id="run-details-{run.id}" class="mt-3 pt-3 border-t border-border">
                       {#if Array.isArray(items)}
                         <p class="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">Per-Item Results</p>
                         <div class="space-y-1.5">

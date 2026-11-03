@@ -156,7 +156,7 @@ for (const { style, mode, label } of THEMES) {
       await expect(page.locator('main .pointer-events-none.bg-surface-3')).toBeVisible();
       await expectNoContrastViolations(page, `${label} History chart tooltip`);
 
-      await page.locator('div[role="button"]', { hasText: 'Docker & Appdata' }).first().click();
+      await page.getByRole('button', { name: /^Docker & Appdata completed/ }).first().click();
       await expect(page.getByText('Deduplication savings 53%')).toBeVisible();
       await expectNoContrastViolations(page, `${label} run inspector`);
     });
