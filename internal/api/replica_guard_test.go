@@ -12,7 +12,10 @@ import (
 func replicaRequest(srv *Server, method, path, body string) int {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	// The shape of a request from the Unraid plugin proxy, which the API key
+	// boundary (#578) lets through, so these tests reach the replica guards.
 	req.RemoteAddr = "127.0.0.1:5000"
+	req.Host = "127.0.0.1:24085"
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 	return w.Code
@@ -62,8 +65,8 @@ func TestReplicaGuards(t *testing.T) {
 		{http.MethodPost, "/api/v1/storage/1/scan", `{}`},
 		{http.MethodDelete, "/api/v1/storage/999", ""},
 	} {
-		if got := replicaRequest(srv, tt.method, tt.path, tt.body); got == http.StatusForbidden {
-			t.Errorf("%s %s = 403, want it reachable on a replica", tt.method, tt.path)
+		if got := replicaRequest(srv, tt.method, tt.path, tt.body); got == http.StatusForbidden || got == http.StatusUnauthorized {
+			t.Errorf("%s %s = %d, want it reachable on a replica", tt.method, tt.path, got)
 		}
 	}
 
@@ -90,8 +93,8 @@ func TestDaemonUnaffectedByReplicaGuards(t *testing.T) {
 		{http.MethodDelete, "/api/v1/storage/999?deleteFiles=true"},
 		{http.MethodDelete, "/api/v1/replication/999"},
 	} {
-		if got := replicaRequest(srv, tt.method, tt.path, ""); got == http.StatusForbidden {
-			t.Errorf("%s %s = 403 on a daemon", tt.method, tt.path)
+		if got := replicaRequest(srv, tt.method, tt.path, ""); got == http.StatusForbidden || got == http.StatusUnauthorized {
+			t.Errorf("%s %s = %d on a daemon, want it to reach the handler", tt.method, tt.path, got)
 		}
 	}
 }
