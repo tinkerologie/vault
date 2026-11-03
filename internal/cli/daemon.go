@@ -79,7 +79,11 @@ var daemonCmd = &cobra.Command{
 		logRing := logbuf.New(daemonLogBufferBytes)
 		logx.Setup(io.MultiWriter(os.Stderr, logRing))
 
-		defer holdMaintenanceLock(cmd.Context())()
+		releaseLock, err := holdMaintenanceLock(cmd)
+		if err != nil {
+			return err
+		}
+		defer releaseLock()
 
 		// Hybrid mode detection: if a pool drive is mounted, use a RAM-backed
 		// working database with periodic snapshots to the pool drive. This
@@ -717,6 +721,7 @@ func init() {
 	daemonCmd.Flags().String("addr", ":24085", "API listen address")
 	daemonCmd.Flags().String("tls-cert", "", "Path to TLS certificate file")
 	daemonCmd.Flags().String("tls-key", "", "Path to TLS private key file")
+	daemonCmd.Flags().Bool(noMaintenanceLockFlag, false, "Start without the host maintenance lock (development only)")
 	daemonCmd.Flags().Bool("mdns", true, mdnsFlagUsage)
 	daemonCmd.Flags().StringSlice("allowed-origin", nil, allowedOriginFlagUsage)
 	rootCmd.AddCommand(daemonCmd)

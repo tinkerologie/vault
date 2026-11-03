@@ -536,7 +536,7 @@ func (r *Repo) GetManifest(id ID) (Manifest, error) {
 	}
 	m, err := DecodeManifest(buf.Bytes())
 	if err != nil {
-		return Manifest{}, fmt.Errorf("dedup: decode reassembled manifest: %w: %w", ErrNotManifest, err)
+		return Manifest{}, fmt.Errorf("dedup: decode reassembled manifest: %w", err)
 	}
 	return m, nil
 }

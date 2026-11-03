@@ -67,7 +67,7 @@ func TestEnsureLocalJobRejectsNameCollision(t *testing.T) {
 // A peer cannot write over, or take ownership of, another job's restore point.
 func TestSyncRestorePointRejectsPathOfAnotherJob(t *testing.T) {
 	t.Parallel()
-	for _, peerPath := range []string{"victim/run", "victim/run/sub", "victim_x/../victim/run", "_vault/packs", `victim\run/sub`, `_vault\packs/aa`} {
+	for _, peerPath := range []string{"victim/run", "victim/run/sub", "victim_x/../victim/run", "_vault/packs", `victim\run/sub`, `_vault\packs/aa`, "$vault/packs"} {
 		t.Run(peerPath, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()

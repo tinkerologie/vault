@@ -116,7 +116,7 @@ Thumbnails and re-encoded video are re-created by Immich on demand after a resto
 #### Notes on ZFS datasets
 
 - Vault uses `zfs send` (full) and `zfs send -i` (incremental) under the hood and manages the snapshot lifecycle itself.
-- Restoration goes through `zfs receive -F`, preserving properties and child datasets. It overwrites the dataset configured on the job's item, never one named by the backup itself. A job imported from storage or replicated from a peer has no dataset until you add one to its item, and a pool root is never restored to implicitly.
+- Restoration goes through `zfs receive -F`, preserving properties and child datasets. It overwrites the dataset configured on the job's item, never one named by the backup itself. A job newly imported from storage or replicated from a peer has no dataset until you add one to its item. A job imported by an older version may keep a dataset taken from the backup, so check that target before restoring, and a pool root is never restored to implicitly.
 - The host `zfs` binary must be on `PATH` — true on any Unraid system with a ZFS pool.
 
 #### Notes on folders

@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 var restoreAllowedRoots = []string{"/mnt", "/boot", "/tmp", "/etc", "/opt", "/usr/local", "/var", "/home", "/private/var", "/private/tmp"}
@@ -284,10 +285,22 @@ func NormalizeRestorePointPath(p string) (string, error) {
 		return "", fmt.Errorf("restore point path %q must be <job>/<run>", trimmed)
 	}
 	// _vault holds the dedup repository and database backups, never a run.
-	if first, _, _ := strings.Cut(cleaned, "/"); first == "_vault" {
+	if first, _, _ := strings.Cut(cleaned, "/"); isReservedVaultSegment(first) {
 		return "", fmt.Errorf("restore point path %q is inside Vault's reserved directory", trimmed)
 	}
 	return cleaned, nil
+}
+
+// isReservedVaultSegment reports whether seg is _vault, or becomes it on S3,
+// which stores each rune outside [A-Za-z0-9._~-] as an underscore ("$vault").
+func isReservedVaultSegment(seg string) bool {
+	rest, ok := strings.CutSuffix(seg, "vault")
+	if !ok || utf8.RuneCountInString(rest) != 1 {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(rest)
+	isKept := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '~'
+	return !isKept
 }
 
 // IsStrictDescendant reports whether child is a slash-separated path strictly

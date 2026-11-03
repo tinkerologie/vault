@@ -1,23 +1,27 @@
 package cli
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/tinkerologie/vault/internal/maintlock"
 )
+
+var testLockDir string
 
 // Each test binary gets its own lock, so CLI tests never contend with a real
 // daemon or with another package's tests on the same machine.
 func init() {
-	dir, err := os.MkdirTemp("", "vault-cli-lock")
+	var err error
+	testLockDir, err = os.MkdirTemp("", "vault-cli-lock")
 	if err != nil {
 		panic(err)
 	}
-	maintlock.SetDirForTest(dir)
+	maintlock.SetDirForTest(testLockDir)
 }
 
 // CLI GC and repair refuse while a daemon holds the host lock, before opening
@@ -27,7 +31,10 @@ func TestDedupCommandsRefuseWhileDaemonRuns(t *testing.T) {
 	dedupDestID = 42
 	t.Cleanup(func() { dedupDestID = saved })
 
-	release := holdMaintenanceLock(context.Background())
+	release, err := holdMaintenanceLock(lockTestCmd(false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer release()
 	for name, run := range map[string]func() error{
 		"gc":     func() error { return runDedupGC(nil, nil) },
@@ -40,20 +47,33 @@ func TestDedupCommandsRefuseWhileDaemonRuns(t *testing.T) {
 	}
 }
 
-// With no usable lock the CLI cannot show nothing else is writing, so it stops;
-// a daemon starts regardless.
+// With no usable lock nothing can show the other side is excluded: the CLI stops
+// and a daemon refuses to start unless explicitly opted out.
 func TestDedupLockFailsClosed(t *testing.T) {
 	blocked := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	maintlock.SetDirForTest(blocked)
-	t.Cleanup(func() { maintlock.SetDirForTest(t.TempDir()) })
+	t.Cleanup(func() { maintlock.SetDirForTest(testLockDir) })
 
 	if _, err := lockForDedupMaintenance(); err == nil || !strings.Contains(err.Error(), "cannot confirm") {
 		t.Fatalf("lock = %v", err)
 	}
-	holdMaintenanceLock(nil)() //nolint:staticcheck // a nil context is what cobra hands a direct Execute
+	if _, err := holdMaintenanceLock(lockTestCmd(false)); err == nil {
+		t.Fatal("daemon started without the lock and without opting out")
+	}
+	release, err := holdMaintenanceLock(lockTestCmd(true))
+	if err != nil {
+		t.Fatalf("opt-out = %v", err)
+	}
+	release()
+}
+
+func lockTestCmd(skip bool) *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.Flags().Bool(noMaintenanceLockFlag, skip, "")
+	return cmd
 }
 
 // Uninstall callers no longer pin the snapshot path, so the same pool detection

@@ -177,7 +177,7 @@ Storage responses mask secrets the same way. On update, a masked secret keeps th
 
 A replication source's `schedule` field takes the same cron expressions as a job's (see [Jobs](#jobs)); an empty string means the source is only synced on demand.
 
-On a `vault replica`, a source can be created, edited, tested and synced, because receiving backups is what a replica is for, but not deleted (`403`). Replicas also refuse storage GC, orphan deletion, import, closing a breaker, deleting a destination's backup files, history and activity purges, and anomaly acknowledgement.
+On a `vault replica`, a source can be created, edited, tested and synced, because receiving backups is what a replica is for, but not deleted (`403`). Replicas also refuse storage GC, orphan deletion, import, closing a breaker, force-deleting a destination, deleting a destination's backup files, history and activity purges, and anomaly acknowledgement.
 
 Replication is pull-based: a sync imports only the remote jobs whose `source_id` is `0`, i.e. jobs created on that server. Jobs the remote server itself replicated from elsewhere are skipped, so two servers can each configure the other as a source without bouncing jobs back and forth. Multi-hop relays (A → B → C) are not forwarded; configure each origin server as a direct source.
 

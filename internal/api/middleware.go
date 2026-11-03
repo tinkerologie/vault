@@ -109,13 +109,15 @@ func guardReplica(readOnly bool) func(http.Handler) http.Handler {
 }
 
 // guardReplicaFileCleanup blocks deleting a destination's backup files on a
-// replica. Removing the destination's record stays allowed, as a replica's
-// destinations are configured through the API.
+// replica, and force-deleting one with dependent jobs, which a replica could
+// never point back at a destination. Removing an unused destination's record
+// stays allowed, as a replica's destinations are configured through the API.
 func guardReplicaFileCleanup(readOnly bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		guarded := ReadOnlyGuard(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if readOnly && r.URL.Query().Get("deleteFiles") == "true" {
+			q := r.URL.Query()
+			if readOnly && (q.Get("deleteFiles") == "true" || q.Get("force") == "true") {
 				guarded.ServeHTTP(w, r)
 				return
 			}

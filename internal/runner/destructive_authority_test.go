@@ -336,3 +336,43 @@ func TestReclaimClaimsDestinationBeforeCounting(t *testing.T) {
 		t.Fatalf("errs = %v, want a refusal before the count fails", errs)
 	}
 }
+
+// An import cannot attach a verified backup to another job or destination.
+func TestImportKeepsBackupWithItsOwnJob(t *testing.T) {
+	t.Parallel()
+	r, database, root := setupTestRunner(t)
+	dest := createNamedLocalDest(t, database, "here", root)
+	other := createNamedLocalDest(t, database, "there", t.TempDir())
+	victim, err := database.CreateJob(db.Job{Name: "victim", BackupTypeChain: "full", StorageDestID: dest.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateJob(db.Job{Name: "elsewhere", BackupTypeChain: "full", StorageDestID: other.ID}); err != nil {
+		t.Fatal(err)
+	}
+	for _, job := range []string{"real", "elsewhere"} {
+		dir := filepath.Join(root, job, "run")
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		m := `{"job_name":"` + job + `","run_id":1,"backup_type":"full","items_done":1}`
+		if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(m), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, entry := range map[string]map[string]any{
+		"renamed":    {"job_name": "victim", "storage_path": "real/run"},
+		"other dest": {"job_name": "elsewhere", "storage_path": "elsewhere/run"},
+	} {
+		if n, err := r.ImportBackups(dest.ID, []map[string]any{entry}); err != nil || n != 0 {
+			t.Errorf("%s: imported %d, %v", name, n, err)
+		}
+	}
+	if rps, _ := database.ListRestorePoints(victim); len(rps) != 0 {
+		t.Fatalf("victim gained %d restore point(s)", len(rps))
+	}
+	n, err := r.ImportBackups(dest.ID, []map[string]any{{"job_name": "real", "storage_path": "real/run"}})
+	if err != nil || n != 1 {
+		t.Fatalf("own job import = %d, %v", n, err)
+	}
+}

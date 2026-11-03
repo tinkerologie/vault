@@ -264,17 +264,26 @@ func lockForDedupMaintenance() (*maintlock.HostLock, error) {
 	return lock, nil
 }
 
+// noMaintenanceLockFlag lets a daemon start without the host lock, for an
+// unprivileged development run where /var/run cannot be used.
+const noMaintenanceLockFlag = "no-maintenance-lock"
+
 // holdMaintenanceLock takes the host lock's shared side for a daemon's lifetime,
-// so vault dedup commands refuse to run alongside it. A daemon must still start
-// if the lock is unusable; the CLI side treats that same failure as a refusal.
-func holdMaintenanceLock(ctx context.Context) (release func()) {
+// so vault dedup commands refuse to run alongside it. A daemon that cannot hold
+// it refuses to start: a maintenance command run by another user might still get
+// the lock, and could then sweep packs from a running backup.
+func holdMaintenanceLock(cmd *cobra.Command) (release func(), err error) {
+	if skip, _ := cmd.Flags().GetBool(noMaintenanceLockFlag); skip {
+		log.Printf("Warning: running without the maintenance lock (--%s); do not run vault dedup gc or repair while this process is up", noMaintenanceLockFlag)
+		return func() {}, nil
+	}
+	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	lock, err := maintlock.AcquireShared(ctx)
 	if err != nil {
-		log.Printf("Warning: maintenance lock unavailable: %v", err)
-		return func() {}
+		return nil, fmt.Errorf("cannot hold the maintenance lock (use --%s only for a development run): %w", noMaintenanceLockFlag, err)
 	}
-	return lock.Release
+	return lock.Release, nil
 }

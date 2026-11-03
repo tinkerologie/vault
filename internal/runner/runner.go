@@ -7125,8 +7125,20 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 			backupType = "full"
 		}
 
+		// The caller's job name decides which job's retention and cleanup govern
+		// this path, so a Vault backup must keep the job its directory names, and
+		// an existing job must live on this destination.
+		if source, _ := b["source"].(string); source != "appdata.backup" && !jobNameMatchesDir(jobName, path.Dir(storagePath)) {
+			log.Printf("runner: import: skipping %q: job name %q does not match its directory", storagePath, jobName)
+			continue
+		}
+
 		// Find or create the job.
 		job, err := r.db.GetJobByName(jobName)
+		if err == nil && job.StorageDestID != storageDestID {
+			log.Printf("runner: import: skipping %q: job %q uses another destination", storagePath, jobName)
+			continue
+		}
 		jobIsNew := false
 		if err != nil {
 			// Job doesn't exist — populate from the manifest where
