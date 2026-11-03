@@ -121,6 +121,31 @@ describe('startEmbeddedPresentation', () => {
     expect(listeners.size).toBe(0)
     expect(observers[0].disconnect).toHaveBeenCalled()
   })
+
+  it('drops the earlier channel and its scroll listeners when it restarts', () => {
+    const first = fakeWindow()
+    const stopFirst = startEmbeddedPresentation(first.win)
+    const stale = vi.fn()
+    onVisibleAreaChange(stale)
+    const second = fakeWindow()
+    const stopSecond = startEmbeddedPresentation(second.win)
+    expect(first.listeners.size).toBe(0)
+    expect(first.observers[0].disconnect).toHaveBeenCalled()
+    const fresh = vi.fn()
+    onVisibleAreaChange(fresh)
+    second.send(viewport())
+    expect(stale).not.toHaveBeenCalled()
+    expect(fresh).toHaveBeenCalledOnce()
+
+    // The earlier stop, called late, leaves the replacement running: it still
+    // reports grown content before asking the host to scroll.
+    stopFirst()
+    second.parent.postMessage.mockClear()
+    second.app.offsetHeight = 1500
+    scrollHostTo(1200, second.win)
+    expect(second.parent.postMessage.mock.calls.map(([m]) => m.type)).toEqual(['size', 'scroll'])
+    stopSecond()
+  })
 })
 
 describe('host scrolling', () => {

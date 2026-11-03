@@ -63,6 +63,7 @@ export function elementPort(el, win = window) {
     set scrollTop(v) { el.scrollTop = v },
     get scrollHeight() { return el.scrollHeight },
     get clientHeight() { return el.clientHeight },
+    measure() { return { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight } },
     viewTop() { return el.getBoundingClientRect().top },
     /**
      * Smooth scroll; `settled` runs once it ends.
@@ -104,6 +105,12 @@ export function embeddedPort(el, host, win = window) {
     set scrollTop(v) { scrollTo(v) },
     get scrollHeight() { return embeddedGeometry(geometry()).scrollHeight },
     get clientHeight() { return embeddedGeometry(geometry()).clientHeight },
+    // All three from one measurement of the page, for a caller that needs
+    // them together: each getter above measures the page again.
+    measure() {
+      const { scrollTop, scrollHeight, clientHeight } = embeddedGeometry(geometry())
+      return { scrollTop, scrollHeight, clientHeight }
+    },
     viewTop() { return embeddedGeometry(geometry()).viewTop - (win.scrollY || 0) },
     // The host scrolls the page instantly, so the scroll has settled as soon
     // as it is asked for.

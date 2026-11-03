@@ -78,6 +78,7 @@ describe('elementPort', () => {
     port.scrollTop = 42
     expect(el.scrollTop).toBe(42)
     expect([port.scrollTop, port.scrollHeight, port.clientHeight, port.viewTop()]).toEqual([42, 2000, 500, 300])
+    expect(port.measure()).toEqual({ scrollTop: 42, scrollHeight: 2000, clientHeight: 500 })
   })
 
   it('smooth-scrolls, and reports when the scroll ends', () => {
@@ -109,6 +110,16 @@ describe('embeddedPort', () => {
   it('reads the console through the visible part of the frame', () => {
     const { port } = setup(800)
     expect([port.scrollTop, port.scrollHeight, port.clientHeight, port.viewTop()]).toEqual([500, 2000, 500, 800])
+  })
+
+  it('measures the page once for a reading of all three values', () => {
+    const el = fakeElement({ top: 300, height: 2000 })
+    el.getBoundingClientRect = vi.fn(() => ({ top: 300, height: 2000 }))
+    const host = { visibleArea: vi.fn(() => ({ top: 800, height: 500 })), scrollTo: vi.fn() }
+    const port = embeddedPort(el, host, { scrollY: 0 })
+    expect(port.measure()).toEqual({ scrollTop: 500, scrollHeight: 2000, clientHeight: 500 })
+    expect(el.getBoundingClientRect).toHaveBeenCalledOnce()
+    expect(host.visibleArea).toHaveBeenCalledOnce()
   })
 
   it('works in document coordinates if the frame itself has scrolled', () => {
