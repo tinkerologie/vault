@@ -179,7 +179,7 @@ func TestResolveChunkedImage(t *testing.T) {
 		r.tags["nginx:1"] = "new-image"
 		r.remote[pinRef] = "old-image"
 		pinned, err := (&ContainerHandler{cli: r}).resolveChunkedImage(t.Context(), item, "nginx:1", digests, noopProgress)
-		if err != nil || !pinned {
+		if err != nil || pinned != pinRef {
 			t.Fatalf("pinned = %v, err = %v", pinned, err)
 		}
 		if r.tags["nginx:1"] != "old-image" {
@@ -194,7 +194,7 @@ func TestResolveChunkedImage(t *testing.T) {
 		r.tags[pinRef] = "old-image"
 		r.pullErr = errFake458
 		pinned, err := (&ContainerHandler{cli: r}).resolveChunkedImage(t.Context(), item, "nginx:1", digests, nil)
-		if err != nil || !pinned || len(r.pulled) != 0 {
+		if err != nil || pinned != pinRef || len(r.pulled) != 0 {
 			t.Fatalf("pinned = %v, err = %v, pulled = %v", pinned, err, r.pulled)
 		}
 	})
@@ -231,7 +231,7 @@ func TestResolveChunkedImage(t *testing.T) {
 			}
 			ctx := WithRestoreTrust(t.Context(), RestoreTrust{AllowUnpinnedImage: true})
 			pinned, err := (&ContainerHandler{cli: r}).resolveChunkedImage(ctx, item, "nginx:1", c.digests, noopProgress)
-			if err != nil || pinned {
+			if err != nil || pinned != "" {
 				t.Fatalf("pinned = %v, err = %v", pinned, err)
 			}
 			if r.pulled[len(r.pulled)-1] != "nginx:1" {
@@ -248,7 +248,7 @@ func TestResolveChunkedImage(t *testing.T) {
 		}
 	})
 	t.Run("no image means nothing to do", func(t *testing.T) {
-		if pinned, err := (&ContainerHandler{cli: newImageRegistry()}).resolveChunkedImage(t.Context(), item, "", nil, nil); pinned || err != nil {
+		if pinned, err := (&ContainerHandler{cli: newImageRegistry()}).resolveChunkedImage(t.Context(), item, "", nil, nil); pinned != "" || err != nil {
 			t.Fatalf("pinned = %v, err = %v", pinned, err)
 		}
 	})
@@ -281,20 +281,33 @@ func (s *stuckTagRegistry) ImageTag(context.Context, client.ImageTagOptions) (cl
 
 func TestPinnedRecreateDoesNotPullTheTagAgain(t *testing.T) {
 	r := newImageRegistry()
-	r.containerCreate = func(context.Context, client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
-		return client.ContainerCreateResult{ID: "c"}, nil
-	}
 	var ri restoreInspect
 	ri.Name = "/web"
 	ri.Config.Image = "nginx:1"
-	ri.imagePinned = true
+	ri.pinnedImage = pinRef
+	r.tags[pinRef] = "old-image"
+	// An update moved the tag while volumes were restoring.
+	r.tags["nginx:1"] = "updated-image"
+	var createdWith string
+	r.containerCreate = func(_ context.Context, o client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+		createdWith = r.tags[o.Config.Image]
+		return client.ContainerCreateResult{ID: "c"}, nil
+	}
 	if err := (&ContainerHandler{cli: r}).recreateAndStartContainer(t.Context(), BackupItem{Name: "web"}, ri, "", "", noopProgress); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.pulled) != 0 {
 		t.Errorf("pulled %v after pinning", r.pulled)
 	}
-	ri.imagePinned = false
+	if createdWith != "old-image" {
+		t.Errorf("created from %q after the tag moved", createdWith)
+	}
+	r.tagErr = errFake458
+	if err := (&ContainerHandler{cli: r}).recreateAndStartContainer(t.Context(), BackupItem{Name: "web"}, ri, "", "", noopProgress); err == nil || !strings.Contains(err.Error(), "re-checking") {
+		t.Errorf("err = %v", err)
+	}
+	r.tagErr = nil
+	ri.pinnedImage = ""
 	if err := (&ContainerHandler{cli: r}).recreateAndStartContainer(t.Context(), BackupItem{Name: "web"}, ri, "", "", noopProgress); err != nil {
 		t.Fatal(err)
 	}
@@ -339,4 +352,31 @@ type tagVanishes struct{ *imageRegistry }
 func (v *tagVanishes) ImageTag(context.Context, client.ImageTagOptions) (client.ImageTagResult, error) {
 	delete(v.tags, "nginx:1")
 	return client.ImageTagResult{}, nil
+}
+
+func TestHostPrivilegesFollowsSymlinksUnderMnt(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := hostDataRoot
+	hostDataRoot = root + "/"
+	t.Cleanup(func() { hostDataRoot = old })
+	appdata := filepath.Join(root, "appdata")
+	if err := os.Mkdir(appdata, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink("/etc", link); err != nil {
+		t.Skip(err)
+	}
+	var ri restoreInspect
+	ri.HostConfig.Binds = []string{appdata + ":/config", filepath.Join(root, "not-yet-created") + ":/data"}
+	if got := hostPrivileges(ri); len(got) != 0 {
+		t.Errorf("ordinary binds listed: %v", got)
+	}
+	ri.HostConfig.Binds = []string{link + ":/config"}
+	if got := hostPrivileges(ri); len(got) != 1 {
+		t.Errorf("symlinked host path not listed: %v", got)
+	}
 }

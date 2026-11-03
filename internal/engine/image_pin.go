@@ -84,13 +84,13 @@ func familiarRef(ref string) string {
 	return reference.FamiliarString(named)
 }
 
-// resolveChunkedImage decides which image a chunked restore runs and reports
-// whether it was pinned. A chunked backup holds no image layers, so the tag alone
+// resolveChunkedImage decides which image a chunked restore runs and returns the
+// digest reference it pinned the tag to, or "" when it did not pin. A chunked backup holds no image layers, so the tag alone
 // could now name different code. Without the digest the restore stops before
 // touching anything, unless the person accepted the current tag.
-func (h *ContainerHandler) resolveChunkedImage(ctx context.Context, item BackupItem, image string, repoDigests []string, progress ProgressFunc) (bool, error) {
+func (h *ContainerHandler) resolveChunkedImage(ctx context.Context, item BackupItem, image string, repoDigests []string, progress ProgressFunc) (string, error) {
 	if image == "" {
-		return false, nil
+		return "", nil
 	}
 	digestRef, err := backupImageRef(image, repoDigests)
 	if err == nil {
@@ -99,11 +99,11 @@ func (h *ContainerHandler) resolveChunkedImage(ctx context.Context, item BackupI
 		}
 		err = pinBackupImage(ctx, h.cli, image, digestRef)
 		if err == nil {
-			return true, nil
+			return digestRef, nil
 		}
 	}
 	if !RestoreTrustFrom(ctx).AllowUnpinnedImage {
-		return false, fmt.Errorf("cannot restore %s with the image it was backed up with: %w; nothing was changed. If the registry is reachable and %q is acceptable as it is today, restart the restore with \"Use the image's current tag\" enabled (API: allow_unpinned_image)", item.Name, err, image)
+		return "", fmt.Errorf("cannot restore %s with the image it was backed up with: %w; nothing was changed. If the registry is reachable and %q is acceptable as it is today, restart the restore with \"Use the image's current tag\" enabled (API: allow_unpinned_image)", item.Name, err, image)
 	}
 	log.Printf("engine: chunked restore: %s is using the current image for %q as approved: %v", item.Name, image, err)
 	if progress != nil {
@@ -112,11 +112,11 @@ func (h *ContainerHandler) resolveChunkedImage(ctx context.Context, item BackupI
 	pullResp, pullErr := h.cli.ImagePull(ctx, image, client.ImagePullOptions{})
 	if pullErr != nil {
 		log.Printf("engine: chunked restore: image pull %q: %v (continuing — container may fail to start)", image, pullErr)
-		return false, nil
+		return "", nil
 	}
 	if waitErr := pullResp.Wait(ctx); waitErr != nil {
 		log.Printf("engine: chunked restore: image pull wait %q: %v", image, waitErr)
 	}
 	_ = pullResp.Close()
-	return false, nil
+	return "", nil
 }

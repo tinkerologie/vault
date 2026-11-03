@@ -4364,6 +4364,10 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 				map[string]any{"restore_point_id": restorePoint.ID, "item_name": itemName})
 			return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
 		}
+		// A chain replay can take its config from any step, so every step has
+		// to be vouched for, not just the one selected.
+		trust.ArtifactTrusted = trust.ArtifactTrusted && r.chainSidecarsVouched(chain, itemName)
+		ctx = engine.WithRestoreTrust(ctx, trust)
 		if usesMergedRestoreChain(itemType) {
 			return r.restoreMergedChain(ctx, chain, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
 		}

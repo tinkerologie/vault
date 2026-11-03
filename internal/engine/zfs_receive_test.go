@@ -50,6 +50,7 @@ func TestZFSMountReceived(t *testing.T) {
 		{"noauto", "filesystem\nno\nnoauto\n/mnt/tank/app\n", false},
 		{"legacy", "filesystem\nno\non\nlegacy\n", false},
 		{"none", "filesystem\nno\non\nnone\n", false},
+		{"mountpoint with spaces", "filesystem\nno\non\n/mnt/My Vault\n", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

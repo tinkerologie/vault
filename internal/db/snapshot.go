@@ -47,6 +47,9 @@ type SnapshotManager struct {
 	// concurrent backups into the same <dest>.tmp would corrupt it before
 	// the rename (CodeRabbit review on #182).
 	writeMu sync.Mutex
+	// saveMu keeps a save, its envelope and its rotated copy together, so
+	// overlapping saves cannot pair one save's bytes with another's envelope.
+	saveMu sync.Mutex
 }
 
 // SnapshotMigration reports the outcome of moving the database to a new
@@ -331,6 +334,8 @@ func (sm *SnapshotManager) LastSnapshot() time.Time {
 // SaveSnapshot copies the working DB to the snapshot path using the SQLite
 // backup API.
 func (sm *SnapshotManager) SaveSnapshot() error {
+	sm.saveMu.Lock()
+	defer sm.saveMu.Unlock()
 	sm.mu.Lock()
 	snapshotPath := sm.snapshotPath
 	sm.mu.Unlock()

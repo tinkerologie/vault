@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -352,4 +353,49 @@ func TestSnapshotAuthFailurePaths(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+}
+
+// Sealing rewrites copies and re-signs them, so a signed copy someone replaced
+// must not be sealed into a validly signed one.
+func TestSealPersistentCopiesSkipsReplacedSignedCopy(t *testing.T) {
+	dir := t.TempDir()
+	d, err := Open(filepath.Join(dir, "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	seedPlaintext(t, d)
+	snap := filepath.Join(dir, "snap", "vault.db")
+	sm := NewSnapshotManager(d, snap, snap)
+	a, _ := testAuth(t, false)
+	sm.SetSnapshotAuth(a)
+	if err := sm.SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	rotated, _ := filepath.Glob(filepath.Join(dir, "snap", "rotated", "*"))
+	if len(rotated) != 1 {
+		t.Fatalf("rotated = %v", rotated)
+	}
+	// Replace the rotated copy (it is hard-linked to the primary, so unlink first).
+	if err := os.Remove(rotated[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(filepath.Join(dir, "vault.db"), rotated[0]); err != nil {
+		t.Fatal(err)
+	}
+	d.SetCredentialKey(credKeyA)
+	if _, err := d.SealSecretsAtRest(); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SealPersistentCopies(context.Background(), sm, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.VerifiedCopy(rotated[0]); err == nil {
+		t.Fatal("replaced copy was re-signed")
+	}
+	if _, release, err := a.VerifiedCopy(snap); err != nil {
+		t.Fatalf("primary: %v", err)
+	} else {
+		release()
+	}
 }

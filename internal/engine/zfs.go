@@ -396,7 +396,8 @@ func (h *ZFSHandler) mountReceived(ctx context.Context, dataset string) error {
 	if err := h.cmd.RunStream(ctx, nil, &out, &stderr, "get", "-H", "-o", "value", "type,mounted,canmount,mountpoint", dataset); err != nil {
 		return fmt.Errorf("data was received but reading the state of %s failed: %w", dataset, err)
 	}
-	values := strings.Fields(out.String())
+	// One value per line: a mountpoint may contain spaces.
+	values := strings.Split(strings.TrimRight(out.String(), "\r\n"), "\n")
 	if len(values) != 4 || values[0] != "filesystem" || values[1] != "no" || values[2] != "on" || values[3] == "none" || values[3] == "legacy" {
 		return nil
 	}

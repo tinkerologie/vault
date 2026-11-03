@@ -35,6 +35,10 @@ func RestoreTrustFrom(ctx context.Context) RestoreTrust {
 	return t
 }
 
+// hostDataRoot is where Unraid keeps shares and appdata; binds beneath it are
+// ordinary. A variable so tests can stand in a temporary directory.
+var hostDataRoot = "/mnt/"
+
 // hostPrivileges lists the settings in a container config that reach past the
 // container onto the host. Appdata binds under /mnt are ordinary and not listed.
 func hostPrivileges(ri restoreInspect) []string {
@@ -63,7 +67,13 @@ func hostPrivileges(ri restoreInspect) []string {
 		if !strings.HasPrefix(source, "/") {
 			continue // a named volume
 		}
-		if clean := filepath.Clean(source); !strings.HasPrefix(clean, "/mnt/") {
+		// Docker follows symlinks, so a link under /mnt can point anywhere.
+		clean := filepath.Clean(source)
+		resolved := clean
+		if r, err := filepath.EvalSymlinks(clean); err == nil {
+			resolved = r
+		}
+		if !strings.HasPrefix(clean, hostDataRoot) || !strings.HasPrefix(resolved, hostDataRoot) {
 			out = append(out, fmt.Sprintf("host path %q", clean))
 		}
 	}

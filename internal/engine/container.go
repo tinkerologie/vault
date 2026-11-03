@@ -1977,9 +1977,9 @@ type restoreInspect struct {
 		Destination string `json:"Destination"`
 	} `json:"Mounts"`
 
-	// imagePinned records that the tag was verified against the backup-time
-	// digest. It is decided during the restore and never read from the backup.
-	imagePinned bool
+	// pinnedImage is the backup-time digest the tag was pointed at, or "". It is
+	// decided during the restore and never read from the backup.
+	pinnedImage string
 }
 
 // mountInfo carries the mount fields needed to route a chunked volume
@@ -2171,6 +2171,13 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 		}
 	}
 
+	// Volumes may have taken hours, and an update could have moved the tag in
+	// the meantime, so it is pointed back and checked again just before create.
+	if inspect.pinnedImage != "" {
+		if err := pinBackupImage(ctx, h.cli, inspect.Config.Image, inspect.pinnedImage); err != nil {
+			return fmt.Errorf("re-checking backup-time image: %w", err)
+		}
+	}
 	created, err := h.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config:           containerConfig,
 		HostConfig:       hostConfig,
@@ -2218,7 +2225,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 	//
 	// A pinned chunked restore skips the pull: the digest pull already set
 	// RepoDigests, and pulling the tag would move it off the backup-time image.
-	if !inspect.imagePinned {
+	if inspect.pinnedImage == "" {
 		_ = populateRepoDigestsViaPull(ctx, h.cli, inspect.Config.Image)
 	}
 	if sourceDir != "" {
@@ -2517,7 +2524,14 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	//    buildImageMeta; if RepoDigests come back empty we still write the
 	//    entry so the restore path knows the meta was captured.
 	if inspect.Config != nil && inspect.Config.Image != "" {
-		meta := buildImageMeta(ctx, h.cli, inspect.Config.Image)
+		// Inspect the image the container runs, not its tag: a pulled update
+		// moves the tag before the container is recreated.
+		imageRef := inspect.Config.Image
+		if inspect.Image != "" {
+			imageRef = inspect.Image
+		}
+		meta := buildImageMeta(ctx, h.cli, imageRef)
+		meta.ImageTag = inspect.Config.Image
 		if metaBody, mErr := json.MarshalIndent(meta, "", "  "); mErr == nil {
 			metaChunkID, mPutErr := repo.Put(metaBody)
 			if mPutErr != nil {
@@ -2882,7 +2896,7 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 			hasMeta = json.Unmarshal(metaBody, &meta) == nil
 		}
 	}
-	inspect.imagePinned, err = h.resolveChunkedImage(ctx, item, inspect.Config.Image, meta.RepoDigests, progress)
+	inspect.pinnedImage, err = h.resolveChunkedImage(ctx, item, inspect.Config.Image, meta.RepoDigests, progress)
 	if err != nil {
 		return err
 	}

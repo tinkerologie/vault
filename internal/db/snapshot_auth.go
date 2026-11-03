@@ -90,6 +90,11 @@ func (a *SnapshotAuth) Sign(path string) error {
 		return err
 	}
 	defer in.Close()
+	// The snapshot directory may be writable by others. Anything they put at
+	// the path in place of the file this process just wrote is theirs, not ours.
+	if opened, statErr := in.Stat(); statErr != nil || !ownedByProcess(opened) {
+		return fmt.Errorf("%s is not owned by this process", path)
+	}
 	sum, err := hashReader(in)
 	if err != nil {
 		return err
@@ -294,6 +299,21 @@ func (sm *SnapshotManager) SnapshotAuth() *SnapshotAuth {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	return sm.auth
+}
+
+// checkSigned reports whether a path with an envelope still matches it. Paths
+// with no envelope, or no authenticator configured, pass.
+func (sm *SnapshotManager) checkSigned(path string) error {
+	auth := sm.SnapshotAuth()
+	if auth == nil {
+		return nil
+	}
+	if _, err := os.Lstat(envelopePath(path)); err != nil {
+		return nil //nolint:nilerr // nothing was signed for this path
+	}
+	_, release, err := auth.VerifiedCopy(path)
+	release()
+	return err
 }
 
 // reauthenticate re-signs a snapshot this daemon rewrote in place. USB copies and

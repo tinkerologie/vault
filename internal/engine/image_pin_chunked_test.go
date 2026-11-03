@@ -89,3 +89,43 @@ func TestRestoreChunkedStopsBeforeChangingAnything(t *testing.T) {
 		}
 	})
 }
+
+// The digest recorded at backup must be the image the container runs: a pulled
+// update moves the tag before the container is recreated.
+func TestBackupChunkedRecordsTheRunningImage(t *testing.T) {
+	c := dbContainer458(true, false)
+	c.Image = "sha256:running"
+	c.Config.Image = "nginx:1"
+	f := backupFake458(c)
+	f.containerInspect = func(context.Context, string) (client.ContainerInspectResult, error) {
+		return client.ContainerInspectResult{Container: c}, nil
+	}
+	var inspected []string
+	f.imageInspect = func(_ context.Context, ref string) (client.ImageInspectResult, error) {
+		inspected = append(inspected, ref)
+		var res client.ImageInspectResult
+		if ref == "sha256:running" {
+			res.RepoDigests = []string{"nginx@" + pinDigest}
+		}
+		return res, nil
+	}
+	repo := newChunkTestRepo(t)
+	id, err := (&ContainerHandler{cli: f}).BackupChunked(t.Context(), BackupItem{Name: "db", Settings: map[string]any{"no_stop": true}}, repo, nil, noopProgress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	m, err := repo.GetManifest(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := repo.Get(m.Files[containerImageMetaKey].Chunks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), pinDigest) || !strings.Contains(string(body), `"nginx:1"`) {
+		t.Fatalf("image_meta = %s (inspected %v)", body, inspected)
+	}
+}
