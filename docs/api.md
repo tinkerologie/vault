@@ -181,6 +181,8 @@ On a `vault replica`, a source can be created, edited, tested and synced, becaus
 
 Replication is pull-based: a sync imports only the remote jobs whose `source_id` is `0`, i.e. jobs created on that server. Jobs the remote server itself replicated from elsewhere are skipped, so two servers can each configure the other as a source without bouncing jobs back and forth. Multi-hop relays (A → B → C) are not forwarded; configure each origin server as a direct source.
 
+Each restore point a sync copies is recorded with a finished backup run of the replicated job, dated when the remote server took the backup, so it shows in History and in the job's restore points. Replicated jobs have no items yet, so a restore request names the item with `item_name` and `item_type`. The run is `partial` when that backup had failed items, and `success` otherwise. A restore point that cannot be downloaded or recorded makes the sync `partial`, or `failed` when nothing was recorded, and `last_sync_success_at` advances only on `success`. A later sync retries it. A file download is abandoned when the remote server sends no data for 2 minutes, with no limit on its total time. When the remote server refuses a request, the error shows the HTTP status and the server's short JSON `error` message, at most 200 characters with control characters removed. The rest of the response is never shown.
+
 | Method | Endpoint                 | Description                     |
 | ------ | ------------------------ | ------------------------------- |
 | GET    | `/replication`           | List replication sources        |

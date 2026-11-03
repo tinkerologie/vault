@@ -11,9 +11,11 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/logx"
 	"github.com/tinkerologie/vault/internal/maintlock"
 	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/storage"
@@ -255,11 +257,11 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 		})
 
 		newRPs, bytes, syncErr := s.syncJob(client, src, storageDestID, rj, localAdapter)
-		// Restore points that did sync still count when others were refused.
+		// Restore points that did sync still count when others failed.
 		result.RestorePointsNew += newRPs
 		result.BytesTransferred += bytes
 		if syncErr != nil {
-			log.Printf("replication: failed to sync job %q from %q: %v", rj.Name, src.Name, syncErr)
+			logx.Warnf("replication: failed to sync job %q from %q: %v", rj.Name, src.Name, syncErr)
 			result.JobsFailed++
 			continue
 		}
@@ -298,7 +300,9 @@ func (s *Syncer) completeSyncStatus(sourceID int64, sourceName string, result *S
 	errMsg := ""
 	level := "info"
 	switch {
-	case result.JobsFailed > 0 && result.jobsOK == 0:
+	// Restore points recorded from a job that also had failures are progress,
+	// so that sync is partial rather than failed.
+	case result.JobsFailed > 0 && result.jobsOK == 0 && result.RestorePointsNew == 0:
 		status = "failed"
 		errMsg = fmt.Sprintf("all %d job(s) failed to sync — see daemon log", result.JobsFailed)
 		level = "error"
@@ -382,7 +386,8 @@ func (s *Syncer) syncJob(
 		localPaths[normPath(lrp.StoragePath)] = true
 	}
 
-	var newCount, refused int
+	var newCount, failed int
+	var firstErr error
 	var totalBytes int64
 
 	for _, rrp := range remoteRPs {
@@ -392,18 +397,23 @@ func (s *Syncer) syncJob(
 
 		bytes, err := s.syncRestorePoint(client, src, destID, rj, rrp, localJobID, localAdapter)
 		if err != nil {
-			log.Printf("replication: skipping restore point %q: %v", rrp.StoragePath, err)
-			if errors.Is(err, errPathRefused) {
-				refused++
+			// A restore point that was not recorded is failed work: the
+			// replica has no copy it can restore from.
+			logx.Warnf("replication: restore point %q from %q not recorded: %v", rrp.StoragePath, src.Name, err)
+			failed++
+			if firstErr == nil {
+				firstErr = err
 			}
 			continue
 		}
+		// A peer listing the same path twice must not record it twice.
+		localPaths[normPath(rrp.StoragePath)] = true
 		newCount++
 		totalBytes += bytes
 	}
 
-	if refused > 0 {
-		return newCount, totalBytes, fmt.Errorf("%w: %d of %d restore point(s)", errPathRefused, refused, len(remoteRPs))
+	if failed > 0 {
+		return newCount, totalBytes, fmt.Errorf("%d of %d restore point(s) not recorded: %w", failed, len(remoteRPs), firstErr)
 	}
 	return newCount, totalBytes, nil
 }
@@ -494,23 +504,64 @@ func (s *Syncer) syncRestorePoint(
 		return totalBytes, err
 	}
 
-	// Create a local restore point record. We use a stub job_run_id of 0
-	// since this wasn't run locally.
+	// Every restore point belongs to a run, so record the peer's backup as a
+	// finished run of the local job, then the restore point, in one
+	// transaction. If that fails, the downloaded files stay unrecorded and
+	// the next sync downloads them again to the same path.
+	metadata := s.rewriteMetadata(rrp.Metadata, src.Name)
+	run := replicatedRun(localJobID, src.Name, rrp, metadata, totalBytes)
 	rp := db.RestorePoint{
-		JobRunID:             0,
 		JobID:                localJobID,
 		BackupType:           rrp.BackupType,
 		StoragePath:          storagePath,
-		Metadata:             s.rewriteMetadata(rrp.Metadata, src.Name),
+		Metadata:             metadata,
 		SizeBytes:            totalBytes,
 		ParentRestorePointID: 0,
 		SourceID:             src.ID,
 	}
-	if _, err := s.db.CreateRestorePoint(rp); err != nil {
-		return totalBytes, fmt.Errorf("create restore point: %w", err)
+	if _, _, err := s.db.CreateReplicatedRestorePoint(run, rp, peerTime(rrp.CreatedAt)); err != nil {
+		return totalBytes, fmt.Errorf("record restore point: %w", err)
 	}
 
 	return totalBytes, nil
+}
+
+// replicatedRun describes, as a finished local run, the peer backup that
+// produced rrp. Its outcome and item counts come from the restore point
+// metadata the peer recorded: a backup with failed items is partial.
+func replicatedRun(localJobID int64, sourceName string, rrp RemoteRestorePoint, metadata string, sizeBytes int64) db.JobRun {
+	var meta struct {
+		Items       int `json:"items"`
+		ItemsFailed int `json:"items_failed"`
+	}
+	// Older peers may store other shapes here; the counts are then unknown.
+	_ = json.Unmarshal([]byte(metadata), &meta)
+	items, failed := max(meta.Items, 0), max(meta.ItemsFailed, 0)
+	status := "success"
+	if failed > 0 {
+		status = "partial"
+	}
+	return db.JobRun{
+		JobID:       localJobID,
+		Status:      status,
+		BackupType:  rrp.BackupType,
+		RunType:     "backup",
+		Log:         fmt.Sprintf("Replicated from %s; the backup ran on that server.", sourceName),
+		ItemsTotal:  items + failed,
+		ItemsDone:   items,
+		ItemsFailed: failed,
+		SizeBytes:   sizeBytes,
+	}
+}
+
+// peerTime parses the peer's restore point timestamp, returning the zero time
+// (meaning now) when it is missing or unreadable.
+func peerTime(s string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // rewriteMetadata adds replication origin info to the metadata. The result

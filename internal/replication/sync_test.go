@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -498,8 +499,10 @@ func TestSyncSourceListJobsError(t *testing.T) {
 	}
 }
 
-// TestSyncSourceFullPath exercises a happy-path sync that creates a local job
-// and a local restore point from one remote job/restore point with a file.
+// TestSyncSourceFullPath exercises a happy-path sync that creates a local job,
+// a run and a restore point from one remote job/restore point with a file, and
+// checks that a second sync of the same source records and downloads nothing
+// again (#585: every restore point insert used to fail its foreign key).
 func TestSyncSourceFullPath(t *testing.T) {
 	t.Parallel()
 
@@ -515,7 +518,7 @@ func TestSyncSourceFullPath(t *testing.T) {
 			})
 		case strings.HasPrefix(r.URL.Path, "/api/v1/jobs/5/restore-points"):
 			_ = json.NewEncoder(w).Encode([]RemoteRestorePoint{
-				{ID: 10, JobID: 5, BackupType: "full", StoragePath: "job-5/2026-01-01", Metadata: `{"foo":"bar"}`, SizeBytes: 4},
+				{ID: 10, JobID: 5, BackupType: "full", StoragePath: "job-5/2026-01-01", Metadata: `{"foo":"bar","items":2}`, SizeBytes: 4, CreatedAt: "2026-01-01T03:04:05Z"},
 			})
 		case strings.HasPrefix(r.URL.Path, "/api/v1/storage/9/list"):
 			// Return a single non-directory file.
@@ -551,26 +554,64 @@ func TestSyncSourceFullPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SyncSource: %v", err)
 	}
-	// Note: syncRestorePoint sets JobRunID=0 unconditionally, which violates
-	// the restore_points.job_run_id FK in production code. The sync wrapper
-	// logs the error and continues. We still exercise every line up to
-	// (and including) the FK-rejected CreateRestorePoint. The remote file
-	// download and local Write paths both fire.
-	if res.JobsSynced != 0 {
-		t.Errorf("JobsSynced = %d, want 0 (FK violation logged)", res.JobsSynced)
+	if res.JobsSynced != 1 || res.RestorePointsNew != 1 || res.JobsFailed != 0 || res.BytesTransferred != 4 {
+		t.Errorf("result = %+v, want 1 job and 1 restore point synced", res)
 	}
 	if len(*seen) == 0 || (*seen)[len(*seen)-1] != 1.0 {
 		t.Errorf("last progress = %v, want 1.0", *seen)
 	}
-	if fileBytesServed.Load() == 0 {
-		t.Errorf("no file bytes were downloaded via /files endpoint")
+	if fileBytesServed.Load() != 4 {
+		t.Errorf("file bytes downloaded = %d, want 4", fileBytesServed.Load())
+	}
+	if got, err := os.ReadFile(filepath.Join(storageDir, "job-5", "2026-01-01", "data.tar")); err != nil || string(got) != "DATA" {
+		t.Errorf("local file = %q, %v", got, err)
 	}
 
-	// Run a second sync to also exercise the GetJobByName-found branch
-	// inside ensureLocalJob.
-	if _, err := s.SyncSource(srcID, nil); err != nil {
+	job, err := d.GetJobByName("[Remote] Remote J")
+	if err != nil {
+		t.Fatalf("local job: %v", err)
+	}
+	peerTime := time.Date(2026, 1, 1, 3, 4, 5, 0, time.UTC)
+	assertReplicated := func(stage string) {
+		t.Helper()
+		rps, err := d.ListRestorePoints(job.ID)
+		if err != nil || len(rps) != 1 {
+			t.Fatalf("%s: restore points = %+v, %v; want exactly 1", stage, rps, err)
+		}
+		rp := rps[0]
+		if rp.JobRunID <= 0 || rp.SourceID != srcID || rp.StoragePath != "job-5/2026-01-01" || rp.SizeBytes != 4 || !rp.CreatedAt.Equal(peerTime) {
+			t.Errorf("%s: restore point = %+v", stage, rp)
+		}
+		run, err := d.GetJobRun(rp.JobRunID)
+		if err != nil {
+			t.Fatalf("%s: run %d: %v", stage, rp.JobRunID, err)
+		}
+		if run.JobID != job.ID || run.Status != "success" || run.RunType != "backup" || run.ItemsDone != 2 || run.SizeBytes != 4 || !run.StartedAt.Equal(peerTime) {
+			t.Errorf("%s: run = %+v", stage, run)
+		}
+		runs, err := d.GetJobRuns(job.ID, 10)
+		if err != nil || len(runs) != 1 {
+			t.Errorf("%s: runs = %d, %v; want exactly 1", stage, len(runs), err)
+		}
+	}
+	assertReplicated("first sync")
+	if src, err := d.GetReplicationSource(srcID); err != nil || src.LastSyncStatus != "success" || src.LastSyncSuccessAt == nil {
+		t.Errorf("source after sync = %+v, %v; want success", src, err)
+	}
+
+	// The second sync of the same source finds the restore point recorded,
+	// so it neither downloads it again nor records it twice.
+	res, err = s.SyncSource(srcID, nil)
+	if err != nil {
 		t.Fatalf("second SyncSource: %v", err)
 	}
+	if res.RestorePointsNew != 0 || res.JobsFailed != 0 {
+		t.Errorf("second sync = %+v, want nothing new", res)
+	}
+	if fileBytesServed.Load() != 4 {
+		t.Errorf("second sync downloaded again: %d bytes served", fileBytesServed.Load())
+	}
+	assertReplicated("second sync")
 }
 
 // TestSyncRestorePointDownloadDirError exercises the syncJob/downloadDir
@@ -603,13 +644,17 @@ func TestSyncJobDownloadError(t *testing.T) {
 		Name: "j-fail", URL: srv.URL, StorageDestID: destID,
 	})
 	s := NewSyncer(d, nil)
-	// Should still complete (downloadDir errors are logged + skipped).
+	// The sync completes, but a restore point that could not be downloaded
+	// fails it: the replica has no copy (#585).
 	res, err := s.SyncSource(id, nil)
 	if err != nil {
 		t.Fatalf("SyncSource: %v", err)
 	}
-	if res.RestorePointsNew != 0 {
-		t.Errorf("RestorePointsNew = %d, want 0", res.RestorePointsNew)
+	if res.RestorePointsNew != 0 || res.JobsFailed != 1 {
+		t.Errorf("result = %+v, want the job failed with no restore points", res)
+	}
+	if src, _ := d.GetReplicationSource(id); src.LastSyncStatus != "failed" || src.LastSyncSuccessAt != nil {
+		t.Errorf("status = %q, success_at = %v; want failed", src.LastSyncStatus, src.LastSyncSuccessAt)
 	}
 }
 

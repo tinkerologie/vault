@@ -1,12 +1,18 @@
 package replication
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tinkerologie/vault/internal/bounded"
 	"github.com/tinkerologie/vault/internal/credentials"
@@ -195,19 +201,80 @@ func (c *Client) ListStorageFiles(storageID int64, prefix string) ([]StorageFile
 	return files, nil
 }
 
+// downloadIdleTimeout is how long a file download may go without receiving
+// any data before it is abandoned. Downloads have no total time limit, since
+// a large backup file over a slow link can take hours.
+var downloadIdleTimeout = 2 * time.Minute
+
 // DownloadFile streams a file from the remote storage destination.
 // The caller is responsible for closing the returned ReadCloser.
 func (c *Client) DownloadFile(storageID int64, filePath string) (io.ReadCloser, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	body := &idleReader{idle: downloadIdleTimeout, cancel: cancel}
+	body.timer = time.AfterFunc(body.idle, body.expire)
+
+	// The client's total timeout would cut off a long download that is
+	// still making progress; the idle timer above bounds it instead.
+	streaming := *c.httpClient
+	streaming.Timeout = 0
 	reqPath := fmt.Sprintf("/api/v1/storage/%d/files", storageID)
-	resp, err := c.doRequestWithParams(http.MethodGet, reqPath, map[string]string{"path": filePath})
+	resp, err := c.do(ctx, &streaming, http.MethodGet, reqPath, map[string]string{"path": filePath})
 	if err != nil {
-		return nil, fmt.Errorf("download file %q: %w", filePath, err)
+		_ = body.Close()
+		return nil, fmt.Errorf("download file %q: %w", filePath, body.explain(err))
 	}
 	if resp.StatusCode != http.StatusOK {
+		err := peerStatusError(resp)
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("download file %q: %w", filePath, statusError(resp.StatusCode))
+		_ = body.Close()
+		return nil, fmt.Errorf("download file %q: %w", filePath, err)
 	}
-	return resp.Body, nil
+	body.rc = resp.Body
+	return body, nil
+}
+
+// idleReader is a download body that is cancelled once no data has arrived
+// for idle. Each read that returns data restarts the timer.
+type idleReader struct {
+	rc      io.ReadCloser
+	idle    time.Duration
+	timer   *time.Timer
+	cancel  context.CancelFunc
+	expired atomic.Bool
+}
+
+func (r *idleReader) expire() {
+	r.expired.Store(true)
+	r.cancel()
+}
+
+// explain replaces the cancellation error caused by the idle timer with one
+// that says what happened.
+func (r *idleReader) explain(err error) error {
+	if r.expired.Load() {
+		return fmt.Errorf("peer sent no data for %s: %w", r.idle, err)
+	}
+	return err
+}
+
+func (r *idleReader) Read(p []byte) (int, error) {
+	n, err := r.rc.Read(p)
+	if n > 0 && !r.expired.Load() {
+		r.timer.Reset(r.idle)
+	}
+	if err != nil && err != io.EOF {
+		err = r.explain(err)
+	}
+	return n, err
+}
+
+func (r *idleReader) Close() error {
+	r.timer.Stop()
+	defer r.cancel()
+	if r.rc == nil {
+		return nil
+	}
+	return r.rc.Close()
 }
 
 // maxPeerJSONBytes limits one JSON response from a peer. Listings of jobs,
@@ -215,10 +282,50 @@ func (c *Client) DownloadFile(storageID int64, filePath string) (io.ReadCloser, 
 // not subject to it.
 var maxPeerJSONBytes int64 = 1 << 30
 
-// statusError describes a failed peer response. The body is left out: the URL
-// can point at any service, and its responses must not reach the caller.
-func statusError(code int) error {
-	return fmt.Errorf("status %d", code)
+// Limits on what peerStatusError takes from an error response.
+const (
+	maxPeerErrorBody  = 4 << 10
+	maxPeerErrorRunes = 200
+)
+
+// peerStatusError describes a failed peer response by its status code and, when
+// the response is JSON, the short "error" message Vault puts there, such as how
+// to create an API key. The URL can point at any service, so nothing else from
+// the body is returned, and the message is bounded and stripped of control and
+// formatting characters.
+func peerStatusError(resp *http.Response) error {
+	msg := ""
+	if mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err == nil && mt == "application/json" {
+		var body struct {
+			Error string `json:"error"`
+		}
+		if raw, err := io.ReadAll(io.LimitReader(resp.Body, maxPeerErrorBody)); err == nil && json.Unmarshal(raw, &body) == nil {
+			msg = sanitizePeerMessage(body.Error)
+		}
+	}
+	if msg == "" {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return fmt.Errorf("status %d: %s", resp.StatusCode, msg)
+}
+
+// sanitizePeerMessage keeps the printable text of a peer message on one line,
+// at most maxPeerErrorRunes long.
+func sanitizePeerMessage(s string) string {
+	printable := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return ' '
+		}
+		if r == utf8.RuneError || !unicode.IsGraphic(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s)
+	msg := []rune(strings.Join(strings.Fields(printable), " "))
+	if len(msg) > maxPeerErrorRunes {
+		return string(msg[:maxPeerErrorRunes]) + "…"
+	}
+	return string(msg)
 }
 
 // getJSON performs a GET request and decodes the JSON response.
@@ -235,13 +342,18 @@ func (c *Client) getJSONWithParams(path string, params map[string]string, target
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return statusError(resp.StatusCode)
+		return peerStatusError(resp)
 	}
 	return bounded.DecodeJSON(resp.Body, maxPeerJSONBytes, target)
 }
 
 // doRequestWithParams builds and executes an HTTP request with query params.
 func (c *Client) doRequestWithParams(method, path string, params map[string]string) (*http.Response, error) {
+	return c.do(context.Background(), c.httpClient, method, path, params)
+}
+
+// do builds and executes an HTTP request with query params on hc.
+func (c *Client) do(ctx context.Context, hc *http.Client, method, path string, params map[string]string) (*http.Response, error) {
 	u, err := url.JoinPath(c.baseURL, path) // #nosec G125 -- base URL is validated; routes are fixed strings/numeric IDs. File paths are encoded as query parameters, never joined here.
 	if err != nil {
 		return nil, fmt.Errorf("build URL: %w", err)
@@ -259,12 +371,12 @@ func (c *Client) doRequestWithParams(method, path string, params map[string]stri
 		u = parsed.String()
 	}
 	// aikido-ignore-next-line AIK_go_G107 -- u is built from c.baseURL (admin-configured replication source URL) joined with a fixed path; not request-time user input.
-	req, err := http.NewRequest(method, u, nil) // #nosec G107
+	req, err := http.NewRequestWithContext(ctx, method, u, nil) // #nosec G107
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	if c.apiKey != "" {
 		req.Header.Set("X-API-Key", c.apiKey)
 	}
-	return c.httpClient.Do(req)
+	return hc.Do(req)
 }

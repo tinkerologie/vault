@@ -194,7 +194,8 @@ func TestDownloadDirRevisit514(t *testing.T) {
 	}
 }
 
-// A remote point with an invalid path is compared as-is and then refused.
+// A remote point with an invalid path is compared as-is and then refused. The
+// replica then lacks that point, so the job reports it as failed (#585).
 func TestSyncJobSkipsInvalidRemotePath514(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -213,8 +214,8 @@ func TestSyncJobSkipsInvalidRemotePath514(t *testing.T) {
 	destID, _ := d.CreateStorageDestination(db.StorageDestination{Name: "d", Type: "local", Config: `{"path":"` + t.TempDir() + `"}`})
 	s := NewSyncer(d, nil)
 	n, _, err := s.syncJob(c, db.ReplicationSource{ID: 1, Name: "S", StorageDestID: destID}, destID, RemoteJob{ID: 8, Name: "J"}, storage.NewLocalAdapter(t.TempDir()))
-	if err != nil || n != 0 {
-		t.Fatalf("syncJob = %d, %v; want the invalid point skipped", n, err)
+	if n != 0 || err == nil || !strings.Contains(err.Error(), "invalid remote storage path") {
+		t.Fatalf("syncJob = %d, %v; want the invalid point refused and reported", n, err)
 	}
 }
 
