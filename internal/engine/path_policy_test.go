@@ -90,7 +90,7 @@ func TestContainerRestoreRefusesBackupControlledSource(t *testing.T) {
 	f.containerInspect = func(context.Context, string) (client.ContainerInspectResult, error) {
 		return client.ContainerInspectResult{}, fmt.Errorf("no such container")
 	}
-	err := (&ContainerHandler{cli: f}).Restore(t.Context(), BackupItem{Name: "app", Settings: map[string]any{}}, fx.sourceDir, noopProgress)
+	err := (&ContainerHandler{cli: f}).Restore(sameServerRestore(t), BackupItem{Name: "app", Settings: map[string]any{}}, fx.sourceDir, noopProgress)
 	if err == nil || !strings.Contains(err.Error(), "refusing in-place restore") {
 		t.Fatalf("err = %v, want an in-place refusal", err)
 	}
@@ -100,7 +100,7 @@ func TestContainerRestoreRefusesSystemCustomDestination(t *testing.T) {
 	fx := newRestoreFixture458(t, true)
 	f, _ := newRestoreDaemon458()
 	item := BackupItem{Name: "app", Settings: map[string]any{"restore_destination": "/etc/restored"}}
-	err := (&ContainerHandler{cli: f}).Restore(t.Context(), item, fx.sourceDir, noopProgress)
+	err := (&ContainerHandler{cli: f}).Restore(sameServerRestore(t), item, fx.sourceDir, noopProgress)
 	if err == nil || !strings.Contains(err.Error(), "approved locations") {
 		t.Fatalf("err = %v", err)
 	}
@@ -212,7 +212,7 @@ func TestContainerRestoreRefusesMountOmittedFromManifest(t *testing.T) {
 	f.containerInspect = func(context.Context, string) (client.ContainerInspectResult, error) {
 		return client.ContainerInspectResult{}, fmt.Errorf("no such container")
 	}
-	err = (&ContainerHandler{cli: f}).Restore(t.Context(), BackupItem{Name: "app", Settings: map[string]any{}}, fx.sourceDir, noopProgress)
+	err = (&ContainerHandler{cli: f}).Restore(sameServerRestore(t), BackupItem{Name: "app", Settings: map[string]any{}}, fx.sourceDir, noopProgress)
 	if err == nil || !strings.Contains(err.Error(), "refusing in-place restore") {
 		t.Fatalf("err = %v, want an in-place refusal", err)
 	}

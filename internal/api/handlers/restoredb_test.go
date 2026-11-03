@@ -419,3 +419,25 @@ func TestRestoreDBVerifyOnly(t *testing.T) {
 		t.Fatalf("working DB closed by verify_only: %v", err)
 	}
 }
+
+// A database backup proves nothing about who may use this server, so the key in
+// force survives the swap even when the backup carries another or none.
+func TestRestoreDBKeepsTheCurrentAPIKey(t *testing.T) {
+	t.Parallel()
+	h, destID, storageDir := newFileBackedStorageHandler(t)
+	if err := h.db.SetSetting("api_key_hash", "current-hash"); err != nil {
+		t.Fatal(err)
+	}
+	path := writeEncryptedDBFixture(t, storageDir, "pw", func(d *db.DB) {
+		_ = d.SetSetting("api_key_hash", "")
+	})
+	body, _ := json.Marshal(map[string]string{"storage_path": path, "passphrase": "pw"})
+	w := httptest.NewRecorder()
+	h.RestoreDB(w, reqWithID(http.MethodPost, "/api/v1/storage/x/restore-db", strconv.FormatInt(destID, 10), body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if got, _ := h.db.GetSetting("api_key_hash", ""); got != "current-hash" {
+		t.Errorf("api_key_hash = %q", got)
+	}
+}

@@ -498,10 +498,16 @@ type restoreItemInput struct {
 	CleanDestination *bool `json:"clean_destination,omitempty"`
 }
 
+// options maps the tool input onto the runner's restore options. It has no
+// approvals to carry: container restores that need one are approved in the UI.
+func (in restoreItemInput) options() runner.RestoreItemOptions {
+	return runner.RestoreItemOptions{CleanDestination: in.CleanDestination}
+}
+
 func (s *MCPServer) addRestoreItemTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "restore_item",
-		Description: "Restore an item from a specific restore point. The destination is replaced by default; pass clean_destination=false to merge into its existing contents instead.",
+		Description: "Restore an item from a specific restore point. The destination is replaced by default; pass clean_destination=false to merge into its existing contents instead. A container restore that needs approval (host-level access from an imported or replicated backup, or a missing backed-up image digest) cannot be approved here: the user must approve it in the Vault UI's Restore wizard.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input restoreItemInput) (*mcp.CallToolResult, any, error) {
 		rps, err := s.db.ListRestorePoints(input.JobID)
 		if err != nil {
@@ -519,7 +525,7 @@ func (s *MCPServer) addRestoreItemTool() {
 		}
 		go func() {
 			if err := s.runner.RestoreItem(*found, input.ItemName, input.ItemType, input.Destination, input.Passphrase,
-				runner.RestoreItemOptions{CleanDestination: input.CleanDestination}); err != nil {
+				input.options()); err != nil {
 				log.Printf("mcp: restore failed: %v", err)
 			}
 		}()

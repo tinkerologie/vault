@@ -46,6 +46,8 @@
     restoreDestination: '',
     showDestOverride: false,
     cleanDestination: true,
+    allowHostPrivileges: false,
+    allowUnpinnedImage: false,
     acknowledgeContainerRemap: false,
     passphrase: '',
     preflightResult: null,
@@ -1052,6 +1054,8 @@
       if (s.passphrase) {
         payload.passphrase = s.passphrase
       }
+      if (s.allowHostPrivileges) payload.allow_host_privileges = true
+      if (s.allowUnpinnedImage) payload.allow_unpinned_image = true
 
       const filePaths = {}
       for (const item of unit.items) {
@@ -1674,6 +1678,33 @@
             </span>
           </label>
         </div>
+
+        {#if unit.items.some(i => i.type === 'container')}
+          <!-- Approvals a container restore asks for; both stay off unless a restore was refused. -->
+          <div>
+            <p class="text-sm font-medium text-text-muted mb-2">Container approvals</p>
+            <label class="flex items-start gap-2 cursor-pointer text-sm text-text">
+              <input type="checkbox" class="accent-vault mt-0.5" checked={s.allowHostPrivileges}
+                onchange={(e) => updateUnitSetting(unit.jobId, { allowHostPrivileges: e.target.checked })} />
+              <span>
+                Allow host-level access
+                <span class="block text-xs text-text-dim mt-0.5">
+                  Only needed when a restore stops because an imported or replicated backup asks for privileged mode, host networking, devices or host paths. Review what the error lists before enabling.
+                </span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 cursor-pointer text-sm text-text mt-2">
+              <input type="checkbox" class="accent-vault mt-0.5" checked={s.allowUnpinnedImage}
+                onchange={(e) => updateUnitSetting(unit.jobId, { allowUnpinnedImage: e.target.checked })} />
+              <span>
+                Use the image's current tag
+                <span class="block text-xs text-text-dim mt-0.5">
+                  Only needed when a deduplicated backup's original image can't be found. The container then runs whatever its tag points to today.
+                </span>
+              </span>
+            </label>
+          </div>
+        {/if}
 
         <!-- Passphrase if age encrypted -->
         {#if needsAgePassphrase}

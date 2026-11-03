@@ -334,14 +334,77 @@ func (h *ZFSHandler) Restore(ctx context.Context, item BackupItem, sourceDir str
 		progress: progress,
 	}
 
+	propArgs, err := h.receivePropertyArgs(ctx, destDataset)
+	if err != nil {
+		return err
+	}
+
 	var stderr bytes.Buffer
-	recvArgs := []string{"recv", "-F", destDataset}
+	recvArgs := append(append([]string{"recv", "-u", "-F"}, propArgs...), destDataset)
 
 	if err := h.cmd.RunStream(ctx, cr, nil, &stderr, recvArgs...); err != nil {
 		return fmt.Errorf("zfs receive: %w", err)
 	}
 
+	if err := h.mountReceived(ctx, destDataset); err != nil {
+		return err
+	}
+
 	progress(item.Name, 100, "restore complete")
+	return nil
+}
+
+// zfsMountProperties decide where a received dataset appears on the host. Vault's
+// own plain `zfs send` streams carry no properties, so these only ever arrive in a
+// stream made elsewhere, and the receive runs as root.
+var zfsMountProperties = []string{"mountpoint", "canmount", "overlay"}
+
+// receivePropertyArgs keeps mount behaviour under local control. `-x` acts like
+// `zfs inherit` and would also clear a value set on the existing dataset, so a
+// locally set value is passed back with `-o` to survive the receive.
+func (h *ZFSHandler) receivePropertyArgs(ctx context.Context, dataset string) ([]string, error) {
+	local := map[string]string{}
+	var out, stderr bytes.Buffer
+	err := h.cmd.RunStream(ctx, nil, &out, &stderr, "get", "-H", "-o", "property,value,source", strings.Join(zfsMountProperties, ","), dataset)
+	switch {
+	case err == nil:
+		for line := range strings.Lines(out.String()) {
+			fields := strings.Split(strings.TrimRight(line, "\r\n"), "\t")
+			if len(fields) == 3 && fields[2] == "local" {
+				local[fields[0]] = fields[1]
+			}
+		}
+	case !strings.Contains(stderr.String()+err.Error(), "does not exist"):
+		return nil, fmt.Errorf("reading mount properties of %s: %w", dataset, err)
+	}
+	var args []string
+	for _, prop := range zfsMountProperties {
+		if value, ok := local[prop]; ok {
+			args = append(args, "-o", prop+"="+value)
+		} else {
+			args = append(args, "-x", prop)
+		}
+	}
+	return args, nil
+}
+
+// mountReceived mounts a dataset received with -u, now its mount properties come
+// only from local policy. Volumes, canmount=off/noauto and legacy or absent
+// mountpoints are left alone, as a normal receive would.
+func (h *ZFSHandler) mountReceived(ctx context.Context, dataset string) error {
+	var out, stderr bytes.Buffer
+	if err := h.cmd.RunStream(ctx, nil, &out, &stderr, "get", "-H", "-o", "value", "type,mounted,canmount,mountpoint", dataset); err != nil {
+		return fmt.Errorf("data was received but reading the state of %s failed: %w", dataset, err)
+	}
+	// One value per line: a mountpoint may contain spaces.
+	values := strings.Split(strings.TrimRight(out.String(), "\r\n"), "\n")
+	if len(values) != 4 || values[0] != "filesystem" || values[1] != "no" || values[2] != "on" || values[3] == "none" || values[3] == "legacy" {
+		return nil
+	}
+	stderr.Reset()
+	if err := h.cmd.RunStream(ctx, nil, nil, &stderr, "mount", dataset); err != nil {
+		return fmt.Errorf("data was received but mounting %s failed: %w", dataset, err)
+	}
 	return nil
 }
 

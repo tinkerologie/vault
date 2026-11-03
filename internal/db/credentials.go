@@ -293,6 +293,17 @@ func (d *DB) SealPersistentCopies(ctx context.Context, sm *SnapshotManager, extr
 			errs = append(errs, ctx.Err())
 			break
 		}
+		// A signed copy is sealed from its verified, WAL-free private copy and
+		// then re-signed, so neither a replaced file nor a planted WAL ends up
+		// with a valid signature.
+		if sm != nil {
+			if handled, err := sm.sealSigned(p, key); handled {
+				if err != nil {
+					errs = append(errs, fmt.Errorf("seal signed copy %s: %w", p, err))
+				}
+				continue
+			}
+		}
 		if err := SealCopy(p, key); err != nil {
 			errs = append(errs, fmt.Errorf("seal copy %s: %w", p, err))
 		}

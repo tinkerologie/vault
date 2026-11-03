@@ -809,6 +809,14 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "that backup file failed the database integrity check")
 		return
 	}
+	// A backup file proves nothing about who may use this server, so the API
+	// key in force now survives the replacement.
+	if err := db.CarryAPIKey(h.db, testDB); err != nil {
+		_ = testDB.Close()
+		_ = os.Remove(tmpPath)
+		respondInternalError(w, fmt.Errorf("preserving API key: %w", err))
+		return
+	}
 	_ = testDB.Close()
 
 	// Replace the current database.

@@ -26,6 +26,17 @@ own snapshot chain (cache-pool snapshot, rotated copies, USB shadow copy). A
 `vault.db` you place on the boot flash by hand is overwritten by that chain
 before Vault ever reads it.
 
+Snapshots on the cache pool are signed with `vault.key`: each one has a
+`.auth` file beside it (rotated copies keep theirs in `rotated-auth/`). Once
+Vault has signed a snapshot, which it does on the first save after upgrading,
+it records that in `snapshot-auth.enrolled` next to `vault.key` and from then
+on skips any snapshot whose signature is missing or wrong, falling back to the
+next candidate or a fresh database. The USB copies sit beside `vault.key` and
+need no signature. To restore an older, unsigned snapshot after that, add
+`ALLOW_UNSIGNED_SNAPSHOT="yes"` to `vault.cfg`, restart Vault, and remove the
+line again once it is running. A snapshot with a wrong signature is never
+restored this way.
+
 The supported way to bring settings back is the **Recover Vault** wizard (or
 the `restore-db` API), which validates the backup and swaps it in atomically.
 

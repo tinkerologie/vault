@@ -191,6 +191,12 @@ var daemonCmd = &cobra.Command{
 						return fmt.Errorf("opening USB database for migration: %w", err)
 					}
 					migrator := db.NewSnapshotManager(tmpDB, snapshotPath, defaultSnapPath)
+					auth, authErr := loadSnapshotAuth(dbPath, cfgPath)
+					if authErr != nil {
+						_ = tmpDB.Close()
+						return authErr
+					}
+					migrator.SetSnapshotAuth(auth)
 					if err := migrator.SaveSnapshot(); err != nil {
 						_ = tmpDB.Close()
 						return fmt.Errorf("migrating USB database to snapshot: %w", err)
@@ -277,7 +283,12 @@ var daemonCmd = &cobra.Command{
 
 		// In hybrid mode, attempt restoration using a fallback chain.
 		if hybridMode {
+			snapshotAuth, err := loadSnapshotAuth(dbPath, cfgPath)
+			if err != nil {
+				return err
+			}
 			snapshotMgr = db.NewSnapshotManager(database, snapshotPath, defaultSnapPath)
+			snapshotMgr.SetSnapshotAuth(snapshotAuth)
 			restorationInfo := restoreWithFallback(snapshotMgr, snapshotPath, defaultSnapPath, dbPath, usbBackupPath)
 			snapshotMgr.SetRestorationInfo(restorationInfo)
 			log.Printf("Database restoration: source=%s, path=%s (%s)",
@@ -296,6 +307,7 @@ var daemonCmd = &cobra.Command{
 			// atomically and saves a fresh snapshot at the new location, so
 			// existing snapshots are always consistent with vault.cfg.
 			snapshotMgr = db.NewSnapshotManager(database, snapshotPath, defaultSnapPath)
+			snapshotMgr.SetSnapshotAuth(snapshotAuth)
 			snapshotMgr.SetUSBBackupPath(usbBackupPath)
 			snapshotMgr.SetRestorationInfo(restorationInfo)
 
@@ -912,6 +924,21 @@ func restoreUSBPrimaryFromBackup(src, dst string) error {
 	_ = os.Remove(dst + "-wal")
 	_ = os.Remove(dst + "-shm")
 	return nil
+}
+
+// loadSnapshotAuth builds the snapshot authenticator from vault.key, creating the
+// key if this is a new install so even the first snapshot is signed.
+func loadSnapshotAuth(dbPath, cfgPath string) (*db.SnapshotAuth, error) {
+	dir := filepath.Dir(dbPath)
+	key, err := crypto.LoadOrCreateServerKey(filepath.Join(dir, "vault.key"))
+	if err != nil {
+		return nil, fmt.Errorf("loading server key: %w", err)
+	}
+	allowUnsigned := config.ReadCfgValue(cfgPath, "ALLOW_UNSIGNED_SNAPSHOT", "") == "yes"
+	if allowUnsigned {
+		log.Printf("Warning: ALLOW_UNSIGNED_SNAPSHOT is set in vault.cfg: snapshots with no envelope may be restored. Remove it once Vault has started")
+	}
+	return db.NewSnapshotAuth(key, dir, allowUnsigned), nil
 }
 
 // persistentDBCopies lists the database files besides the working DB that may

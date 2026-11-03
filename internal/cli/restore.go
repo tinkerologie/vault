@@ -52,15 +52,41 @@ func restoreWithFallback(sm *db.SnapshotManager, configuredPath, defaultCachePat
 			tier: tier, mod: newestDBMtime(path),
 		})
 	}
+	// Snapshots live on storage other accounts or machines may reach, unlike the
+	// USB copies beside vault.key, so they must prove they came from this server.
+	// Their signed save time replaces mtime, which anyone able to write the file
+	// can set.
+	auth := sm.SnapshotAuth()
+	addSnapshot := func(label, path, reason string, tier int) {
+		if path == "" {
+			return
+		}
+		if _, err := os.Lstat(path); err != nil {
+			return
+		}
+		if auth != nil {
+			if err := auth.Admissible(path); err != nil {
+				log.Printf("Warning: refusing %s snapshot %s: %v", label, path, err)
+				return
+			}
+		}
+		before := len(candidates)
+		addCandidate(label, path, reason, tier)
+		if auth != nil && len(candidates) > before {
+			if savedAt, ok := auth.SavedAt(path); ok {
+				candidates[before].mod = savedAt
+			}
+		}
+	}
 
-	addCandidate("primary", configuredPath, "restored from configured snapshot path", 0)
+	addSnapshot("primary", configuredPath, "restored from configured snapshot path", 0)
 	if defaultCachePath != configuredPath {
-		addCandidate("default_cache", defaultCachePath, "restored from default cache snapshot", 1)
+		addSnapshot("default_cache", defaultCachePath, "restored from default cache snapshot", 1)
 	}
 	// Rotated copies (written by rotateSnapshot after every successful save)
 	// sit next to the snapshot (issue #182).
 	for _, rotated := range newestRotatedSnapshots(configuredPath, defaultCachePath) {
-		addCandidate("rotated", rotated, "restored from rotated snapshot copy", 2)
+		addSnapshot("rotated", rotated, "restored from rotated snapshot copy", 2)
 	}
 	// The live USB DB is written by USB-direct boots (pool unavailable) and
 	// is then the freshest state on the system — see issue #241 above.
@@ -82,7 +108,14 @@ func restoreWithFallback(sm *db.SnapshotManager, configuredPath, defaultCachePat
 	})
 
 	for _, c := range candidates {
-		if err := sm.RestoreFromPath(c.path); err != nil {
+		source, release, err := restoreSource(auth, c.path, c.tier)
+		if err != nil {
+			log.Printf("Warning: refusing %s snapshot %s: %v", c.label, c.path, err)
+			continue
+		}
+		err = sm.RestoreFromPath(source)
+		release()
+		if err != nil {
 			log.Printf("Warning: failed to restore from %s path %s: %v", c.label, c.path, err)
 			continue
 		}
@@ -103,6 +136,20 @@ func restoreWithFallback(sm *db.SnapshotManager, configuredPath, defaultCachePat
 		Reason: "no snapshot files passed integrity check; configuration will need to be reconfigured",
 	}
 }
+
+// restoreSource returns the file to restore a candidate from. An enveloped
+// snapshot is copied and checked first, and the checked copy is what gets
+// restored, so the file cannot change after verification. USB tiers (3 and up)
+// share vault.key's trust and restore in place, with any WAL they carry.
+func restoreSource(auth *db.SnapshotAuth, path string, tier int) (string, func(), error) {
+	if auth == nil || tier >= usbTierStart {
+		return path, func() {}, nil
+	}
+	return auth.VerifiedCopy(path)
+}
+
+// usbTierStart is the first restore tier stored beside vault.key.
+const usbTierStart = 3
 
 // newestDBMtime returns the newest modification time (UnixNano) across a
 // database file and its -wal sidecar. A live WAL-mode DB can hold committed

@@ -1391,6 +1391,12 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		// and until now it quietly did not. Setting it to false opts back
 		// into the additive merge.
 		CleanDestination *bool `json:"clean_destination"`
+		// AllowHostPrivileges approves host-level container settings from a
+		// backup this server cannot vouch for, such as an imported one.
+		AllowHostPrivileges bool `json:"allow_host_privileges"`
+		// AllowUnpinnedImage accepts a container image's current tag when the
+		// backup-time digest is missing or cannot be obtained.
+		AllowUnpinnedImage bool `json:"allow_unpinned_image"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
@@ -1534,6 +1540,9 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 			Type:             t.Type,
 			FilePaths:        req.FilePaths[t.Name],
 			CleanDestination: cleanDestination,
+
+			AllowHostPrivileges: req.AllowHostPrivileges,
+			AllowUnpinnedImage:  req.AllowUnpinnedImage,
 		})
 	}
 

@@ -428,7 +428,7 @@ func TestRestoreChunkedStagesSidecarsForTheRecreate(t *testing.T) {
 
 	h := &ContainerHandler{cli: &mockDockerClient{createOK: true, inspectErr: os.ErrNotExist}}
 	item := BackupItem{Name: "plex", Type: "container"}
-	if err := h.RestoreChunked(context.Background(), item, repo, manifestID, "", func(string, int, string) {}); err != nil {
+	if err := h.RestoreChunked(sameServerRestore(t), item, repo, manifestID, "", func(string, int, string) {}); err != nil {
 		t.Fatalf("RestoreChunked: %v", err)
 	}
 

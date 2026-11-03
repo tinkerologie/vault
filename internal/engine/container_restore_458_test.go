@@ -202,7 +202,7 @@ func TestContainerRestoreRoundTripInPlace458(t *testing.T) {
 
 	var steps []string
 	progress := func(_ string, _ int, msg string) { steps = append(steps, msg) }
-	if err := h.Restore(t.Context(), BackupItem{Name: "app", Settings: map[string]any{}}, fx.sourceDir, progress); err != nil {
+	if err := h.Restore(sameServerRestore(t), BackupItem{Name: "app", Settings: map[string]any{}}, fx.sourceDir, progress); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 
@@ -280,7 +280,7 @@ func TestContainerRestoreToAlternateDestination458(t *testing.T) {
 
 	dest := t.TempDir()
 	item := BackupItem{Name: "app", Settings: map[string]any{"restore_destination": dest, SettingCleanDestination: true}}
-	if err := h.Restore(t.Context(), item, fx.sourceDir, noopProgress); err != nil {
+	if err := h.Restore(sameServerRestore(t), item, fx.sourceDir, noopProgress); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 	normDest, err := normalizeRestorePath(dest)
@@ -317,7 +317,7 @@ func TestContainerRestoreFileSelectionSkipsOtherVolumes458(t *testing.T) {
 	f, _ := newRestoreDaemon458()
 	h := &ContainerHandler{cli: f}
 	item := BackupItem{Name: "app", Settings: map[string]any{"restore_file_paths": []any{"/config/a.txt"}}}
-	if err := h.Restore(t.Context(), item, fx.sourceDir, noopProgress); err != nil {
+	if err := h.Restore(sameServerRestore(t), item, fx.sourceDir, noopProgress); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 	if got := readFile458(t, filepath.Join(fx.volDir, "a.txt")); got != "alpha" {
@@ -356,7 +356,7 @@ func TestContainerRestoreMissingArchivesAreSkipped458(t *testing.T) {
 	}
 	f, d := newRestoreDaemon458()
 	h := &ContainerHandler{cli: f}
-	if err := h.Restore(t.Context(), BackupItem{Name: "app"}, fx.sourceDir, noopProgress); err != nil {
+	if err := h.Restore(sameServerRestore(t), BackupItem{Name: "app"}, fx.sourceDir, noopProgress); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 	if len(d.created) != 1 {
@@ -452,7 +452,7 @@ func TestContainerRestoreErrors458(t *testing.T) {
 			if item.Name == "" {
 				item = BackupItem{Name: "app", Settings: map[string]any{}}
 			}
-			err := (&ContainerHandler{cli: f}).Restore(t.Context(), item, fx.sourceDir, noopProgress)
+			err := (&ContainerHandler{cli: f}).Restore(sameServerRestore(t), item, fx.sourceDir, noopProgress)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
 			}
@@ -515,7 +515,7 @@ func TestContainerRestoreReplaysDatabaseDump458(t *testing.T) {
 			writeFile458(t, filepath.Join(fx.sourceDir, DatabaseReplayMarker), "")
 			f, _ := newRestoreDaemon458()
 			rec := installExec(f, tt.scripts...)
-			err := (&ContainerHandler{cli: f}).Restore(t.Context(), BackupItem{Name: "db"}, fx.sourceDir, noopProgress)
+			err := (&ContainerHandler{cli: f}).Restore(sameServerRestore(t), BackupItem{Name: "db"}, fx.sourceDir, noopProgress)
 			if tt.wantErr == "" && err != nil {
 				t.Fatalf("Restore: %v", err)
 			}
@@ -548,7 +548,7 @@ func TestContainerRestorePreservesUnreplayedDump458(t *testing.T) {
 			saved = after
 		}
 	}
-	if err := (&ContainerHandler{cli: f}).Restore(t.Context(), BackupItem{Name: "app"}, fx.sourceDir, progress); err != nil {
+	if err := (&ContainerHandler{cli: f}).Restore(sameServerRestore(t), BackupItem{Name: "app"}, fx.sourceDir, progress); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 	if saved == "" {
@@ -582,7 +582,7 @@ func TestContainerRestoreDatabaseNotReady458(t *testing.T) {
 	}
 	// The cancelled context also stops the dump copy, which is logged, not
 	// returned: the restore itself still succeeds.
-	if err := (&ContainerHandler{cli: f}).Restore(ctx, BackupItem{Name: "db"}, fx.sourceDir, noopProgress); err != nil {
+	if err := (&ContainerHandler{cli: f}).Restore(WithRestoreTrust(ctx, RestoreTrust{ArtifactTrusted: true}), BackupItem{Name: "db"}, fx.sourceDir, noopProgress); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 }

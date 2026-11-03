@@ -30,6 +30,7 @@ type SnapshotManager struct {
 	snapshotPath        string
 	defaultSnapshotPath string // default path used when override is cleared.
 	usbBackupPath       string // USB flash shadow copy path (empty = disabled).
+	auth                *SnapshotAuth
 	lastSnapshot        time.Time
 	lastUSBBackup       time.Time
 	usbMinInterval      time.Duration // minimum interval between USB writes.
@@ -46,6 +47,9 @@ type SnapshotManager struct {
 	// concurrent backups into the same <dest>.tmp would corrupt it before
 	// the rename (CodeRabbit review on #182).
 	writeMu sync.Mutex
+	// saveMu keeps a save, its envelope and its rotated copy together, so
+	// overlapping saves cannot pair one save's bytes with another's envelope.
+	saveMu sync.Mutex
 }
 
 // SnapshotMigration reports the outcome of moving the database to a new
@@ -330,6 +334,8 @@ func (sm *SnapshotManager) LastSnapshot() time.Time {
 // SaveSnapshot copies the working DB to the snapshot path using the SQLite
 // backup API.
 func (sm *SnapshotManager) SaveSnapshot() error {
+	sm.saveMu.Lock()
+	defer sm.saveMu.Unlock()
 	sm.mu.Lock()
 	snapshotPath := sm.snapshotPath
 	sm.mu.Unlock()
@@ -363,6 +369,13 @@ func (sm *SnapshotManager) SaveSnapshot() error {
 	// corrupt the previous good snapshot (issue #182).
 	if err := sm.backupWorkingDBToPath(validPath); err != nil {
 		return fmt.Errorf("save snapshot: %w", err)
+	}
+	// Without its envelope the snapshot would be refused at the next boot, so
+	// the failure belongs to the caller.
+	if auth := sm.SnapshotAuth(); auth != nil {
+		if err := auth.Sign(validPath); err != nil {
+			return fmt.Errorf("authenticate snapshot: %w", err)
+		}
 	}
 
 	sm.mu.Lock()
@@ -442,6 +455,12 @@ func (sm *SnapshotManager) rotateSnapshot() {
 			log.Printf("snapshot rotation: copy %s -> rotated/%s failed: %v (link error: %v)",
 				validPath, name, copyErr, err)
 			return
+		}
+	}
+	if auth := sm.SnapshotAuth(); auth != nil {
+		dstPath := filepath.Join(dir, "rotated", name)
+		if err := auth.copyEnvelope(validPath, dstPath); err != nil {
+			log.Printf("snapshot rotation: authenticate %s: %v", dstPath, err)
 		}
 	}
 
@@ -550,6 +569,7 @@ func pruneRotatedIn(rotated *os.Root, display string) {
 		if err := rotated.Remove(e.Name()); err != nil {
 			log.Printf("snapshot rotation: remove %s: %v", filepath.Join(display, e.Name()), err)
 		}
+		_ = removeValidated(envelopePath(filepath.Join(display, e.Name())))
 	}
 }
 
