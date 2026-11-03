@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Dracula style (#590):** Settings > Appearance now offers Dracula, which keeps the Default fonts and layout and recolours every page, chart, badge, dialog and the Logs console. Dracula is always dark, so the colour mode buttons are disabled while it's selected, and your saved mode comes back when you choose another style. Text meets WCAG AA, and a few official colours are lightened where they would not. Palette by Dracula Theme (<https://draculatheme.com>), MIT licence.
+- **Catppuccin style (#591):** Settings > Appearance now offers Catppuccin, with Latte in light mode and Mocha in dark mode, and System follows your device. It keeps the Default fonts and layout. Latte's accents are darkened where the official colours are too light to read on its pale backgrounds. Palette by Catppuccin (<https://catppuccin.com>), MIT licence.
+
 ### Changed
 
 - **Ansible connects with SSH keys only (#571):** Deploy, verify, uninstall and replica runs now need `ansible_ssh_private_key_file` in `ansible/inventory.yml` and stop with a clear error if the key is missing or a password is still set. `sshpass` and temporary password files are gone, and new host keys are accepted once and then checked. See `ansible/README.md` to move an existing inventory.

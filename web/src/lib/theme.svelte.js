@@ -1,11 +1,11 @@
-// Theme management – two-axis system: style (default/1bit/retro) × mode (light/system/dark).
+// Theme management – two-axis system: style (default/1bit/retro/dracula/catppuccin) × mode (light/system/dark).
 // Persists to localStorage 'vault-style' + 'vault-mode'.
 // Applies CSS classes on <html>: .theme-{style} + .dark
 
 const STYLE_KEY = 'vault-style'
 const MODE_KEY = 'vault-mode'
 
-/** @type {'default' | '1bit' | 'retro'} */
+/** @type {'default' | '1bit' | 'retro' | 'dracula' | 'catppuccin'} */
 let style = $state('default')
 
 /** @type {'light' | 'system' | 'dark'} */
@@ -50,16 +50,22 @@ function safeRemove(key) {
   } catch { /* storage blocked – nothing to remove */ }
 }
 
-const STYLE_CLASSES = ['theme-1bit', 'theme-retro']
-const VALID_STYLES = /** @type {const} */ (['default', '1bit', 'retro'])
+const VALID_STYLES = /** @type {const} */ (['default', '1bit', 'retro', 'dracula', 'catppuccin'])
+const STYLE_CLASSES = VALID_STYLES.filter((s) => s !== 'default').map((s) => `theme-${s}`)
+// Styles that change fonts, layout and branding. Dracula and Catppuccin change
+// colours only and keep the Default look (#590, #591).
+const DECORATIVE_STYLES = ['1bit', 'retro']
+// Styles with a single palette. The saved mode is kept, not applied, so it
+// returns when the user picks another style (#590).
+const DARK_ONLY_STYLES = ['dracula']
 // Styles merged into Retro (#532). A Map, so a stored 'constructor' matches nothing.
 const LEGACY_STYLES = new Map([['8bit', 'retro'], ['16bit', 'retro']])
 const VALID_MODES = /** @type {const} */ (['light', 'system', 'dark'])
 
 function applyTheme() {
   const prefersDark = mediaQuery?.matches ?? true
-  isThemed = style !== 'default'
-  isDark = mode === 'dark' || (mode === 'system' && prefersDark)
+  isThemed = DECORATIVE_STYLES.includes(style)
+  isDark = DARK_ONLY_STYLES.includes(style) || mode === 'dark' || (mode === 'system' && prefersDark)
 
   // Apply dark class
   document.documentElement.classList.toggle('dark', isDark)
@@ -97,7 +103,7 @@ function migrateOldTheme() {
     // this session even if persistence fails. initTheme reads the new keys
     // after this returns, but on a failed write those keys are null and won't
     // override what we set here.
-    style = /** @type {'default' | '1bit' | 'retro'} */ (mapped.style)
+    style = /** @type {'default' | '1bit' | 'retro' | 'dracula' | 'catppuccin'} */ (mapped.style)
     mode = /** @type {'light' | 'system' | 'dark'} */ (mapped.mode)
     // Only retire the legacy key once BOTH new keys are durably written, so a
     // partial write (e.g. quota exceeded mid-migration) can't drop the setting;
@@ -127,7 +133,7 @@ export function initTheme(hostDefault = null) {
   if (storedStyle !== savedStyle) safeSet(STYLE_KEY, storedStyle)
   const storedMode = safeGet(MODE_KEY)
   if (storedStyle && VALID_STYLES.includes(/** @type {any} */ (storedStyle))) {
-    style = /** @type {'default' | '1bit' | 'retro'} */ (storedStyle)
+    style = /** @type {'default' | '1bit' | 'retro' | 'dracula' | 'catppuccin'} */ (storedStyle)
   }
   if (storedMode && VALID_MODES.includes(/** @type {any} */ (storedMode))) {
     mode = /** @type {'light' | 'system' | 'dark'} */ (storedMode)
@@ -154,7 +160,7 @@ export function initTheme(hostDefault = null) {
   applyTheme()
 }
 
-/** @returns {'default' | '1bit' | 'retro'} */
+/** @returns {'default' | '1bit' | 'retro' | 'dracula' | 'catppuccin'} */
 export function getStyle() {
   return style
 }
@@ -169,15 +175,20 @@ export function getIsDark() {
   return isDark
 }
 
-/** @returns {boolean} – true when any non-default style is active */
+/** @returns {boolean} – true when a style with its own fonts and layout (1-Bit, Retro) is active */
 export function getIsThemed() {
   return isThemed
+}
+
+/** @returns {boolean} – true when the style has one palette, so the colour mode has no effect */
+export function getIsModeLocked() {
+  return DARK_ONLY_STYLES.includes(style)
 }
 
 // Backward compat alias
 export const getIsRetro = getIsThemed
 
-/** @param {'default' | '1bit' | 'retro'} newStyle */
+/** @param {'default' | '1bit' | 'retro' | 'dracula' | 'catppuccin'} newStyle */
 export function setStyle(newStyle) {
   style = newStyle
   safeSet(STYLE_KEY, newStyle)

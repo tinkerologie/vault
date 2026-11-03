@@ -229,6 +229,186 @@
   --color-info: #7fd0f0;
 }
 
+/* ═══════════════════════════════════════════════
+   COLOUR-ONLY STYLES – Default fonts and layout, palette tokens only.
+   Each block defines every semantic token plus the Tailwind palette shades
+   that components use directly (bg-amber-500/15, border-blue-400, bg-white
+   and so on), so no Default colour is left behind. Pairs are checked by
+   web/src/lib/palette-contrast.test.js and the axe audit in
+   tests/contrast.spec.ts. Values marked "derived" are not official palette
+   colours: they are the nearest shade that meets WCAG AA.
+   ═══════════════════════════════════════════════ */
+
+/*! Dracula palette – Dracula Theme, https://draculatheme.com, MIT License */
+/* Dracula is dark only: the theme store always applies .dark with it. */
+.theme-dracula {
+  --color-vault: #bd93f9;           /* purple */
+  --color-vault-dark: #a77ff2;      /* derived: darker purple, 4.7:1 with on-vault */
+  --color-vault-text: #c9a7fb;      /* derived: lighter purple for small text */
+  --color-vault-light: #d6bcfa;     /* derived: shimmer highlight */
+  --color-on-vault: #282a36;        /* background */
+  --color-on-status: #282a36;
+  --color-hue-blue: #a2b0e6;        /* derived: lighter comment */
+  --color-hue-purple: #d0b2fb;      /* derived: lighter purple */
+  --color-hue-emerald: #50fa7b;     /* green */
+  --color-hue-cyan: #8be9fd;        /* cyan */
+  --color-hue-amber: #f1fa8c;       /* yellow */
+  --color-hue-rose: #ff92d0;        /* derived: lighter pink */
+  --color-hue-orange: #ffb86c;      /* orange */
+  --color-placeholder: var(--color-text-muted);
+  --color-surface: #282a36;         /* background */
+  --color-surface-2: #21222c;       /* derived: darker background for raised panels */
+  --color-surface-3: #343746;       /* derived: between background and current line */
+  --color-surface-4: #44475a;       /* current line: hover and selection only */
+  --color-surface-5: #7f8ac0;       /* derived: lighter comment, 3:1 for status dots */
+  --color-border: #6272a4;          /* comment */
+  --color-border-hover: #7f8ac0;
+  --color-text: #f8f8f2;            /* foreground */
+  --color-text-muted: #d6d8e6;      /* derived: foreground toward comment */
+  --color-text-dim: #b0bae0;        /* derived: lighter comment */
+  --color-success: #50fa7b;         /* green */
+  --color-danger: #ff9999;          /* derived: lighter red, #ff5555 is 3.8:1 on panels */
+  --color-warning: #f1fa8c;         /* yellow */
+  --color-info: #8be9fd;            /* cyan */
+  /* Tailwind palette shades used directly by components */
+  --color-blue-400: #6272a4;
+  --color-blue-500: #6272a4;
+  --color-purple-400: #bd93f9;
+  --color-purple-500: #bd93f9;
+  --color-amber-400: #f1fa8c;
+  --color-amber-500: #f1fa8c;
+  --color-amber-950: #282a36;
+  --color-yellow-500: #f1fa8c;
+  --color-emerald-400: #50fa7b;
+  --color-emerald-500: #50fa7b;
+  --color-green-500: #50fa7b;
+  --color-cyan-400: #8be9fd;
+  --color-cyan-500: #8be9fd;
+  --color-rose-500: #ff79c6;
+  --color-red-500: #ff5555;
+  --color-orange-400: #ffb86c;
+  --color-orange-500: #ffb86c;
+  --color-gray-500: #6272a4;
+  --color-white: #f8f8f2;
+}
+
+/*! Catppuccin palette – Catppuccin, https://catppuccin.com, MIT License */
+/* Catppuccin Latte (light) */
+.theme-catppuccin {
+  --color-vault: #8839ef;           /* mauve */
+  --color-vault-dark: #7a2ee0;      /* derived: darker mauve */
+  --color-vault-text: #6b2dbd;      /* derived: darker mauve for small text */
+  --color-vault-light: #7287fd;     /* lavender */
+  --color-on-vault: #eff1f5;        /* base */
+  --color-on-status: #eff1f5;       /* base */
+  --color-hue-blue: #164bb5;        /* derived: darker blue */
+  --color-hue-purple: #6b2dbd;      /* derived: darker mauve */
+  --color-hue-emerald: #26601a;     /* derived: darker green */
+  --color-hue-cyan: #0f5d62;        /* derived: darker teal */
+  --color-hue-amber: #6e450d;       /* derived: darker yellow */
+  --color-hue-rose: #952d36;        /* derived: darker maroon */
+  --color-hue-orange: #8e3806;      /* derived: darker peach */
+  --color-placeholder: var(--color-text-muted);
+  --color-surface: #eff1f5;         /* base */
+  --color-surface-2: #e6e9ef;       /* mantle */
+  --color-surface-3: #dce0e8;       /* crust */
+  --color-surface-4: #ccd0da;       /* surface0 */
+  --color-surface-5: #6c6f85;       /* subtext0: 3:1 for status dots */
+  --color-border: #7c7f93;          /* overlay2 */
+  --color-border-hover: #6c6f85;    /* subtext0 */
+  --color-text: #4c4f69;            /* text */
+  --color-text-muted: #4c4f69;      /* text: subtext1 is 4.1:1 on surface0 */
+  --color-text-dim: #535670;        /* derived: between text and subtext1 */
+  --color-success: #26601a;         /* derived: darker green */
+  --color-danger: #a20c2c;          /* derived: darker red */
+  --color-warning: #764b0f;         /* derived: darker yellow */
+  --color-info: #164bb5;            /* derived: darker blue */
+  /* Tailwind palette shades used directly by components */
+  --color-blue-400: #1e66f5;        /* blue */
+  --color-blue-500: #1e66f5;
+  --color-purple-400: #8839ef;      /* mauve */
+  --color-purple-500: #8839ef;
+  --color-amber-400: #a86a15;       /* derived: darker yellow, 3:1 as a fill */
+  --color-amber-500: #a86a15;
+  --color-amber-950: #11111b;       /* Mocha crust: text on the amber banner */
+  --color-yellow-500: #a86a15;
+  --color-emerald-400: #3a9027;     /* derived: darker green, 3:1 as a fill */
+  --color-emerald-500: #3a9027;
+  --color-green-500: #3a9027;
+  --color-cyan-400: #168c93;        /* derived: darker teal, 3:1 as a fill */
+  --color-cyan-500: #168c93;
+  --color-rose-500: #e14451;        /* derived: maroon, 3:1 as a fill */
+  --color-red-500: #d20f39;         /* red */
+  --color-orange-400: #d55409;      /* derived: darker peach, 3:1 as a fill */
+  --color-orange-500: #d55409;
+  --color-gray-500: #8c8fa1;        /* overlay1 */
+  --color-white: #eff1f5;           /* base */
+}
+
+/* Catppuccin Mocha (dark) */
+.theme-catppuccin.dark {
+  --color-vault: #cba6f7;           /* mauve */
+  --color-vault-dark: #b692f5;      /* derived: darker mauve */
+  --color-vault-text: #cba6f7;      /* mauve */
+  --color-vault-light: #b4befe;     /* lavender */
+  --color-on-vault: #1e1e2e;        /* base */
+  --color-on-status: #11111b;       /* crust */
+  --color-hue-blue: #89b4fa;        /* blue */
+  --color-hue-purple: #cba6f7;      /* mauve */
+  --color-hue-emerald: #a6e3a1;     /* green */
+  --color-hue-cyan: #94e2d5;        /* teal */
+  --color-hue-amber: #f9e2af;       /* yellow */
+  --color-hue-rose: #eba0ac;        /* maroon */
+  --color-hue-orange: #fab387;      /* peach */
+  --color-placeholder: var(--color-text-muted);
+  --color-surface: #1e1e2e;         /* base */
+  --color-surface-2: #181825;       /* mantle */
+  --color-surface-3: #313244;       /* surface0 */
+  --color-surface-4: #45475a;       /* surface1 */
+  --color-surface-5: #7f849c;       /* overlay1: 3:1 for status dots */
+  --color-border: #6c7086;          /* overlay0 */
+  --color-border-hover: #7f849c;    /* overlay1 */
+  --color-text: #cdd6f4;            /* text */
+  --color-text-muted: #bac2de;      /* subtext1 */
+  --color-text-dim: #a6adc8;        /* subtext0 */
+  --color-success: #a6e3a1;         /* green */
+  --color-danger: #f38ba8;          /* red */
+  --color-warning: #f9e2af;         /* yellow */
+  --color-info: #89b4fa;            /* blue */
+  /* Tailwind palette shades used directly by components */
+  --color-blue-400: #89b4fa;
+  --color-blue-500: #89b4fa;
+  --color-purple-400: #cba6f7;
+  --color-purple-500: #cba6f7;
+  --color-amber-400: #f9e2af;
+  --color-amber-500: #f9e2af;
+  --color-amber-950: #11111b;       /* crust */
+  --color-yellow-500: #f9e2af;
+  --color-emerald-400: #a6e3a1;
+  --color-emerald-500: #a6e3a1;
+  --color-green-500: #a6e3a1;
+  --color-cyan-400: #94e2d5;
+  --color-cyan-500: #94e2d5;
+  --color-rose-500: #eba0ac;
+  --color-red-500: #f38ba8;
+  --color-orange-400: #fab387;
+  --color-orange-500: #fab387;
+  --color-gray-500: #7f849c;
+  --color-white: #cdd6f4;           /* text */
+}
+
+/* Dialog backdrops dim with the palette's darkest colour instead of black. */
+.theme-dracula dialog.vault-dialog::backdrop { background: rgb(25 26 33 / 0.7); }
+.theme-catppuccin dialog.vault-dialog::backdrop { background: rgb(76 79 105 / 0.5); }
+.theme-catppuccin.dark dialog.vault-dialog::backdrop { background: rgb(17 17 27 / 0.7); }
+
+/* Latte's switch thumb and off track are both pale, so the thumb gets a ring
+   that reaches 3:1 against each. */
+.theme-catppuccin:not(.dark) [class~="bg-white"],
+.theme-catppuccin:not(.dark) [class~="after:bg-white"]::after {
+  box-shadow: 0 0 0 1px var(--color-text-dim);
+}
+
 html {
   background-color: var(--color-surface);
   color: var(--color-text);

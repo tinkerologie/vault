@@ -4,7 +4,7 @@
   import { api, isReplicaMode } from '../lib/api.js'
   import { formatBytes, formatDate, snapshotMigrationMessage } from '../lib/utils.js'
   import { copyText } from '../lib/clipboard.js'
-  import { getStyle, setStyle, getMode, setMode } from '../lib/theme.svelte.js'
+  import { getStyle, setStyle, getMode, setMode, getIsModeLocked } from '../lib/theme.svelte.js'
   import { isEmbedded } from '../lib/runtime-config.js'
   import { isRemoteKeyClient } from '../lib/auth.svelte.js'
   import ApiKeyLocalOnlyNotice from '../components/ApiKeyLocalOnlyNotice.svelte'
@@ -1114,15 +1114,17 @@
           <!-- Theme Style -->
           <div>
             <p class="text-sm text-text-muted mb-2">Theme style</p>
-            <div class="grid grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-sm">
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-md">
               {#each [
                 { value: 'default', label: 'Default', icon: 'M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01' },
                 { value: '1bit', label: '1-Bit', icon: 'M8 9l4-4 4 4m0 6l-4 4-4-4' },
                 { value: 'retro', label: 'Retro', icon: 'M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5' },
+                { value: 'dracula', label: 'Dracula', icon: 'M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z' },
+                { value: 'catppuccin', label: 'Catppuccin', icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z' },
               ] as opt (opt.value)}
                 <button
                   type="button"
-                  onclick={() => setStyle(/** @type {'default'|'1bit'|'retro'} */ (opt.value))}
+                  onclick={() => setStyle(/** @type {'default'|'1bit'|'retro'|'dracula'|'catppuccin'} */ (opt.value))}
                   class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getStyle() === opt.value ? 'bg-vault text-on-vault font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
                 >
                   <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={opt.icon}/></svg>
@@ -1134,8 +1136,8 @@
 
           <!-- Color Mode -->
           <div>
-            <p class="text-sm text-text-muted mb-2">Color mode</p>
-            <div class="grid grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-xs">
+            <p id="color-mode-label" class="text-sm text-text-muted mb-2">Color mode</p>
+            <div role="group" aria-labelledby="color-mode-label" aria-describedby={getIsModeLocked() ? 'color-mode-locked' : undefined} class="grid grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-xs">
               {#each [
                 { value: 'light', label: 'Light', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z' },
                 { value: 'system', label: 'System', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
@@ -1144,13 +1146,17 @@
                 <button
                   type="button"
                   onclick={() => setMode(/** @type {'light'|'system'|'dark'} */ (opt.value))}
-                  class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all {getMode() === opt.value ? 'bg-vault text-on-vault font-medium shadow-sm' : 'text-text-muted hover:text-text'}"
+                  disabled={getIsModeLocked()}
+                  class="flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed {getMode() === opt.value ? 'bg-vault text-on-vault font-medium shadow-sm' : 'text-text-muted enabled:hover:text-text'}"
                 >
                   <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={opt.icon}/></svg>
                   {opt.label}
                 </button>
               {/each}
             </div>
+            {#if getIsModeLocked()}
+              <p id="color-mode-locked" class="text-xs text-text-muted mt-2">Dracula is always dark. Your saved mode comes back when you choose another style.</p>
+            {/if}
           </div>
         </div>
       </div>

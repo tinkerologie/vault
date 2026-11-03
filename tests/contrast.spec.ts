@@ -31,8 +31,11 @@ const PAGES: { name: string; hash: string; ready: (page: Page) => Promise<void> 
 
 const SETTINGS_TABS = ['General', 'Security', 'Notifications', 'Reference'];
 
-const THEMES = (['default', '1bit', 'retro'] as ThemeStyle[]).flatMap((style) =>
+const THEMES = (['default', '1bit', 'retro', 'catppuccin'] as ThemeStyle[]).flatMap((style) =>
   (['light', 'dark'] as ThemeMode[]).map((mode) => ({ style, mode, label: `${style} ${mode}` })),
+).concat(
+  // Dracula is dark only, so a light entry would audit the same page twice.
+  { style: 'dracula', mode: 'dark', label: 'dracula dark' },
 );
 
 // Routes App.svelte keeps on a replica (route-guard.js hides Jobs, Restore and Recovery).
