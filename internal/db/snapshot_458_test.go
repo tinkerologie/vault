@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -514,5 +515,89 @@ func TestCopySnapshotPrivatelyCarriesWAL(t *testing.T) {
 	}
 	if _, _, err := copySnapshotPrivately(src); err == nil {
 		t.Fatal("non-regular WAL accepted")
+	}
+}
+
+func TestSnapshotHelpersPermissionFailures(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions and a non-root user")
+	}
+	dir := t.TempDir()
+	database, err := Open(filepath.Join(dir, "working.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	// Rotation in a snapshot directory that cannot take a "rotated" child.
+	roDir := filepath.Join(dir, "ro")
+	snap := filepath.Join(roDir, "vault.db")
+	sm := NewSnapshotManager(database, snap, snap)
+	if err := sm.SaveSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(roDir, "rotated")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(roDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(roDir, 0o700) })
+	sm.rotateSnapshot()
+	if _, err := os.Lstat(filepath.Join(roDir, "rotated")); !os.IsNotExist(err) {
+		t.Fatalf("rotated created in a read-only directory: %v", err)
+	}
+	_ = os.Chmod(roDir, 0o700)
+
+	// A read-only "rotated" refuses both the link and the copy.
+	if err := os.Mkdir(filepath.Join(roDir, "rotated"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	sm.rotateSnapshot()
+	entries, _ := os.ReadDir(filepath.Join(roDir, "rotated"))
+	if len(entries) != 0 {
+		t.Fatalf("copied into a read-only rotated directory: %v", entries)
+	}
+
+	// An unreadable subdirectory cannot be opened.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	if sub, err := openRealSubdir(root, "locked"); err == nil {
+		_ = sub.Close()
+		t.Fatal("opened an unreadable directory")
+	}
+
+	// An unreadable snapshot cannot be copied.
+	unreadable := filepath.Join(dir, "unreadable.db")
+	if err := os.WriteFile(unreadable, []byte("x"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := copySnapshotPrivately(unreadable); err == nil {
+		t.Fatal("copied an unreadable snapshot")
+	}
+}
+
+func TestCopySnapshotPrivatelyNeedsTempDir(t *testing.T) {
+	// The snapshot lives under /tmp, which stays approved after TMPDIR moves.
+	dir, err := os.MkdirTemp("/tmp", "vault-snap-")
+	if err != nil {
+		t.Skipf("no /tmp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	src := filepath.Join(dir, "snap.db")
+	if err := os.WriteFile(src, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	if _, _, err := copySnapshotPrivately(src); err == nil {
+		t.Fatal("copied without a usable temp directory")
 	}
 }

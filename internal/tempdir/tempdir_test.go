@@ -835,3 +835,88 @@ func TestMkdirPinnedTempFailures(t *testing.T) {
 		t.Fatal("staged inside a regular file")
 	}
 }
+
+// Issue #545: an ancestor swapped for a symlink before startup must not point
+// stale-stage cleanup at a directory outside the approved roots. Resolving alone
+// is not enough, because the resolved target can be any non-system directory
+// that happens to hold a ".vault-stage".
+func TestCleanStageDirRefusesAncestorSwapOutsideApprovedRoots(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need elevated rights on Windows")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	victim, err := os.MkdirTemp(home, "vault-victim-")
+	if err != nil {
+		t.Skipf("home not writable: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(victim) })
+	if resolved, err := filepath.EvalSymlinks(victim); err != nil || strings.HasPrefix(resolved, "/mnt/") || strings.HasPrefix(resolved, "/tmp/") {
+		t.Skip("home is inside an approved root here")
+	}
+	keep := filepath.Join(victim, StageDirName, "keep")
+	if err := os.MkdirAll(keep, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	pool := filepath.Join(t.TempDir(), "pool")
+	if err := os.Symlink(victim, pool); err != nil {
+		t.Fatal(err)
+	}
+	cleanStageDir(filepath.Join(pool, StageDirName))
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("cleanup followed the swapped ancestor: %v", err)
+	}
+}
+
+func TestOwnedByDaemon(t *testing.T) {
+	info, err := os.Stat(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ownedByDaemon(info) {
+		t.Fatal("own temp directory not recognised")
+	}
+}
+
+func TestStageHelpersPermissionFailures(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions and a non-root user")
+	}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ro := filepath.Join(dir, "ro")
+	if err := os.Mkdir(ro, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
+	if _, err := mkdirPinnedTemp(ro, "backup-*"); err == nil {
+		t.Fatal("created inside a read-only directory")
+	}
+	// Traversable but unreadable: the path resolves, the pinned walk cannot open it.
+	noread := filepath.Join(dir, "noread")
+	stage := filepath.Join(noread, StageDirName)
+	if err := os.MkdirAll(filepath.Join(stage, "backup-1"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(noread, 0o100); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(noread, 0o700) })
+	cleanStageDir(stage)
+	_ = os.Chmod(noread, 0o700)
+	if _, err := os.Stat(filepath.Join(stage, "backup-1")); err != nil {
+		t.Fatalf("cleaned through a directory the pinned walk could not open: %v", err)
+	}
+
+	link := filepath.Join(dir, "etc")
+	if err := os.Symlink("/etc", link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := makeStageTemp(link, "backup-*"); err == nil {
+		t.Fatal("staged in /etc through a symlink")
+	}
+}

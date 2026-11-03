@@ -206,3 +206,17 @@ func TestOpenItemRootRefusesFile(t *testing.T) {
 		t.Fatal("regular file accepted as an item folder")
 	}
 }
+
+func TestOpenItemRootUnreadable(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions and a non-root user")
+	}
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	if _, err := openItemRoot(locked); err == nil {
+		t.Fatal("opened an unreadable item folder")
+	}
+}

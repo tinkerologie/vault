@@ -95,6 +95,16 @@ func CheckFolderLocation(p string) (string, error) {
 	})
 }
 
+// CheckStageCleanupLocation authorizes a staging directory for recursive cleanup:
+// strictly under the data root, the flash drive or a temp directory, on the
+// written and the resolved path. It is narrower than where staging may be
+// created, because an unexpected target here means deleting someone's files.
+func CheckStageCleanupLocation(p string) (string, error) {
+	return checkPolicy(p, "staging directory", "staging is only cleaned under /mnt, /boot or a temp directory", func(c string) bool {
+		return strictlyUnderAny(c, dataRoot, flashRoot) || underTemp(c)
+	})
+}
+
 // CheckSnapshotLocation authorizes a database snapshot file path: under the
 // data root, the flash drive or a temp directory, reached without symlinks
 // leaving those roots. The file itself must not be a symlink or a non-regular

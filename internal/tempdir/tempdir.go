@@ -427,11 +427,17 @@ func cleanStageDir(stageBase string) {
 		log.Printf("tempdir: not cleaning %s: it is not a real directory", stageBase)
 		return
 	}
-	// Pinned from the filesystem root after resolving, so an ancestor swapped
-	// for a symlink cannot move the deletion to another directory.
+	// A share writer can swap an ancestor of stageBase for a symlink before the
+	// daemon starts, and resolving follows it. So the resolved directory must sit
+	// under an approved root, it must be one Vault created (owned by this
+	// process's user), and the deletion runs through a handle pinned from the
+	// filesystem root along that resolved path, which follows no further links.
 	resolved, err := filepath.EvalSymlinks(stageBase)
 	if err == nil {
-		_, err = safepath.CheckFolderLocation(resolved)
+		_, err = safepath.CheckStageCleanupLocation(resolved)
+	}
+	if err == nil && !ownedByDaemon(info) {
+		err = errors.New("it is not owned by the Vault daemon's user")
 	}
 	if err != nil {
 		log.Printf("tempdir: not cleaning %s: %v", stageBase, err)

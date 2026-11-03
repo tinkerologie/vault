@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -238,5 +239,51 @@ func TestResolvesUnderRoots(t *testing.T) {
 	}
 	if ResolvesUnderRoots(filepath.Join(loop, "x"), roots) {
 		t.Error("unresolvable path accepted")
+	}
+}
+
+func TestOpenPinnedDirEdgeCases(t *testing.T) {
+	t.Parallel()
+	root, err := OpenPinnedDir(string(filepath.Separator))
+	if err != nil {
+		t.Fatalf("filesystem root: %v", err)
+	}
+	_ = root.Close()
+	dir := t.TempDir()
+	loop := filepath.Join(dir, "loop")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckCustomRestoreDestination(filepath.Join(loop, "x")); err == nil {
+		t.Error("unresolvable destination accepted")
+	}
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		return
+	}
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := filepath.Join(real, "locked")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	if _, err := OpenPinnedDir(locked); err == nil {
+		t.Error("opened an unreadable directory")
+	}
+}
+
+func TestCheckStageCleanupLocation(t *testing.T) {
+	t.Parallel()
+	for _, ok := range []string{"/mnt/cache/.vault-stage", "/mnt/user/backups/.vault-stage", "/boot/.vault-stage", "/tmp/x/.vault-stage"} {
+		if _, err := CheckStageCleanupLocation(ok); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"/opt/app/.vault-stage", "/home/u/.vault-stage", "/etc/.vault-stage", "/mnt", "/tank/.vault-stage"} {
+		if _, err := CheckStageCleanupLocation(bad); err == nil {
+			t.Errorf("%q allowed", bad)
+		}
 	}
 }

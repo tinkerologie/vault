@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -148,5 +149,30 @@ func TestRemoveSnapshotArtifactsOrphanSidecars(t *testing.T) {
 	}
 	if _, err := os.Stat(db + "-wal"); !os.IsNotExist(err) {
 		t.Fatalf("default-location sidecar kept: %v", err)
+	}
+}
+
+func TestRemoveSnapshotArtifactsFailures(t *testing.T) {
+	dir := t.TempDir()
+	loop := filepath.Join(dir, "loop")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeSnapshotArtifacts(filepath.Join(loop, "vault.db"), false); err != nil {
+		t.Logf("unresolvable directory: %v", err)
+	}
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		return
+	}
+	db := filepath.Join(dir, "s", "vault.db")
+	writeSnapshot(t, db, sqliteMagic)
+	if err := os.Chmod(db, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeSnapshotArtifacts(db, false); err == nil {
+		t.Fatal("unreadable snapshot treated as removable")
+	}
+	if _, err := os.Lstat(db); err != nil {
+		t.Fatalf("unreadable snapshot removed: %v", err)
 	}
 }

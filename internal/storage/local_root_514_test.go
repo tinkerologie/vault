@@ -319,3 +319,65 @@ func TestCheckBaseWithinMountErrors(t *testing.T) {
 		t.Fatal("symlink loop accepted")
 	}
 }
+
+// An NFS server can replace the base with a symlink after the first mount. Every
+// operation re-checks containment, so the swap cannot reach host files.
+func TestNFSOperationsRecheckBaseAfterMount(t *testing.T) {
+	origMount, origUnmount := mountExport, unmountExport
+	t.Cleanup(func() { mountExport, unmountExport = origMount, origUnmount })
+	t.Setenv("TMPDIR", t.TempDir())
+	var exportDir string
+	mountExport = func(args ...string) ([]byte, error) {
+		exportDir = args[len(args)-1]
+		return nil, os.MkdirAll(filepath.Join(exportDir, "base"), 0o750)
+	}
+	unmountExport = func(string) error { return nil }
+
+	n, err := NewNFSAdapter(NFSConfig{Host: "nas.invalid", Export: "/e", BasePath: "base"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Close() })
+	if err := n.Write("ok.txt", strings.NewReader("x")); err != nil {
+		t.Fatalf("write before the swap: %v", err)
+	}
+
+	victim := t.TempDir()
+	keep := filepath.Join(victim, "keep.txt")
+	if err := os.WriteFile(keep, []byte("host"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(exportDir, "base")
+	if err := os.RemoveAll(base); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, base); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := n.Delete("keep.txt"); err == nil {
+		t.Error("delete through the swapped base allowed")
+	}
+	if _, err := n.Read("keep.txt"); err == nil {
+		t.Error("read through the swapped base allowed")
+	}
+	if err := n.Write("new.txt", strings.NewReader("x")); err == nil {
+		t.Error("write through the swapped base allowed")
+	}
+	if _, err := n.List(""); err == nil {
+		t.Error("list through the swapped base allowed")
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("host file touched: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(victim, "new.txt")); !os.IsNotExist(err) {
+		t.Fatalf("host file created: %v", err)
+	}
+}
+
+func TestNFSReadyRequiresMountDir(t *testing.T) {
+	n := &NFSAdapter{mounted: true, local: NewLocalAdapter(t.TempDir())}
+	if err := n.RemoveEmptyDir("x"); err == nil || !strings.Contains(err.Error(), "not mounted") {
+		t.Fatalf("err = %v", err)
+	}
+}

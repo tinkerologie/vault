@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 func vmDomainXML(disk, nvram string) []byte {
@@ -406,5 +408,51 @@ func TestDumpBesideAllowed(t *testing.T) {
 		if got := dumpBesideAllowed(source); got != want {
 			t.Errorf("dumpBesideAllowed(%q) = %v", source, got)
 		}
+	}
+}
+
+func TestRestoreHelpersFailClosed(t *testing.T) {
+	t.Parallel()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop := filepath.Join(dir, "loop")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Fatal(err)
+	}
+	mode := os.FileMode(0o777)
+	// Unresolvable parent, and an unresolvable base.
+	applyRestoredMeta("", filepath.Join(loop, "x"), restoredMeta{mode: &mode, uid: -1, gid: -1})
+	if _, _, err := pinRestoredParent(loop, filepath.Join(dir, "x")); err == nil {
+		t.Error("unresolvable base accepted")
+	}
+	if err := mkdirRestored(filepath.Join(loop, "x"), 0o755); err == nil {
+		t.Error("created under a symlink loop")
+	}
+	if err := mkdirRestored("/sbin/vault-test-dir/x", 0o755); err == nil {
+		t.Error("created outside the approved restore roots")
+	}
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		return
+	}
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	if err := mkdirRestored(filepath.Join(locked, "a", "b"), 0o755); err == nil {
+		t.Error("created inside an unreadable directory")
+	}
+}
+
+// A named volume keeps its dump in its own volume directory whenever the source
+// itself is an authorized in-place target.
+func TestDumpBesideNamedVolume(t *testing.T) {
+	t.Parallel()
+	const source = "/var/lib/docker/volumes/db/_data"
+	_, err := safepath.CheckVolumeTarget(source)
+	if got := dumpBesideAllowed(source); got != (err == nil) {
+		t.Fatalf("dumpBesideAllowed = %v, CheckVolumeTarget err = %v", got, err)
 	}
 }
