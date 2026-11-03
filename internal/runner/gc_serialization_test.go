@@ -74,7 +74,7 @@ func TestRunDedupGC_RefusesWhileDraining(t *testing.T) {
 	case <-done:
 		// Refused before touching the run slot — correct.
 	case <-time.After(2 * time.Second):
-		t.Fatal("RunDedupGC blocked while draining — shouldRefuseStart is not checked (#165)")
+		t.Fatal("RunDedupGC blocked while draining — the drain check (tryMarkStart) is missing (#165)")
 	}
 }
 

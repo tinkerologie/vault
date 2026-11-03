@@ -21,7 +21,9 @@ func newDrainRunner() *Runner {
 func TestDrainWaitsForActiveJob(t *testing.T) {
 	r := newDrainRunner()
 	// Simulate an active job.
-	r.markStart()
+	if !r.tryMarkStart() {
+		t.Fatal("job refused before draining")
+	}
 
 	drainDone := make(chan error, 1)
 	go func() {
@@ -45,7 +47,9 @@ func TestDrainWaitsForActiveJob(t *testing.T) {
 
 func TestDrainTimesOut(t *testing.T) {
 	r := newDrainRunner()
-	r.markStart() // Active job never finishes.
+	if !r.tryMarkStart() { // Active job never finishes.
+		t.Fatal("job refused before draining")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -85,8 +89,8 @@ func TestRunJobRefusedWhileDraining(t *testing.T) {
 	r.draining = true
 	r.activeMu.Unlock()
 
-	if !r.shouldRefuseStart() {
-		t.Errorf("shouldRefuseStart should be true while draining")
+	if r.tryMarkStart() {
+		t.Errorf("tryMarkStart should refuse while draining")
 	}
 }
 

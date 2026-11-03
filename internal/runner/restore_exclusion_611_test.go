@@ -126,41 +126,57 @@ func TestUntrackedRestoreRefusals(t *testing.T) {
 	}
 }
 
-// Shutdown never misses an admitted restore: whenever Drain races an untracked
-// restore's admission, either the restore is refused, or Drain waits for it to
-// finish. No restore step may run after Drain has returned (Greptile and
-// Aikido review of #612).
-func TestDrainNeverMissesAnAdmittedRestore(t *testing.T) {
+// Shutdown never misses an admitted task: whenever Drain races the admission
+// of a backup, a restore (tracked or untracked), a dedup GC or an orphan
+// delete, either the task is refused, or Drain waits for it to finish. No task
+// may be counted active once shutdown has begun (Greptile, Aikido and Copilot
+// review of #612).
+func TestDrainNeverMissesAnAdmittedTask(t *testing.T) {
 	r, _ := newTestRunner(t)
-	for range 2000 {
-		r.activeMu.Lock()
-		r.draining = false // a fresh shutdown each round
-		r.activeMu.Unlock()
-		var drained, late atomic.Bool
-		r.untrackedRestoreFn = func(context.Context, db.RestorePoint, string, string, string, string, ...RestoreItemOptions) error {
-			for range 3 {
-				if drained.Load() {
+	r.untrackedRestoreFn = func(context.Context, db.RestorePoint, string, string, string, string, ...RestoreItemOptions) error {
+		runtime.Gosched()
+		return nil
+	}
+	cases := []struct {
+		name  string
+		start func()
+	}{
+		{"untracked restore", func() { _ = r.RestoreItem(db.RestorePoint{}, "web", "container", "", "") }},
+		{"tracked backup", func() { r.RunJob(9999) }},
+		{"tracked restore", func() { r.RunRestore(db.RestorePoint{JobID: 9999}, nil, "", "") }},
+		{"dedup GC", func() { r.RunDedupGC(db.StorageDestination{ID: 9999, Type: "bogus", DedupEnabled: true}, "gc-drain") }},
+		{"orphan delete", func() { r.DeleteStorageOrphans(db.StorageDestination{ID: 9999, Type: "bogus"}, nil) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var drained, late atomic.Bool
+			// onAdmitted runs under activeMu, so it sees draining exactly as
+			// Drain set it. A task counted once draining is set got past a
+			// stale check, and Drain may already have returned without it.
+			r.onAdmitted = func() {
+				if r.draining || drained.Load() {
 					late.Store(true)
 				}
-				runtime.Gosched()
 			}
-			return nil
-		}
-		var wg sync.WaitGroup
-		var admitErr error
-		wg.Go(func() { admitErr = r.RestoreItem(db.RestorePoint{}, "web", "container", "", "") })
-		wg.Go(func() {
-			if err := r.Drain(t.Context()); err != nil {
-				t.Errorf("Drain: %v", err)
+			t.Cleanup(func() { r.onAdmitted = nil })
+			for range 2000 {
+				r.activeMu.Lock()
+				r.draining = false // a fresh shutdown each round
+				r.activeMu.Unlock()
+				drained.Store(false)
+				var wg sync.WaitGroup
+				wg.Go(tc.start)
+				wg.Go(func() {
+					if err := r.Drain(t.Context()); err != nil {
+						t.Errorf("Drain: %v", err)
+					}
+					drained.Store(true)
+				})
+				wg.Wait()
+				if late.Load() {
+					t.Fatal("a task was counted active after shutdown began")
+				}
 			}
-			drained.Store(true)
 		})
-		wg.Wait()
-		if late.Load() {
-			t.Fatal("a restore step ran after Drain returned")
-		}
-		if admitErr != nil && !errors.Is(admitErr, errRunnerDraining) {
-			t.Fatalf("admission: %v", admitErr)
-		}
 	}
 }

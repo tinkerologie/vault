@@ -173,6 +173,10 @@ type Runner struct {
 	snapshotManager *db.SnapshotManager
 	breaker         *Breaker
 	mu              sync.Mutex
+	// onAdmitted runs, under activeMu, whenever a task is counted active;
+	// tests use it to catch a task admitted after Drain returned. Nil in
+	// production.
+	onAdmitted func()
 	// untrackedRestoreFn stands in for restoreItem in tests; nil in production.
 	untrackedRestoreFn func(ctx context.Context, rp db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...RestoreItemOptions) error
 
@@ -303,30 +307,27 @@ func (r *Runner) IsDraining() bool {
 	return r.draining
 }
 
-// shouldRefuseStart returns true if a new RunJob should refuse to start.
-func (r *Runner) shouldRefuseStart() bool {
-	r.activeMu.Lock()
-	defer r.activeMu.Unlock()
-	return r.draining
-}
-
-// tryMarkStart counts a task as active unless the daemon is draining. Checking
-// and counting under one lock means Drain can never see zero active tasks and
-// return while a task it did not refuse is starting.
+// tryMarkStart counts a task as active unless the daemon is draining, and
+// reports whether it did. Every task that joins the drain protocol (backups,
+// restores, dedup GC, orphan deletes, untracked restores) is admitted through
+// it: checking and counting under one lock means Drain can never see zero
+// active tasks and return while a task it did not refuse is starting.
 func (r *Runner) tryMarkStart() bool {
 	r.activeMu.Lock()
 	defer r.activeMu.Unlock()
 	if r.draining {
 		return false
 	}
-	r.activeCount++
+	r.countActiveLocked()
 	return true
 }
 
-func (r *Runner) markStart() {
-	r.activeMu.Lock()
+// countActiveLocked counts one more active task; activeMu must be held.
+func (r *Runner) countActiveLocked() {
 	r.activeCount++
-	r.activeMu.Unlock()
+	if r.onAdmitted != nil {
+		r.onAdmitted()
+	}
 }
 
 func (r *Runner) markFinish() {
@@ -733,11 +734,10 @@ func (r *Runner) RunJobRetry(jobID, originalRunID int64, attempt int) {
 // opts carries auxiliary state (retry attempt, manual flag) that affects
 // run-row population and retry scheduling.
 func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
-	if r.shouldRefuseStart() {
+	if !r.tryMarkStart() {
 		log.Printf("runner: refusing to start job %d — daemon is draining", jobID)
 		return
 	}
-	r.markStart()
 	defer r.markFinish()
 
 	// Look up the job name before queuing so the queue entry is informative.
@@ -2808,7 +2808,7 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 	// delete them — silently corrupting the run's manifest (issue #165).
 	// Serialise through the same run-slot mutex backups/restores hold, and
 	// join the drain protocol so shutdown waits for an in-progress GC.
-	if r.shouldRefuseStart() {
+	if !r.tryMarkStart() {
 		log.Printf("gc: refusing to start for dest %d (%q) — daemon is draining", dest.ID, dest.Name)
 		r.Broadcast(map[string]any{
 			"type":        "dedup_gc_complete",
@@ -2819,7 +2819,6 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 		})
 		return
 	}
-	r.markStart()
 	defer r.markFinish()
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -3953,11 +3952,10 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	// shutdown must wait for an in-flight restore — killing one mid-write
 	// leaves half-restored appdata/VM disks, the state Drain exists to
 	// prevent.
-	if r.shouldRefuseStart() {
+	if !r.tryMarkStart() {
 		log.Printf("runner: refusing to start restore for job %d — daemon is draining", restorePoint.JobID)
 		return
 	}
-	r.markStart()
 	defer r.markFinish()
 
 	jobName := fmt.Sprintf("Job #%d", restorePoint.JobID)

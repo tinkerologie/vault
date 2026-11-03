@@ -271,7 +271,7 @@ func TestUsesMergedRestoreChain(t *testing.T) {
 }
 
 // TestRunJobManualRefusedWhenDraining covers a thin wrapper path: drain the
-// runner so RunJobManual returns immediately at the shouldRefuseStart()
+// runner so RunJobManual returns immediately at the tryMarkStart()
 // gate inside runJobInternal. This avoids touching Docker/libvirt.
 func TestRunJobManualRefusedWhenDraining(t *testing.T) {
 	t.Parallel()

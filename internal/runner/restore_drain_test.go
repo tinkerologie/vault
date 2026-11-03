@@ -27,7 +27,7 @@ func TestRunRestore_RefusesWhileDraining(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("RunRestore blocked while draining — shouldRefuseStart not checked (#172)")
+		t.Fatal("RunRestore blocked while draining — the drain check (tryMarkStart) is missing (#172)")
 	}
 }
 
