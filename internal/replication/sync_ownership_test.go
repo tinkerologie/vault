@@ -323,3 +323,57 @@ func TestSyncReportsRejectedRestorePointsAsFailed(t *testing.T) {
 		t.Fatalf("status = %q, want failed", src.LastSyncStatus)
 	}
 }
+
+// A local job left without a destination (deleted with its files kept) still
+// owns its paths: reusing that storage for replication must not overwrite them.
+func TestSyncRestorePointRefusesPathOfOrphanedLocalJob(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	d := openTestDB(t)
+	destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "d", Type: "local", Config: `{"path":"` + root + `"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphan, err := d.CreateJob(db.Job{Name: "kept", BackupTypeChain: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateRestorePoint(db.RestorePoint{JobRunID: runFor(t, d, orphan), JobID: orphan, BackupType: "full", StoragePath: "kept/run"}); err != nil {
+		t.Fatal(err)
+	}
+	downloads := 0
+	c := newListingServer(t, map[string][]StorageFile{
+		"kept/run/": {{Path: "kept/run/a.bin", Size: 3}},
+		"kept/run":  {{Path: "kept/run/a.bin", Size: 3}},
+		"J/own":     {{Path: "J/own/a.bin", Size: 3}},
+	}, &downloads)
+	src := db.ReplicationSource{ID: 1, Name: "S", StorageDestID: destID}
+	rj := RemoteJob{ID: 8, StorageDestID: 3, Name: "J"}
+	s := NewSyncer(d, nil)
+	jobID, err := s.ensureLocalJob(src, destID, rj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sync := func(p string) error {
+		_, err := s.syncRestorePoint(c, src, destID, rj, RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: p}, jobID, storage.NewLocalAdapter(root))
+		return err
+	}
+	for _, p := range []string{"kept/run", "kept/run/", "kept//run"} {
+		if err := sync(p); !errors.Is(err, errPathRefused) {
+			t.Fatalf("orphaned job path %q = %v, want refused", p, err)
+		}
+	}
+	if downloads != 0 {
+		t.Fatalf("downloaded %d file(s) over a kept backup", downloads)
+	}
+	// The replicating job's own path still retries.
+	if _, err := d.CreateRestorePoint(db.RestorePoint{JobRunID: runFor(t, d, jobID), JobID: jobID, BackupType: "full", StoragePath: "J/own", SourceID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sync("J/own"); err != nil && errors.Is(err, errPathRefused) {
+		t.Fatalf("own path retry refused: %v", err)
+	}
+	if downloads != 1 {
+		t.Fatalf("downloads = %d, want 1", downloads)
+	}
+}

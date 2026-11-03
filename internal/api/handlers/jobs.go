@@ -1499,6 +1499,12 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		for _, t := range targets {
 			allZFS = allZFS && t.Type == "zfs"
 		}
+		// Each ZFS item force-receives into the destination, so one dataset
+		// cannot take several of them.
+		if allZFS && len(targets) > 1 {
+			respondError(w, http.StatusBadRequest, "invalid destination: a destination can be given only when restoring one ZFS item; restore each item separately")
+			return
+		}
 		dest, err := restoreDestinationFor(req.Destination, allZFS)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())

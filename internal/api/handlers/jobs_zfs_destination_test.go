@@ -72,3 +72,43 @@ func TestPreflightAcceptsZFSDatasetDestination(t *testing.T) {
 		}
 	}
 }
+
+// Each ZFS item force-receives into the destination, so one dataset cannot
+// take several items: later receives would replace or fail against earlier ones.
+func TestRestoreRefusesSharedZFSDestination(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	id := seedJob(t, d)
+	for _, name := range []string{"tank/photos", "tank/docs"} {
+		if _, err := d.AddJobItem(db.JobItem{JobID: id, ItemType: "zfs", ItemName: name, Settings: `{}`}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runID, _ := d.CreateJobRun(db.JobRun{JobID: id, Status: "success", BackupType: "full"})
+	rpID, _ := d.CreateRestorePoint(db.RestorePoint{JobRunID: runID, JobID: id, BackupType: "full"})
+	restore := func(body map[string]any) *httptest.ResponseRecorder {
+		t.Helper()
+		body["restore_point_id"] = rpID
+		raw, _ := json.Marshal(body)
+		w := httptest.NewRecorder()
+		r := withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"/restore", raw), "id", strconv.FormatInt(id, 10))
+		h.Restore(w, r)
+		return w
+	}
+	for name, body := range map[string]map[string]any{
+		"named items": {"items": []string{"tank/photos", "tank/docs"}, "destination": "tank/recovered"},
+		"all items":   {"destination": "tank/recovered"},
+	} {
+		if w := restore(body); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "one ZFS item") {
+			t.Errorf("%s = %d %s, want 400 naming the limit", name, w.Code, w.Body.String())
+		}
+	}
+	// Several ZFS items to their own datasets, or one item to a chosen one, still restore.
+	for name, body := range map[string]map[string]any{
+		"no destination": {"items": []string{"tank/photos", "tank/docs"}},
+		"one item":       {"items": []string{"tank/photos"}, "destination": "tank/recovered"},
+	} {
+		if w := restore(body); w.Code == http.StatusBadRequest {
+			t.Errorf("%s rejected: %s", name, w.Body.String())
+		}
+	}
+}
