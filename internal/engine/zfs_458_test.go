@@ -514,7 +514,7 @@ func TestZFSRestoreIgnoresBackupMetadataTarget(t *testing.T) {
 		t.Fatalf("Restore: %v", err)
 	}
 	recvs := f.commands("recv")
-	if len(recvs) != 1 || !slices.Equal(recvs[0][1:], []string{"recv", "-F", "tank/data"}) {
+	if len(recvs) != 1 || !slices.Equal(recvs[0][1:], []string{"recv", "-u", "-F", "-x", "mountpoint", "-x", "canmount", "-x", "overlay", "tank/data"}) {
 		t.Fatalf("recv = %v", recvs)
 	}
 }

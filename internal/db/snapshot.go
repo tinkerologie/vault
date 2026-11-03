@@ -458,6 +458,7 @@ func (sm *SnapshotManager) rotateSnapshot() {
 		}
 	}
 	if auth := sm.SnapshotAuth(); auth != nil {
+		dstPath := filepath.Join(dir, "rotated", name)
 		if err := auth.copyEnvelope(validPath, dstPath); err != nil {
 			log.Printf("snapshot rotation: authenticate %s: %v", dstPath, err)
 		}
@@ -568,7 +569,7 @@ func pruneRotatedIn(rotated *os.Root, display string) {
 		if err := rotated.Remove(e.Name()); err != nil {
 			log.Printf("snapshot rotation: remove %s: %v", filepath.Join(display, e.Name()), err)
 		}
-		_ = removeValidated(envelopePath(p))
+		_ = removeValidated(envelopePath(filepath.Join(display, e.Name())))
 	}
 }
 
