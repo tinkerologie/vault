@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -201,6 +202,30 @@ func (d *DB) CreateReplicatedJob(job Job) (int64, error) {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// AdoptReplicationDestination records destID as the storage destination of a
+// replication source that has none, and of every job replicated from it that
+// has none, so the files a sync wrote there can be found again by restore and
+// preflight. A source or job that already names a destination is unchanged.
+func (d *DB) AdoptReplicationDestination(sourceID, destID int64) error {
+	tx, err := d.BeginTx(context.Background(), nil)
+	if err != nil {
+		return fmt.Errorf("adopt destination for replication source %d: begin tx: %w", sourceID, err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after a successful Commit is a no-op
+	if _, err := tx.Exec(`UPDATE replication_sources SET storage_dest_id = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND COALESCE(storage_dest_id, 0) = 0`, destID, sourceID); err != nil {
+		return fmt.Errorf("adopt destination for replication source %d: %w", sourceID, err)
+	}
+	if _, err := tx.Exec(`UPDATE jobs SET storage_dest_id = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE source_id = ? AND COALESCE(storage_dest_id, 0) = 0`, destID, sourceID); err != nil {
+		return fmt.Errorf("adopt destination for jobs of replication source %d: %w", sourceID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("adopt destination for replication source %d: commit: %w", sourceID, err)
+	}
+	return nil
 }
 
 // DeleteReplicatedJobs removes all jobs and their associated data that were

@@ -3,6 +3,7 @@ package replication
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -189,7 +190,7 @@ func TestReplicatedRunCounts585(t *testing.T) {
 		{`{"items":[1,2]}`, "success", 0, 0, 0},
 		{`not json`, "success", 0, 0, 0},
 	} {
-		run := replicatedRun(7, "peer", rrp, tc.meta, 9)
+		run := replicatedRun(7, "peer", rrp, tc.meta, 9, nil)
 		if run.Status != tc.status || run.ItemsTotal != tc.total || run.ItemsDone != tc.done || run.ItemsFailed != tc.failedItems ||
 			run.JobID != 7 || run.BackupType != "incremental" || run.SizeBytes != 9 || !strings.Contains(run.Log, "peer") {
 			t.Errorf("%s: run = %+v", tc.meta, run)
@@ -221,5 +222,187 @@ func TestCompleteSyncStatusPointsFromFailedJob585(t *testing.T) {
 	NewSyncer(d, nil).completeSyncStatus(id, "s", &SyncResult{JobsFailed: 1, RestorePointsNew: 1}, func(float64, string) {})
 	if src, _ := d.GetReplicationSource(id); src.LastSyncStatus != "partial" {
 		t.Errorf("status = %q, want partial", src.LastSyncStatus)
+	}
+}
+
+// peerWithRuns is peer585 plus a run history, so run outcomes can be checked.
+func peerWithRuns(t *testing.T, rps []RemoteRestorePoint, runs []RemoteRun, failList string, downloads *atomic.Int64) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/health":
+			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+		case r.URL.Path == "/api/v1/jobs":
+			_ = json.NewEncoder(w).Encode([]RemoteJob{{ID: 5, Name: "J", StorageDestID: 9}})
+		case r.URL.Path == "/api/v1/jobs/5/restore-points":
+			_ = json.NewEncoder(w).Encode(rps)
+		case r.URL.Path == "/api/v1/jobs/5/history":
+			_ = json.NewEncoder(w).Encode(runs)
+		case r.URL.Path == "/api/v1/storage/9/list":
+			prefix := r.URL.Query().Get("prefix")
+			if prefix == failList {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_ = json.NewEncoder(w).Encode([]StorageFile{{Name: "f", Path: prefix + "/f", Size: 1}})
+		case r.URL.Path == "/api/v1/storage/9/files":
+			downloads.Add(1)
+			_, _ = w.Write([]byte("x"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A dependent point is linked to its parent's local copy whatever order the
+// peer lists them in, and a dependent point whose parent has no local copy is
+// a failure, not a standalone point that would restore without its base.
+func TestSyncSourceParentMapping585(t *testing.T) {
+	t.Parallel()
+	full := RemoteRestorePoint{ID: 1, BackupType: "full", StoragePath: "J/full"}
+	inc := RemoteRestorePoint{ID: 2, BackupType: "incremental", StoragePath: "J/inc", ParentRestorePointID: 1}
+	orphan := RemoteRestorePoint{ID: 3, BackupType: "differential", StoragePath: "J/orphan", ParentRestorePointID: 99}
+
+	t.Run("child listed first", func(t *testing.T) {
+		t.Parallel()
+		var downloads atomic.Int64
+		srv := peerWithRuns(t, []RemoteRestorePoint{inc, full}, nil, "", &downloads)
+		d, srcID := setup585(t, srv.URL)
+		if res, err := NewSyncer(d, nil).SyncSource(srcID, nil); err != nil || res.RestorePointsNew != 2 {
+			t.Fatalf("SyncSource = %+v, %v", res, err)
+		}
+		job, _ := d.GetJobByName("[P] J")
+		rps, _ := d.ListRestorePoints(job.ID)
+		byPath := map[string]db.RestorePoint{}
+		for _, rp := range rps {
+			byPath[rp.StoragePath] = rp
+		}
+		if byPath["J/inc"].ParentRestorePointID != byPath["J/full"].ID || byPath["J/full"].ID == 0 {
+			t.Errorf("incremental parent = %d, want local full %d", byPath["J/inc"].ParentRestorePointID, byPath["J/full"].ID)
+		}
+	})
+
+	t.Run("parent not listed", func(t *testing.T) {
+		t.Parallel()
+		var downloads atomic.Int64
+		srv := peerWithRuns(t, []RemoteRestorePoint{orphan}, nil, "", &downloads)
+		d, srcID := setup585(t, srv.URL)
+		res, err := NewSyncer(d, nil).SyncSource(srcID, nil)
+		if err != nil || res.RestorePointsNew != 0 || res.JobsFailed != 1 {
+			t.Fatalf("SyncSource = %+v, %v; want the point failed", res, err)
+		}
+		if downloads.Load() != 0 || countRows(t, d, "restore_points") != 0 || countRows(t, d, "job_runs") != 0 {
+			t.Errorf("downloads %d, rows recorded for a point with no parent", downloads.Load())
+		}
+		if src, _ := d.GetReplicationSource(srcID); src.LastSyncStatus != "failed" {
+			t.Errorf("status = %q, want failed", src.LastSyncStatus)
+		}
+	})
+
+	t.Run("parent not copied", func(t *testing.T) {
+		t.Parallel()
+		var downloads atomic.Int64
+		srv := peerWithRuns(t, []RemoteRestorePoint{full, inc}, nil, "J/full", &downloads)
+		d, srcID := setup585(t, srv.URL)
+		res, err := NewSyncer(d, nil).SyncSource(srcID, nil)
+		if err != nil || res.RestorePointsNew != 0 || res.JobsFailed != 1 {
+			t.Fatalf("SyncSource = %+v, %v; want both points failed", res, err)
+		}
+		if downloads.Load() != 0 || countRows(t, d, "restore_points") != 0 {
+			t.Errorf("the incremental was copied without its full (downloads %d)", downloads.Load())
+		}
+	})
+
+	if msg := func() string {
+		_, err := localParent(orphan, map[int64]RemoteRestorePoint{}, nil, func(s string) string { return s })
+		return err.Error()
+	}(); !strings.Contains(msg, "depends on restore point 99") {
+		t.Errorf("missing-parent reason = %q", msg)
+	}
+}
+
+func TestParentsFirst585(t *testing.T) {
+	t.Parallel()
+	rps := []RemoteRestorePoint{
+		{ID: 3, ParentRestorePointID: 2}, {ID: 2, ParentRestorePointID: 1}, {ID: 1},
+		{ID: 7, ParentRestorePointID: 8}, {ID: 8, ParentRestorePointID: 7}, // a loop
+		{ID: 0}, {ID: 0},
+	}
+	var got []int64
+	for _, rp := range parentsFirst(rps) {
+		got = append(got, rp.ID)
+	}
+	if fmt.Sprint(got) != "[1 2 3 8 7 0 0]" {
+		t.Errorf("order = %v", got)
+	}
+}
+
+// A peer backup that finished partial, with files it could not read and no
+// failed items, stays partial on the replica.
+func TestSyncSourcePeerRunOutcome585(t *testing.T) {
+	t.Parallel()
+	var downloads atomic.Int64
+	srv := peerWithRuns(t,
+		[]RemoteRestorePoint{
+			{ID: 1, JobRunID: 11, BackupType: "full", StoragePath: "J/skips", Metadata: `{"items":2,"items_failed":0}`},
+			{ID: 2, JobRunID: 12, BackupType: "full", StoragePath: "J/clean", Metadata: `{"items":2}`},
+		},
+		[]RemoteRun{
+			{ID: 11, Status: "partial", ItemsTotal: 2, ItemsDone: 2},
+			{ID: 12, Status: "completed", ItemsTotal: 2, ItemsDone: 2},
+		}, "", &downloads)
+	d, srcID := setup585(t, srv.URL)
+	if res, err := NewSyncer(d, nil).SyncSource(srcID, nil); err != nil || res.RestorePointsNew != 2 {
+		t.Fatalf("SyncSource = %+v, %v", res, err)
+	}
+	job, _ := d.GetJobByName("[P] J")
+	rps, _ := d.ListRestorePoints(job.ID)
+	want := map[string]string{"J/skips": "partial", "J/clean": "success"}
+	for _, rp := range rps {
+		run, err := d.GetJobRun(rp.JobRunID)
+		if err != nil || run.Status != want[rp.StoragePath] || run.ItemsDone != 2 || run.ItemsTotal != 2 {
+			t.Errorf("%s: run = %+v, %v; want %s", rp.StoragePath, run, err, want[rp.StoragePath])
+		}
+	}
+
+	for status, wantStatus := range map[string]string{"completed": "success", "success": "success", "partial": "partial", "cancelled": "partial"} {
+		run := replicatedRun(1, "p", RemoteRestorePoint{}, "{}", 0, &RemoteRun{Status: status})
+		if run.Status != wantStatus {
+			t.Errorf("peer %s -> %s, want %s", status, run.Status, wantStatus)
+		}
+	}
+	if run := replicatedRun(1, "p", RemoteRestorePoint{}, "{}", 0, &RemoteRun{Status: "completed", ItemsFailed: 1}); run.Status != "partial" {
+		t.Errorf("completed with failed items -> %s, want partial", run.Status)
+	}
+}
+
+// If the auto-selected destination cannot be saved, the sync stops before
+// downloading anything it could not find again.
+func TestSyncSourceAdoptDestinationFails585(t *testing.T) {
+	t.Parallel()
+	var downloads atomic.Int64
+	srv := peer585(t, []RemoteRestorePoint{{ID: 1, BackupType: "full", StoragePath: "J/run1"}}, &downloads)
+	d := openTestDB(t)
+	if _, err := d.CreateStorageDestination(db.StorageDestination{Name: "l", Type: "local", Config: `{"path":"` + t.TempDir() + `"}`}); err != nil {
+		t.Fatal(err)
+	}
+	srcID, err := d.CreateReplicationSource(db.ReplicationSource{Name: "P", URL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`CREATE TRIGGER no_adopt BEFORE UPDATE OF storage_dest_id ON replication_sources
+		BEGIN SELECT RAISE(ABORT, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewSyncer(d, nil).SyncSource(srcID, nil); err == nil || !strings.Contains(err.Error(), "record storage destination") {
+		t.Fatalf("err = %v, want the adoption failure", err)
+	}
+	if downloads.Load() != 0 {
+		t.Errorf("downloaded %d files without a recorded destination", downloads.Load())
+	}
+	if src, _ := d.GetReplicationSource(srcID); src.LastSyncStatus != "failed" {
+		t.Errorf("status = %q, want failed", src.LastSyncStatus)
 	}
 }

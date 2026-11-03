@@ -220,6 +220,19 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 		s.logSyncError(sourceID, src.Name, errMsg)
 		return nil, fmt.Errorf("open local storage: %w", err)
 	}
+	// An auto-selected destination is where this sync's files go, so the
+	// source and its jobs must name it: restore and preflight open the job's
+	// destination, and a later sync must keep writing to the same place.
+	if src.StorageDestID == 0 {
+		if err := s.db.AdoptReplicationDestination(sourceID, storageDestID); err != nil {
+			storage.CloseAdapter(localAdapter)
+			errMsg := fmt.Sprintf("record storage destination: %v", err)
+			s.updateSyncStatus(sourceID, "failed", errMsg)
+			s.logSyncError(sourceID, src.Name, errMsg)
+			return nil, fmt.Errorf("record storage destination: %w", err)
+		}
+		src.StorageDestID = storageDestID
+	}
 	// Release pooled connections / mounts when the sync finishes — scheduled
 	// syncs leaked one SFTP pool (or NFS mount) per tick without this (#173).
 	defer storage.CloseAdapter(localAdapter)
@@ -372,30 +385,49 @@ func (s *Syncer) syncJob(
 		return 0, 0, fmt.Errorf("list local restore points: %w", err)
 	}
 
-	// Build set of local storage paths for dedup.
-	// Paths are compared in normalised form: syncRestorePoint stores the
-	// normalised path, so a peer reporting "job/run/" must still match.
+	// Index local restore points by normalised path: syncRestorePoint stores
+	// the normalised path, so a peer reporting "job/run/" must still match.
 	normPath := func(p string) string {
 		if n, err := safepath.NormalizeRestorePointPath(p); err == nil {
 			return n
 		}
 		return p
 	}
-	localPaths := make(map[string]bool, len(localRPs))
+	localIDs := make(map[string]int64, len(localRPs))
 	for _, lrp := range localRPs {
-		localPaths[normPath(lrp.StoragePath)] = true
+		localIDs[normPath(lrp.StoragePath)] = lrp.ID
+	}
+	remoteByID := make(map[int64]RemoteRestorePoint, len(remoteRPs))
+	for _, rrp := range remoteRPs {
+		remoteByID[rrp.ID] = rrp
 	}
 
 	var newCount, failed int
 	var firstErr error
 	var totalBytes int64
+	var peerRuns map[int64]RemoteRun
 
-	for _, rrp := range remoteRPs {
-		if localPaths[normPath(rrp.StoragePath)] {
+	// Parents first, so an incremental or differential point can be linked to
+	// the local copy of the backup it builds on.
+	for _, rrp := range parentsFirst(remoteRPs) {
+		path := normPath(rrp.StoragePath)
+		if _, ok := localIDs[path]; ok {
 			continue // Already synced.
 		}
 
-		bytes, err := s.syncRestorePoint(client, src, destID, rj, rrp, localJobID, localAdapter)
+		if peerRuns == nil {
+			peerRuns = s.peerRuns(client, src.Name, rj)
+		}
+		parentID, err := localParent(rrp, remoteByID, localIDs, normPath)
+		var rpID, bytes int64
+		if err == nil {
+			run, ok := peerRuns[rrp.JobRunID]
+			var peerRun *RemoteRun
+			if ok {
+				peerRun = &run
+			}
+			rpID, bytes, err = s.syncRestorePoint(client, src, destID, rj, rrp, localJobID, parentID, peerRun, localAdapter)
+		}
 		if err != nil {
 			// A restore point that was not recorded is failed work: the
 			// replica has no copy it can restore from.
@@ -407,7 +439,7 @@ func (s *Syncer) syncJob(
 			continue
 		}
 		// A peer listing the same path twice must not record it twice.
-		localPaths[normPath(rrp.StoragePath)] = true
+		localIDs[path] = rpID
 		newCount++
 		totalBytes += bytes
 	}
@@ -416,6 +448,70 @@ func (s *Syncer) syncJob(
 		return newCount, totalBytes, fmt.Errorf("%d of %d restore point(s) not recorded: %w", failed, len(remoteRPs), firstErr)
 	}
 	return newCount, totalBytes, nil
+}
+
+// peerRuns returns the remote job's runs by ID, so each copied backup can
+// carry the outcome its run had on the peer. When the peer cannot list them,
+// the outcome falls back to the restore point metadata.
+func (s *Syncer) peerRuns(client *Client, sourceName string, rj RemoteJob) map[int64]RemoteRun {
+	runs, err := client.ListJobRuns(rj.ID)
+	if err != nil {
+		logx.Warnf("replication: run history of %q from %q unavailable, using restore point metadata for run outcomes: %v", rj.Name, sourceName, err)
+	}
+	byID := make(map[int64]RemoteRun, len(runs))
+	for _, r := range runs {
+		byID[r.ID] = r
+	}
+	return byID
+}
+
+// parentsFirst orders restore points so each one follows the parent it lists,
+// keeping the peer's order otherwise. A parent loop cannot recurse forever:
+// a point already being visited is not visited again.
+func parentsFirst(rps []RemoteRestorePoint) []RemoteRestorePoint {
+	index := make(map[int64]int, len(rps))
+	for i, rp := range rps {
+		if _, dup := index[rp.ID]; !dup {
+			index[rp.ID] = i
+		}
+	}
+	seen := make([]bool, len(rps))
+	out := make([]RemoteRestorePoint, 0, len(rps))
+	var visit func(i int)
+	visit = func(i int) {
+		if seen[i] {
+			return
+		}
+		seen[i] = true
+		if p := rps[i].ParentRestorePointID; p > 0 {
+			if pi, ok := index[p]; ok {
+				visit(pi)
+			}
+		}
+		out = append(out, rps[i])
+	}
+	for i := range rps {
+		visit(i)
+	}
+	return out
+}
+
+// localParent returns the local restore point that holds the copy of rrp's
+// parent, or 0 when rrp stands alone. A point whose parent has no local copy
+// cannot be restored, so that is an error rather than a standalone point.
+func localParent(rrp RemoteRestorePoint, remoteByID map[int64]RemoteRestorePoint, localIDs map[string]int64, normPath func(string) string) (int64, error) {
+	if rrp.ParentRestorePointID <= 0 {
+		return 0, nil
+	}
+	parent, ok := remoteByID[rrp.ParentRestorePointID]
+	if !ok || rrp.ParentRestorePointID == rrp.ID {
+		return 0, fmt.Errorf("%s backup depends on restore point %d, which the peer does not list, so it could not be restored", rrp.BackupType, rrp.ParentRestorePointID)
+	}
+	id, ok := localIDs[normPath(parent.StoragePath)]
+	if !ok {
+		return 0, fmt.Errorf("%s backup depends on %q, which was not copied, so it could not be restored", rrp.BackupType, parent.StoragePath)
+	}
+	return id, nil
 }
 
 // ensureLocalJob finds or creates a local job record for a replicated remote job.
@@ -453,7 +549,7 @@ func (s *Syncer) ensureLocalJob(src db.ReplicationSource, destID int64, rj Remot
 		RetentionCount:  rj.RetentionCount,
 		RetentionDays:   rj.RetentionDays,
 		NotifyOn:        "failure",
-		StorageDestID:   src.StorageDestID,
+		StorageDestID:   destID,
 		SourceID:        src.ID,
 	}
 	return s.db.CreateReplicatedJob(job)
@@ -467,20 +563,22 @@ func (s *Syncer) syncRestorePoint(
 	rj RemoteJob,
 	rrp RemoteRestorePoint,
 	localJobID int64,
+	parentID int64,
+	peerRun *RemoteRun,
 	localAdapter storage.Adapter,
-) (int64, error) {
+) (rpID, bytes int64, err error) {
 	// The peer's storage path becomes a local restore point row that later
 	// authorises recursive deletes, so it must have the managed
 	// <job>/<run> shape (#514).
 	storagePath, err := safepath.NormalizeRestorePointPath(rrp.StoragePath)
 	if err != nil {
-		return 0, fmt.Errorf("invalid remote storage path: %w", err)
+		return 0, 0, fmt.Errorf("invalid remote storage path: %w", err)
 	}
 
 	// Claim first, so the check below and the download cover the same state.
 	release, claimed := s.claimPath(destID, storagePath)
 	if !claimed {
-		return 0, fmt.Errorf("%w: %q overlaps a sync already in progress", errPathRefused, storagePath)
+		return 0, 0, fmt.Errorf("%w: %q overlaps a sync already in progress", errPathRefused, storagePath)
 	}
 	defer release()
 
@@ -490,18 +588,18 @@ func (s *Syncer) syncRestorePoint(
 	// rows are excluded, so a retried or partial sync of its path still works.
 	owners, err := s.db.ListRestorePointOwners(destID, localJobID)
 	if err != nil {
-		return 0, fmt.Errorf("check restore point path ownership: %w", err)
+		return 0, 0, fmt.Errorf("check restore point path ownership: %w", err)
 	}
 	for _, o := range owners {
 		if storage.PathsOverlap(storagePath, o.StoragePath) {
-			return 0, fmt.Errorf("%w: %q overlaps a restore point of local job %d", errPathRefused, storagePath, o.JobID)
+			return 0, 0, fmt.Errorf("%w: %q overlaps a restore point of local job %d", errPathRefused, storagePath, o.JobID)
 		}
 	}
 
 	// Recursively list and download all files in the remote storage path.
 	totalBytes, err := s.downloadDir(client, rj.StorageDestID, storagePath, localAdapter)
 	if err != nil {
-		return totalBytes, err
+		return 0, totalBytes, err
 	}
 
 	// Every restore point belongs to a run, so record the peer's backup as a
@@ -509,49 +607,60 @@ func (s *Syncer) syncRestorePoint(
 	// transaction. If that fails, the downloaded files stay unrecorded and
 	// the next sync downloads them again to the same path.
 	metadata := s.rewriteMetadata(rrp.Metadata, src.Name)
-	run := replicatedRun(localJobID, src.Name, rrp, metadata, totalBytes)
+	run := replicatedRun(localJobID, src.Name, rrp, metadata, totalBytes, peerRun)
 	rp := db.RestorePoint{
 		JobID:                localJobID,
 		BackupType:           rrp.BackupType,
 		StoragePath:          storagePath,
 		Metadata:             metadata,
 		SizeBytes:            totalBytes,
-		ParentRestorePointID: 0,
+		ParentRestorePointID: parentID,
 		SourceID:             src.ID,
 	}
-	if _, _, err := s.db.CreateReplicatedRestorePoint(run, rp, peerTime(rrp.CreatedAt)); err != nil {
-		return totalBytes, fmt.Errorf("record restore point: %w", err)
+	_, rpID, err = s.db.CreateReplicatedRestorePoint(run, rp, peerTime(rrp.CreatedAt))
+	if err != nil {
+		return 0, totalBytes, fmt.Errorf("record restore point: %w", err)
 	}
-
-	return totalBytes, nil
+	return rpID, totalBytes, nil
 }
 
 // replicatedRun describes, as a finished local run, the peer backup that
-// produced rrp. Its outcome and item counts come from the restore point
-// metadata the peer recorded: a backup with failed items is partial.
-func replicatedRun(localJobID int64, sourceName string, rrp RemoteRestorePoint, metadata string, sizeBytes int64) db.JobRun {
+// produced rrp. The outcome is the peer run's own when the peer listed it, so
+// a backup the peer marked partial (failed items, or files it could not read)
+// stays partial here. Otherwise it comes from the restore point metadata,
+// where only failed items are recorded.
+func replicatedRun(localJobID int64, sourceName string, rrp RemoteRestorePoint, metadata string, sizeBytes int64, peerRun *RemoteRun) db.JobRun {
+	run := db.JobRun{
+		JobID:      localJobID,
+		Status:     "success",
+		BackupType: rrp.BackupType,
+		RunType:    "backup",
+		Log:        fmt.Sprintf("Replicated from %s; the backup ran on that server.", sourceName),
+		SizeBytes:  sizeBytes,
+	}
+	if peerRun != nil {
+		run.ItemsTotal = max(peerRun.ItemsTotal, 0)
+		run.ItemsDone = max(peerRun.ItemsDone, 0)
+		run.ItemsFailed = max(peerRun.ItemsFailed, 0)
+		// A restore point only exists for a run that backed something up, so
+		// any outcome other than a clean one is partial here.
+		if (peerRun.Status != "completed" && peerRun.Status != "success") || run.ItemsFailed > 0 {
+			run.Status = "partial"
+		}
+		return run
+	}
 	var meta struct {
 		Items       int `json:"items"`
 		ItemsFailed int `json:"items_failed"`
 	}
 	// Older peers may store other shapes here; the counts are then unknown.
 	_ = json.Unmarshal([]byte(metadata), &meta)
-	items, failed := max(meta.Items, 0), max(meta.ItemsFailed, 0)
-	status := "success"
-	if failed > 0 {
-		status = "partial"
+	run.ItemsDone, run.ItemsFailed = max(meta.Items, 0), max(meta.ItemsFailed, 0)
+	run.ItemsTotal = run.ItemsDone + run.ItemsFailed
+	if run.ItemsFailed > 0 {
+		run.Status = "partial"
 	}
-	return db.JobRun{
-		JobID:       localJobID,
-		Status:      status,
-		BackupType:  rrp.BackupType,
-		RunType:     "backup",
-		Log:         fmt.Sprintf("Replicated from %s; the backup ran on that server.", sourceName),
-		ItemsTotal:  items + failed,
-		ItemsDone:   items,
-		ItemsFailed: failed,
-		SizeBytes:   sizeBytes,
-	}
+	return run
 }
 
 // peerTime parses the peer's restore point timestamp, returning the zero time

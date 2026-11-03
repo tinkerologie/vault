@@ -121,10 +121,13 @@ func TestDownloadFileIdleTimeout585(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = io.ReadAll(rc)
-	_ = rc.Close()
 	if err == nil || !strings.Contains(err.Error(), "peer sent no data") {
 		t.Fatalf("stalled download err = %v, want idle timeout", err)
 	}
+	if _, err := rc.Read(make([]byte, 1)); err == nil || !strings.Contains(err.Error(), "peer sent no data") {
+		t.Errorf("read after the idle timeout = %v, want the same error", err)
+	}
+	_ = rc.Close()
 
 	if _, err := c.DownloadFile(1, "no-headers"); err == nil || !strings.Contains(err.Error(), "peer sent no data") {
 		t.Fatalf("no-response err = %v, want idle timeout", err)
@@ -133,5 +136,83 @@ func TestDownloadFileIdleTimeout585(t *testing.T) {
 	// Other requests keep the total timeout.
 	if _, err := c.ListStorageFiles(1, "no-headers"); err == nil {
 		t.Fatal("listing should still time out")
+	}
+}
+
+// An error response whose body never finishes cannot hang the download: the
+// idle reader bounds reading it too.
+func TestDownloadFileStalledErrorBody585(t *testing.T) {
+	prev := downloadIdleTimeout
+	downloadIdleTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { downloadIdleTimeout = prev })
+
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"error":"den`)
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.DownloadFile(1, "a")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "status 403") {
+			t.Fatalf("err = %v, want status 403", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DownloadFile hung on a stalled error body")
+	}
+}
+
+// Time the caller spends between reads, such as a slow destination write, is
+// not peer idle time.
+func TestDownloadFileSlowConsumer585(t *testing.T) {
+	prev := downloadIdleTimeout
+	downloadIdleTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { downloadIdleTimeout = prev })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("y", 64<<10))
+	}))
+	defer srv.Close()
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, err := c.DownloadFile(1, "big")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	var total int
+	buf := make([]byte, 16<<10)
+	for {
+		n, err := rc.Read(buf)
+		total += n
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read after a slow write: %v (after %d bytes)", err, total)
+		}
+		time.Sleep(3 * downloadIdleTimeout) // a destination slower than the idle timeout
+	}
+	if total != 64<<10 {
+		t.Errorf("read %d bytes, want %d", total, 64<<10)
 	}
 }

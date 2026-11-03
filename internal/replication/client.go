@@ -200,6 +200,29 @@ func (c *Client) ListRestorePoints(jobID int64) ([]RemoteRestorePoint, error) {
 	return rps, nil
 }
 
+// RemoteRun mirrors the fields of a remote job run that describe its outcome.
+type RemoteRun struct {
+	ID          int64  `json:"id"`
+	Status      string `json:"status"`
+	ItemsTotal  int    `json:"items_total"`
+	ItemsDone   int    `json:"items_done"`
+	ItemsFailed int    `json:"items_failed"`
+}
+
+// maxPeerRuns is how much of a remote job's history ListJobRuns asks for, the
+// most the peer's history endpoint returns.
+const maxPeerRuns = 1000
+
+// ListJobRuns returns the most recent runs of a remote job, newest first.
+func (c *Client) ListJobRuns(jobID int64) ([]RemoteRun, error) {
+	var runs []RemoteRun
+	path := fmt.Sprintf("/api/v1/jobs/%d/history", jobID)
+	if err := c.getJSONWithParams(path, map[string]string{"limit": fmt.Sprint(maxPeerRuns)}, &runs); err != nil {
+		return nil, fmt.Errorf("list remote runs for job %d: %w", jobID, err)
+	}
+	return runs, nil
+}
+
 // ListStorageFiles lists files at the given path on a remote storage destination.
 func (c *Client) ListStorageFiles(storageID int64, prefix string) ([]StorageFile, error) {
 	var files []StorageFile
@@ -231,16 +254,21 @@ func (c *Client) DownloadFile(storageID int64, filePath string) (io.ReadCloser, 
 		}
 		return nil, fmt.Errorf("download file %q: %w", filePath, err)
 	}
+	// Every body this client reads, error responses included, goes through
+	// the idle reader: it has no total timeout to fall back on.
+	body := newIdleReader(resp.Body, downloadIdleTimeout)
 	if resp.StatusCode != http.StatusOK {
+		resp.Body = body
 		err := peerStatusError(resp)
-		_ = resp.Body.Close()
+		_ = body.Close()
 		return nil, fmt.Errorf("download file %q: %w", filePath, err)
 	}
-	return newIdleReader(resp.Body, downloadIdleTimeout), nil
+	return body, nil
 }
 
-// idleReader is a download body that is closed once no data has arrived for
-// idle. Each read that returns data restarts the timer.
+// idleReader is a download body that is closed when a single Read waits more
+// than idle for the peer. Only time spent inside Read counts, so a slow
+// destination write between reads never looks like a stalled peer.
 type idleReader struct {
 	rc      io.ReadCloser
 	idle    time.Duration
@@ -252,16 +280,19 @@ func newIdleReader(rc io.ReadCloser, idle time.Duration) *idleReader {
 	r := &idleReader{rc: rc, idle: idle}
 	r.timer = time.AfterFunc(idle, func() {
 		r.expired.Store(true)
-		_ = rc.Close() // unblocks a Read waiting on the peer
+		_ = rc.Close() // unblocks the Read waiting on the peer
 	})
+	r.timer.Stop() // armed only while a Read is in progress
 	return r
 }
 
 func (r *idleReader) Read(p []byte) (int, error) {
-	n, err := r.rc.Read(p)
-	if n > 0 && !r.expired.Load() {
-		r.timer.Reset(r.idle)
+	if r.expired.Load() {
+		return 0, fmt.Errorf("peer sent no data for %s", r.idle)
 	}
+	r.timer.Reset(r.idle)
+	n, err := r.rc.Read(p)
+	r.timer.Stop()
 	if err != nil && err != io.EOF && r.expired.Load() {
 		err = fmt.Errorf("peer sent no data for %s: %w", r.idle, err)
 	}

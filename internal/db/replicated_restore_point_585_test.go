@@ -167,3 +167,43 @@ func countRunsAndPoints(t *testing.T, d *DB) int {
 	}
 	return n
 }
+
+// An auto-selected destination is recorded on the source and on its jobs that
+// have none; anything that already names a destination keeps it.
+func TestAdoptReplicationDestination585(t *testing.T) {
+	t.Parallel()
+	d := setupTestDB(t)
+	a, _ := d.CreateStorageDestination(StorageDestination{Name: "a", Type: "local", Config: "{}"})
+	b, _ := d.CreateStorageDestination(StorageDestination{Name: "b", Type: "local", Config: "{}"})
+	srcID, err := d.CreateReplicationSource(ReplicationSource{Name: "s", URL: "http://x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unbound, _ := d.CreateReplicatedJob(Job{Name: "[s] unbound", SourceID: srcID})
+	bound, _ := d.CreateReplicatedJob(Job{Name: "[s] bound", SourceID: srcID, StorageDestID: b})
+	other, _ := d.CreateReplicatedJob(Job{Name: "[t] other", SourceID: srcID + 1})
+
+	if err := d.AdoptReplicationDestination(srcID, a); err != nil {
+		t.Fatal(err)
+	}
+	if src, _ := d.GetReplicationSource(srcID); src.StorageDestID != a {
+		t.Errorf("source destination = %d, want %d", src.StorageDestID, a)
+	}
+	for id, want := range map[int64]int64{unbound: a, bound: b, other: 0} {
+		if j, _ := d.GetJob(id); j.StorageDestID != want {
+			t.Errorf("job %q destination = %d, want %d", j.Name, j.StorageDestID, want)
+		}
+	}
+	// A source that names a destination keeps it.
+	if err := d.AdoptReplicationDestination(srcID, b); err != nil {
+		t.Fatal(err)
+	}
+	if src, _ := d.GetReplicationSource(srcID); src.StorageDestID != a {
+		t.Errorf("source destination changed to %d", src.StorageDestID)
+	}
+
+	_ = d.Close()
+	if err := d.AdoptReplicationDestination(srcID, a); err == nil {
+		t.Error("want an error from a closed database")
+	}
+}

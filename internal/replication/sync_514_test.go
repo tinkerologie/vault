@@ -118,7 +118,7 @@ func TestSyncRestorePointRejectsUnmanagedPaths514(t *testing.T) {
 				t.Fatal(err)
 			}
 			rrp := RemoteRestorePoint{ID: 1, JobID: 8, BackupType: "full", StoragePath: p}
-			if _, err := s.syncRestorePoint(c, src, src.StorageDestID, rj, rrp, jobID, storage.NewLocalAdapter(t.TempDir())); err == nil {
+			if _, _, err := s.syncRestorePoint(c, src, src.StorageDestID, rj, rrp, jobID, 0, nil, storage.NewLocalAdapter(t.TempDir())); err == nil {
 				t.Fatal("syncRestorePoint accepted an unmanaged storage path")
 			}
 			if downloads != 0 {
