@@ -399,7 +399,7 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var bad *badSourcePatch
 		switch {
-		case errors.Is(err, errSourceNotFound):
+		case errors.Is(err, errSourceNotFound), errors.Is(err, db.ErrNotFound):
 			respondError(w, http.StatusNotFound, "not found")
 		case errors.As(err, &bad):
 			respondError(w, http.StatusBadRequest, bad.msg)
