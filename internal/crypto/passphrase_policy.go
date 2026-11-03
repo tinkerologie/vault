@@ -43,21 +43,15 @@ func CheckPassphraseStrength(p string) error {
 		return errors.New("passphrase must be at least 12 characters")
 	}
 	lower := strings.ToLower(p)
-	distinct := map[rune]bool{}
 	runes := []rune(lower)
-	stepped := 0
-	for i, r := range runes {
+	distinct := map[rune]bool{}
+	for _, r := range runes {
 		distinct[r] = true
-		if i > 0 {
-			if d := r - runes[i-1]; d >= -1 && d <= 1 {
-				stepped++
-			}
-		}
 	}
 	if len(distinct) < minPassphraseDistinct {
 		return errors.New("passphrase is too repetitive: use more different characters")
 	}
-	if stepped*4 >= (len(runes)-1)*3 {
+	if isSteppedRun(lower) {
 		return errors.New("passphrase is too predictable: avoid runs such as 123456 or abcdef")
 	}
 	if isAllDigits(lower) && len(runes) < 20 {
@@ -67,6 +61,29 @@ func CheckPassphraseStrength(p string) error {
 		return errors.New("passphrase is too common: use several unrelated words or a generated value")
 	}
 	return nil
+}
+
+// isSteppedRun reports whether most neighbouring characters are equal or one
+// apart, such as 123456, either as written or with separators ignored, such as
+// a-b-c-d-e-f. Too few letters and digits to judge is not a run.
+func isSteppedRun(s string) bool {
+	var alnum []rune
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			alnum = append(alnum, r)
+		}
+	}
+	return mostlyStepped([]rune(s)) || (len(alnum) >= minPassphraseDistinct && mostlyStepped(alnum))
+}
+
+func mostlyStepped(runes []rune) bool {
+	stepped := 0
+	for i := 1; i < len(runes); i++ {
+		if d := runes[i] - runes[i-1]; d >= -1 && d <= 1 {
+			stepped++
+		}
+	}
+	return stepped*4 >= (len(runes)-1)*3
 }
 
 func isAllDigits(s string) bool {
