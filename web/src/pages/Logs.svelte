@@ -70,7 +70,9 @@
   $effect(() => {
     shownRows
     tick().then(() => {
-      if (box) atOldest = !win.hiddenBelow && nearBottom(port.scrollTop, port.scrollHeight, port.clientHeight)
+      if (!box) return
+      const m = port.measure()
+      atOldest = !win.hiddenBelow && nearBottom(m.scrollTop, m.scrollHeight, m.clientHeight)
     })
   })
 
@@ -156,8 +158,9 @@
     store.filtered
     collapse
     if (box) {
-      preScrollHeight = port.scrollHeight
-      preScrollTop = port.scrollTop
+      const m = port.measure()
+      preScrollHeight = m.scrollHeight
+      preScrollTop = m.scrollTop
       preAnchor = untrack(() => {
         if (expanded.size === 0) return null
         const id = (focusedId && entryTopOffset(focusedId) != null) ? focusedId : topmostEntryId()
@@ -218,21 +221,24 @@
     // Swallow the programmatic anchor write's own scroll event so it can't
     // re-trigger loadOlder or toggle follow (#328 r8 #4).
     if (win.consumeSuppressed()) return
-    atOldest = !win.hiddenBelow && nearBottom(port.scrollTop, port.scrollHeight, port.clientHeight)
+    // One measurement for the whole update: in the embedded view each read
+    // of the port measures the page.
+    const { scrollTop, scrollHeight, clientHeight } = port.measure()
+    atOldest = !win.hiddenBelow && nearBottom(scrollTop, scrollHeight, clientHeight)
     // Rendering rows that are already loaded needs no fetch, so it must not
     // wait for one: the background full-history load keeps loadingOlder set
     // for long stretches, and a reader reaching either edge of the window
     // would otherwise stall there until the load finished.
-    const nearOldest = nearOldestEdge(port.scrollTop, port.scrollHeight, port.clientHeight)
+    const nearOldest = nearOldestEdge(scrollTop, scrollHeight, clientHeight)
     if (store.loadingOlder) {
-      if (isAtTop(port.scrollTop) && win.hiddenAbove) win.raise()
+      if (isAtTop(scrollTop) && win.hiddenAbove) win.raise()
       else if (nearOldest && win.hiddenBelow) win.grow()
       return
     }
     // The live edge is the top now: being there means following, unless
     // newer rows are hidden above the window, which then grows upwards.
     const action = scrollAction({
-      atTop: isAtTop(port.scrollTop),
+      atTop: isAtTop(scrollTop),
       nearOldest,
       follow,
       hiddenAbove: win.hiddenAbove,
@@ -286,7 +292,9 @@
     }
     // The fetched batch lands beyond the window; a reader still parked at
     // the bottom would otherwise see nothing until they scroll again.
-    if (box) await win.afterOlderFetch(nearOldestEdge(port.scrollTop, port.scrollHeight, port.clientHeight))
+    if (!box) return
+    const m = port.measure()
+    await win.afterOlderFetch(nearOldestEdge(m.scrollTop, m.scrollHeight, m.clientHeight))
   }
 
   function jumpToPresent() {
@@ -407,7 +415,8 @@
   async function fillViewport() {
     await tick()
     let guard = 0
-    while (box && port.scrollHeight <= port.clientHeight && store.hasMore && !store.loadingOlder && guard < 20) {
+    const fits = () => { const m = port.measure(); return m.scrollHeight <= m.clientHeight }
+    while (box && fits() && store.hasMore && !store.loadingOlder && guard < 20) {
       guard++
       await store.loadOlder()
       await tick()

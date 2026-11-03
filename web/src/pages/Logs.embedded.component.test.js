@@ -122,6 +122,20 @@ describe('embedded Logs console (#526)', () => {
     expect(scrollHostTo).not.toHaveBeenCalled()
   })
 
+  it('measures the console once for each page scroll it hears about', async () => {
+    await mountLogs()
+    await scrollPage(CONSOLE_TOP + 200)
+    const measure = Element.prototype.getBoundingClientRect
+    let consoleReads = 0
+    Element.prototype.getBoundingClientRect = function () {
+      if (this.getAttribute?.('role') === 'log') consoleReads++
+      return measure.call(this)
+    }
+    current.area = { ...current.area, top: CONSOLE_TOP + 220 }
+    current.listeners.forEach((fn) => fn())
+    expect(consoleReads).toBe(1)
+  })
+
   it('stops listening to the page when it unmounts', async () => {
     const { unmount } = await mountLogs()
     expect(current.listeners.size).toBe(1)

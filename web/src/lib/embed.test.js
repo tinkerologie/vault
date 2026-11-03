@@ -121,6 +121,22 @@ describe('startEmbeddedPresentation', () => {
     expect(listeners.size).toBe(0)
     expect(observers[0].disconnect).toHaveBeenCalled()
   })
+
+  it('drops the earlier channel and its scroll listeners when it restarts', () => {
+    const first = fakeWindow()
+    startEmbeddedPresentation(first.win)
+    const stale = vi.fn()
+    onVisibleAreaChange(stale)
+    const second = fakeWindow()
+    startEmbeddedPresentation(second.win)
+    expect(first.listeners.size).toBe(0)
+    expect(first.observers[0].disconnect).toHaveBeenCalled()
+    const fresh = vi.fn()
+    onVisibleAreaChange(fresh)
+    second.send(viewport())
+    expect(stale).not.toHaveBeenCalled()
+    expect(fresh).toHaveBeenCalledOnce()
+  })
 })
 
 describe('host scrolling', () => {

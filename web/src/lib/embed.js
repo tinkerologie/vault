@@ -13,6 +13,8 @@ let visibleHeight = null
 const areaListeners = new Set()
 /** @type {(() => void) | null} */
 let flushSize = null
+/** @type {(() => void) | null} stops the running channel */
+let stopChannel = null
 
 /** @param {unknown} value */
 function isLength(value) {
@@ -46,6 +48,9 @@ function postToHost(win, message) {
  * @returns {() => void} stops the channel
  */
 export function startEmbeddedPresentation(win = window) {
+  // A restart replaces the running channel and whoever listened to it.
+  stopChannel?.()
+  areaListeners.clear()
   const doc = win.document
   const root = doc.documentElement
   const app = doc.getElementById('app')
@@ -87,11 +92,16 @@ export function startEmbeddedPresentation(win = window) {
   report()
   flushSize = () => report()
 
-  return () => {
+  const stop = () => {
     win.removeEventListener('message', onMessage)
     observer.disconnect()
-    flushSize = null
+    if (stopChannel === stop) {
+      flushSize = null
+      stopChannel = null
+    }
   }
+  stopChannel = stop
+  return stop
 }
 
 /**
