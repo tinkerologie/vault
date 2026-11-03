@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -122,5 +123,44 @@ func TestUntrackedRestoreRefusals(t *testing.T) {
 	r.activeMu.Unlock()
 	if active != 0 {
 		t.Errorf("activeCount = %d after the restore", active)
+	}
+}
+
+// Shutdown never misses an admitted restore: whenever Drain races an untracked
+// restore's admission, either the restore is refused, or Drain waits for it to
+// finish. No restore step may run after Drain has returned (Greptile and
+// Aikido review of #612).
+func TestDrainNeverMissesAnAdmittedRestore(t *testing.T) {
+	r, _ := newTestRunner(t)
+	for range 2000 {
+		r.activeMu.Lock()
+		r.draining = false // a fresh shutdown each round
+		r.activeMu.Unlock()
+		var drained, late atomic.Bool
+		r.untrackedRestoreFn = func(context.Context, db.RestorePoint, string, string, string, string, ...RestoreItemOptions) error {
+			for range 3 {
+				if drained.Load() {
+					late.Store(true)
+				}
+				runtime.Gosched()
+			}
+			return nil
+		}
+		var wg sync.WaitGroup
+		var admitErr error
+		wg.Go(func() { admitErr = r.RestoreItem(db.RestorePoint{}, "web", "container", "", "") })
+		wg.Go(func() {
+			if err := r.Drain(t.Context()); err != nil {
+				t.Errorf("Drain: %v", err)
+			}
+			drained.Store(true)
+		})
+		wg.Wait()
+		if late.Load() {
+			t.Fatal("a restore step ran after Drain returned")
+		}
+		if admitErr != nil && !errors.Is(admitErr, errRunnerDraining) {
+			t.Fatalf("admission: %v", admitErr)
+		}
 	}
 }

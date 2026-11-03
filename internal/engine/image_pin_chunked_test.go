@@ -3,11 +3,13 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	containertypes "github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/tinkerologie/vault/internal/dedup"
@@ -525,29 +527,67 @@ func TestCancelledRestorePutsTheTagBack(t *testing.T) {
 	}
 }
 
-// Issue #611: when the restored container is gone by the time the status is
-// written, something replaced it, so the entry describes that container now
-// and is left alone instead of being cleared.
-func TestSeedLeavesTheEntryOfAReplacedContainer(t *testing.T) {
+// Issue #611: when Docker reports the restored container gone by the time the
+// status is written, something replaced it, so the entry describes that
+// container now and is left alone. Any other failure, or a container without
+// an image, says nothing about a replacement and clears the digest so Unraid
+// re-reads it (Greptile and Aikido review of #612).
+func TestSeedRestoredStatusWhenTheContainerCannotBeRead(t *testing.T) {
 	const before = `{"library/nginx:1":{"local":"sha256:live","remote":"sha256:live","status":"true"}}`
-	content := before
+	cases := []struct {
+		name    string
+		inspect func(context.Context) (client.ContainerInspectResult, error)
+		keep    bool
+	}{
+		{name: "replaced: not found", keep: true, inspect: func(context.Context) (client.ContainerInspectResult, error) {
+			return client.ContainerInspectResult{}, fmt.Errorf("%w: no such container: c1", cerrdefs.ErrNotFound)
+		}},
+		{name: "transient daemon error", inspect: func(context.Context) (client.ContainerInspectResult, error) {
+			return client.ContainerInspectResult{}, errFake458
+		}},
+		{name: "no image reported", inspect: func(context.Context) (client.ContainerInspectResult, error) {
+			return client.ContainerInspectResult{Container: containertypes.InspectResponse{ID: "c1"}}, nil
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			content := before
+			statusPath := withUpdateStatusPath458(t, &content)
+			r := newImageRegistry()
+			r.containerInspect = func(ctx context.Context, _ string) (client.ContainerInspectResult, error) { return tc.inspect(ctx) }
+			seedRestoredImageStatus(t.Context(), r, "nginx:1", "c1")
+			got := readStatus458(t, statusPath)["library/nginx:1"]["local"]
+			if tc.keep && got != "sha256:live" {
+				t.Errorf("entry of the replacing container changed: local = %v", got)
+			}
+			if !tc.keep && got != nil {
+				t.Errorf("local = %v, want cleared", got)
+			}
+		})
+	}
+}
+
+// The status lookups ignore the restore's cancellation: a restore cancelled
+// just as it finished still records the digest of the image it created the
+// container from.
+func TestSeedRestoredStatusIgnoresCancellation(t *testing.T) {
+	content := `{"library/nginx:1":{"local":"sha256:stale","remote":null,"status":"undef"}}`
 	statusPath := withUpdateStatusPath458(t, &content)
 	r := newImageRegistry()
-	r.containerInspect = func(context.Context, string) (client.ContainerInspectResult, error) {
-		return client.ContainerInspectResult{}, errInspectMissing // removed by a later restore
+	r.tags[pinRef] = "old-image"
+	r.containerInspect = func(ctx context.Context, _ string) (client.ContainerInspectResult, error) {
+		if err := ctx.Err(); err != nil {
+			return client.ContainerInspectResult{}, err
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			t.Error("status lookup has no deadline")
+		}
+		return client.ContainerInspectResult{Container: containertypes.InspectResponse{ID: "c1", Image: "old-image"}}, nil
 	}
-	seedRestoredImageStatus(t.Context(), r, "nginx:1", "c1")
-	if got := readFile458(t, statusPath); got != before {
-		t.Errorf("entry of the live container changed: %s", got)
-	}
-	// A container that is still there but has no known digest is cleared.
-	trackCreatedContainer(r, nil)
-	r.tags["nginx:1"] = "plain-image"
-	if _, err := r.ContainerCreate(t.Context(), client.ContainerCreateOptions{Config: &containertypes.Config{Image: "nginx:1"}}); err != nil {
-		t.Fatal(err)
-	}
-	seedRestoredImageStatus(t.Context(), r, "nginx:1", "c1")
-	if got := readStatus458(t, statusPath)["library/nginx:1"]["local"]; got != nil {
-		t.Errorf("local = %v, want cleared", got)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	seedRestoredImageStatus(ctx, r, "nginx:1", "c1")
+	if got := readStatus458(t, statusPath)["library/nginx:1"]["local"]; got != pinDigest {
+		t.Errorf("local = %v, want %s", got, pinDigest)
 	}
 }

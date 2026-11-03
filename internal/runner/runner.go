@@ -310,6 +310,19 @@ func (r *Runner) shouldRefuseStart() bool {
 	return r.draining
 }
 
+// tryMarkStart counts a task as active unless the daemon is draining. Checking
+// and counting under one lock means Drain can never see zero active tasks and
+// return while a task it did not refuse is starting.
+func (r *Runner) tryMarkStart() bool {
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	if r.draining {
+		return false
+	}
+	r.activeCount++
+	return true
+}
+
 func (r *Runner) markStart() {
 	r.activeMu.Lock()
 	r.activeCount++
@@ -4349,10 +4362,9 @@ var errRunnerDraining = errors.New("the Vault daemon is shutting down; try again
 // backup could hold that call open for hours (#611). release must be called
 // once the restore has finished.
 func (r *Runner) acquireUntrackedRestore() (release func(), err error) {
-	if r.shouldRefuseStart() {
+	if !r.tryMarkStart() {
 		return nil, errRunnerDraining
 	}
-	r.markStart()
 	if !r.mu.TryLock() {
 		r.markFinish()
 		return nil, ErrRunnerBusy
