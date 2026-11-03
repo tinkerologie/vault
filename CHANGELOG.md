@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Build after the mDNS library update (#588):** The main module now matches the bundled library's `netlink` update, so Vault builds again.
 - **Retro fonts load in the plugin (#532):** The pixel fonts returned 404 when the app was served from the Unraid plugin path, so Retro fell back to system fonts.
 - **Jobs bulk bar on phones (#530):** The bulk action bar now wraps inside a 375 px screen and sits above the mobile navigation, standalone and embedded, with full-size touch targets.
 - **Embedded skip link (#526):** In the embedded view, the skip link now scrolls the parent page so the heading it focuses is on screen.
