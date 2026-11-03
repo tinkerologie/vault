@@ -445,7 +445,7 @@ func (sm *SnapshotManager) rotateSnapshot() {
 		}
 	}
 
-	pruneRotatedIn(rotated, filepath.Join(dir, "rotated"))
+	sm.pruneRotated(filepath.Join(dir, "rotated"))
 }
 
 // openRealSubdir opens name inside root, refusing a symlink or non-directory.
