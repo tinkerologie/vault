@@ -87,7 +87,9 @@ func newHostKeyCallback(config SFTPConfig) (ssh.HostKeyCallback, error) {
 // address presents is recorded, and any later different key is refused. The
 // check runs before authentication, so a refused server never sees a password.
 func pinnedHostKeyCallback(config SFTPConfig) ssh.HostKeyCallback {
-	address := net.JoinHostPort(config.Host, fmt.Sprintf("%d", config.Port))
+	// DNS names ignore case and a trailing dot, so these spellings share a pin.
+	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(config.Host)), ".")
+	address := net.JoinHostPort(host, fmt.Sprintf("%d", config.Port))
 	return func(_ string, _ net.Addr, key ssh.PublicKey) error {
 		got := ssh.FingerprintSHA256(key)
 		p := hostKeyPinner.Load()

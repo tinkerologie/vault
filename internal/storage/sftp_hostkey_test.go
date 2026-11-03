@@ -91,6 +91,35 @@ func TestPinnedHostKey_FirstUseThenRefusesChange(t *testing.T) {
 	}
 }
 
+// Respelling a host must not look like a new server, or a different key would
+// be trusted as a first use.
+func TestPinnedHostKey_HostSpellingsShareAPin(t *testing.T) {
+	pins := memPinner(t)
+	key, _ := genTestSSHKey(t)
+	first, err := NewSFTPAdapter(SFTPConfig{Host: "nas.lan", User: "u"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	if err := first.hostKey("nas.lan:22", &net.TCPAddr{}, key); err != nil {
+		t.Fatal(err)
+	}
+	impostor, _ := genTestSSHKey(t)
+	for _, host := range []string{"NAS.LAN", " nas.lan ", "nas.lan."} {
+		a, err := NewSFTPAdapter(SFTPConfig{Host: host, User: "u"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer a.Close()
+		if err := a.hostKey(host+":22", &net.TCPAddr{}, impostor); err == nil {
+			t.Errorf("%q: a different key was accepted", host)
+		}
+	}
+	if len(pins) != 1 {
+		t.Errorf("pins = %v", pins)
+	}
+}
+
 func TestPinnedHostKey_ExplicitKeyOverridesPin(t *testing.T) {
 	pins := memPinner(t)
 	old, _ := genTestSSHKey(t)
