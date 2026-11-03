@@ -140,8 +140,12 @@ func ContainerVolumeArchives(stepDir string) (map[string]string, error) {
 // because every target is then rewritten beneath that destination.
 func authorizeVolumeSources(sources, live []string) error {
 	for _, source := range sources {
-		if slices.Contains(live, filepath.Clean(source)) {
-			continue
+		// The live exception needs the exact path, with no symlink in it: a link
+		// planted since the container was created must not borrow its trust.
+		if clean := filepath.Clean(source); slices.Contains(live, clean) {
+			if resolved, err := evalExistingPrefix(clean); err == nil && resolved == clean {
+				continue
+			}
 		}
 		if _, err := safepath.CheckVolumeTarget(source); err != nil {
 			return fmt.Errorf("refusing in-place restore of this container's volume: %w", err)
@@ -150,19 +154,36 @@ func authorizeVolumeSources(sources, live []string) error {
 	return nil
 }
 
-// chunkedVolumeSources lists the mount sources a dedup restore would write.
-func chunkedVolumeSources(m dedup.Manifest, inspect restoreInspect) []string {
+// chunkedVolumeSources lists the mount sources a dedup restore would write,
+// applying the same skips and selection as restoreChunkedVolumes.
+func chunkedVolumeSources(m dedup.Manifest, inspect restoreInspect, selection []string) []string {
+	var allDests []string
+	for k, v := range m.Files {
+		if dest, ok := ContainerVolumeDest(k); ok && !IsSkippedVolumeEntry(v) {
+			allDests = append(allDests, dest)
+		}
+		if dest, ok := ContainerVolumeFileDest(k); ok {
+			allDests = append(allDests, dest)
+		}
+	}
 	var sources []string
 	for _, mnt := range inspect.Mounts {
 		if !backupableMount(mnt.Type) || mnt.Source == "" || mnt.Destination == "" {
 			continue
 		}
-		if v, ok := m.Files[containerVolPrefix+mnt.Destination]; ok && v.Size != volumeSkippedSize && len(v.Chunks) > 0 {
-			sources = append(sources, mnt.Source)
+		if _, wanted := containerVolumeIncludes(selection, mnt.Destination, allDests); !wanted {
 			continue
 		}
-		for k := range m.Files {
-			if dest, ok := ContainerVolumeFileDest(k); ok && dest == mnt.Destination {
+		for k, v := range m.Files {
+			dest, isFile := ContainerVolumeFileDest(k)
+			if !isFile {
+				dest = strings.TrimPrefix(k, containerVolPrefix)
+				if dest == k {
+					continue
+				}
+			}
+			written := v.Size != volumeSkippedSize && (len(v.Chunks) > 0 || (isFile && v.Size == 0))
+			if dest == mnt.Destination && written {
 				sources = append(sources, mnt.Source)
 				break
 			}

@@ -13,7 +13,7 @@ import (
 func TestPluginPathPolicy(t *testing.T) {
 	t.Parallel()
 	h := &PluginHandler{}
-	for _, name := range []string{"../../etc", "a/b", ".."} {
+	for _, name := range []string{"../../etc", "a/b", "..", "."} {
 		if _, err := h.BackupChunked(t.Context(), BackupItem{Name: name, Settings: map[string]any{}}, nil, nil, noopProgress); err == nil || !strings.Contains(err.Error(), "invalid plugin name") {
 			t.Errorf("name %q: err = %v", name, err)
 		}

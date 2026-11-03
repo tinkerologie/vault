@@ -122,7 +122,7 @@ func NormalizeComponent(name string) (string, error) {
 	if strings.ContainsAny(trimmed, `/\`) {
 		return "", fmt.Errorf("name must not contain path separators")
 	}
-	if trimmed != filepath.Base(trimmed) || !filepath.IsLocal(trimmed) {
+	if trimmed == "." || trimmed != filepath.Base(trimmed) || !filepath.IsLocal(trimmed) {
 		return "", fmt.Errorf("name must be a single local path component")
 	}
 	return trimmed, nil

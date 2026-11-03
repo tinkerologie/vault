@@ -756,10 +756,11 @@ func (sm *SnapshotManager) IntegrityCheck() error {
 	return sm.db.IntegrityCheck()
 }
 
-// copySnapshotPrivately validates a snapshot's location and copies it through a
-// pinned handle into a daemon-owned mode-0600 temp file. SQLite only takes a
-// pathname, so restoring from this copy means a snapshot path swapped for a
-// symlink after validation cannot feed the daemon another file.
+// copySnapshotPrivately validates a snapshot's location and copies it, with its
+// -wal sidecar, through a pinned handle into a daemon-owned private directory.
+// SQLite only takes a pathname, so restoring from this copy means a snapshot path
+// swapped for a symlink after validation cannot feed the daemon another file. The
+// WAL comes along because it can hold committed changes after an abrupt stop.
 func copySnapshotPrivately(path string) (string, func(), error) {
 	cleaned, err := safepath.CheckSnapshotLocation(path)
 	if err != nil {
@@ -769,39 +770,60 @@ func copySnapshotPrivately(path string) (string, func(), error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("resolving snapshot directory: %w", err)
 	}
+	name := filepath.Base(cleaned)
+	// Checked again in resolved form: the handle below follows no symlinks, so
+	// this is the location actually read even if the path changed just now.
+	if _, err := safepath.CheckSnapshotLocation(filepath.Join(parent, name)); err != nil {
+		return "", nil, fmt.Errorf("validating snapshot path: %w", err)
+	}
 	root, err := safepath.OpenPinnedDir(parent)
 	if err != nil {
 		return "", nil, fmt.Errorf("opening snapshot directory: %w", err)
 	}
 	defer root.Close()
-	name := filepath.Base(cleaned)
-	if info, err := root.Lstat(name); err != nil {
-		return "", nil, fmt.Errorf("inspecting snapshot: %w", err)
-	} else if !info.Mode().IsRegular() {
-		return "", nil, fmt.Errorf("snapshot %s is not a regular file", cleaned)
-	}
-	src, err := root.Open(name)
-	if err != nil {
-		return "", nil, fmt.Errorf("opening snapshot: %w", err)
-	}
-	defer src.Close()
-	if info, err := src.Stat(); err != nil || !info.Mode().IsRegular() {
-		return "", nil, fmt.Errorf("snapshot %s is not a regular file", cleaned)
-	}
-	tmp, err := os.CreateTemp("", "vault-snapshot-restore-*.db") // mode 0600
+	dir, err := os.MkdirTemp("", "vault-snapshot-restore-*") // mode 0700
 	if err != nil {
 		return "", nil, fmt.Errorf("creating private snapshot copy: %w", err)
 	}
-	remove := func() { _ = os.Remove(tmp.Name()) }
-	_, err = io.Copy(tmp, src)
-	if cerr := tmp.Close(); err == nil {
+	remove := func() { _ = os.RemoveAll(dir) }
+	if err := copyRegularFromRoot(root, name, filepath.Join(dir, "snapshot.db")); err != nil {
+		remove()
+		return "", nil, fmt.Errorf("copying snapshot %s: %w", cleaned, err)
+	}
+	wal := filepath.Join(dir, "snapshot.db-wal")
+	if err := copyRegularFromRoot(root, name+"-wal", wal); err != nil && !errors.Is(err, os.ErrNotExist) {
+		remove()
+		return "", nil, fmt.Errorf("copying snapshot WAL %s-wal: %w", cleaned, err)
+	}
+	return filepath.Join(dir, "snapshot.db"), remove, nil
+}
+
+// copyRegularFromRoot copies the regular file name from root to dst, mode 0600.
+func copyRegularFromRoot(root *os.Root, name, dst string) error {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("not a regular file")
+	}
+	src, err := root.Open(name)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	if opened, err := src.Stat(); err != nil || !opened.Mode().IsRegular() {
+		return errors.New("not a regular file")
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) // #nosec G304 -- dst is inside a directory this process just created
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, src)
+	if cerr := out.Close(); err == nil {
 		err = cerr
 	}
-	if err != nil {
-		remove()
-		return "", nil, fmt.Errorf("copying snapshot: %w", err)
-	}
-	return tmp.Name(), remove, nil
+	return err
 }
 
 // RestoreFromPath restores the database from the specified source path.

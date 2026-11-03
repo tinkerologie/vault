@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/tinkerologie/vault/internal/fsstat"
+	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/unraid"
 )
 
@@ -289,6 +290,10 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 // directory. The parent of a staging directory can be a user share or a backup
 // destination, so a symlink at this name is treated as hostile.
 func ensureStageDir(stageBase string) error {
+	// A symlinked parent would otherwise carry staging into a system tree.
+	if _, err := safepath.CheckFolderLocation(stageBase); err != nil {
+		return fmt.Errorf("refusing to stage at %s: %w", stageBase, err)
+	}
 	if err := os.Mkdir(stageBase, 0o750); err != nil && !errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("creating %s: %w", stageBase, err)
 	}

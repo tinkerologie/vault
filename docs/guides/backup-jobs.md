@@ -390,4 +390,5 @@ only write to these locations:
 | Folder in place           | The job's own path, which can be anywhere except protected system trees such as `/etc`, `/usr` and `/var/lib`                                    |
 
 If a restore is refused, pick a custom destination under `/mnt` and move the data
-afterwards. A symlink that leads outside these locations is refused too.
+afterwards. A VM always needs a location under `/mnt` or a temp directory. A
+symlink that leads outside these locations is refused too.

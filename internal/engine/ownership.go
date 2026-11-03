@@ -243,6 +243,13 @@ func mkdirRestored(path string, mode os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("resolving %s: %w", path, err)
 	}
+	allowed, err := restorePathWithinAllowedRoots(resolved)
+	if err != nil {
+		return fmt.Errorf("checking %s: %w", path, err)
+	}
+	if !allowed {
+		return fmt.Errorf("refusing to create %s: it resolves outside the approved restore roots", path)
+	}
 	existing, rest := resolved, ""
 	for {
 		if _, err := os.Lstat(existing); err == nil {

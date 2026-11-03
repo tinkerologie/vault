@@ -99,3 +99,23 @@ func TestRecoveryRemapRejectsSystemFolderSource(t *testing.T) {
 		t.Fatalf("legitimate remap refused: %+v", resp)
 	}
 }
+
+// A staging override must not reach a system tree through a planted symlink.
+func TestSetStagingOverrideRejectsSymlinkEscape(t *testing.T) {
+	h := NewSettingsHandler(newTestDB(t), nil)
+	dir, err := os.MkdirTemp("/tmp", "vault-stage-*")
+	if err != nil {
+		t.Skipf("no /tmp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink("/etc", link); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"override": link})
+	w := httptest.NewRecorder()
+	h.SetStagingOverride(w, httptest.NewRequest(http.MethodPut, "/x", strings.NewReader(string(body))))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+}

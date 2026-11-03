@@ -572,6 +572,10 @@ func (h *SettingsHandler) SetStagingOverride(w http.ResponseWriter, r *http.Requ
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if !safepath.ResolvesUnderRoots(normalizedPath, configurablePathRoots) {
+			respondError(w, http.StatusBadRequest, "path must not lead outside approved roots through a symlink")
+			return
+		}
 		if fi, err := os.Stat(normalizedPath); err != nil || !fi.IsDir() {
 			respondError(w, http.StatusBadRequest, "path does not exist or is not a directory")
 			return

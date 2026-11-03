@@ -355,7 +355,8 @@ func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	src, _ := item.Settings["path"].(string)
 	if src == "" {
 		src = pluginPath(safeName)
-	} else if _, err := safepath.CheckFolderLocation(src); err != nil {
+	}
+	if _, err := safepath.CheckFolderLocation(src); err != nil {
 		return dedup.ID{}, fmt.Errorf("plugin: %w", err)
 	}
 	// Forward the incremental cut-off and exclusions into the folder proxy.

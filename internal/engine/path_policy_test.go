@@ -59,10 +59,14 @@ func TestAuthorizeVolumeSources(t *testing.T) {
 		if err := authorizeVolumeSources([]string{hostile}, nil); err == nil {
 			t.Errorf("%s authorized from backup metadata alone", hostile)
 		}
-		// A bind the container on this host already has is locally trusted.
-		if err := authorizeVolumeSources([]string{hostile}, []string{hostile, "/mnt/x"}); err != nil {
-			t.Errorf("%s refused though the live container has it: %v", hostile, err)
-		}
+	}
+	// A bind the container on this host already has is locally trusted.
+	const liveBind = "/opt/vault-live-bind"
+	if err := authorizeVolumeSources([]string{liveBind}, nil); err == nil {
+		t.Errorf("%s authorized from backup metadata alone", liveBind)
+	}
+	if err := authorizeVolumeSources([]string{liveBind}, []string{liveBind, "/mnt/x"}); err != nil {
+		t.Errorf("%s refused though the live container has it: %v", liveBind, err)
 	}
 }
 
@@ -134,9 +138,69 @@ func TestChunkedVolumeSources(t *testing.T) {
 		{"Type":"tmpfs","Source":"/x","Destination":"/config"}
 	]}`
 	inspect = inspectFromJSON(t, data)
-	got := chunkedVolumeSources(m, inspect)
+	got := chunkedVolumeSources(m, inspect, nil)
 	if len(got) != 1 || got[0] != "/mnt/user/appdata/a" {
 		t.Fatalf("sources = %v; skipped and absent mounts must not block a restore", got)
+	}
+}
+
+func TestChunkedVolumeSourcesHonourSelection(t *testing.T) {
+	t.Parallel()
+	m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+		containerVolPrefix + "/config": {Chunks: []dedup.ID{{1}}},
+		containerVolPrefix + "/opt":    {Chunks: []dedup.ID{{2}}},
+	}}
+	inspect := inspectFromJSON(t, `{"Mounts":[
+		{"Type":"bind","Source":"/mnt/user/appdata/a","Destination":"/config"},
+		{"Type":"bind","Source":"/opt/app","Destination":"/opt"}
+	]}`)
+	got := chunkedVolumeSources(m, inspect, []string{"/config/settings.yml"})
+	if len(got) != 1 || got[0] != "/mnt/user/appdata/a" {
+		t.Fatalf("sources = %v; an unselected volume must not block the restore", got)
+	}
+}
+
+// A symlink planted at a live bind's path does not inherit the live exception.
+func TestAuthorizeVolumeSourcesLiveSymlink(t *testing.T) {
+	t.Parallel()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink("/etc", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := authorizeVolumeSources([]string{link}, []string{link}); err == nil {
+		t.Fatal("symlink to /etc authorized through the live exception")
+	}
+}
+
+// A manifest that omits a mount must not let its source-hash archive through.
+func TestContainerRestoreRefusesMountOmittedFromManifest(t *testing.T) {
+	fx := newRestoreFixture458(t, true)
+	path := filepath.Join(fx.sourceDir, "config.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, bytes.ReplaceAll(data, []byte(fx.volDir), []byte("/etc/vault-hostile-target")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fx.sourceDir, "volumes.json"), []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(fx.sourceDir, volumeArchiveBase("/etc/vault-hostile-target"))
+	if err := os.WriteFile(archive, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := newRestoreDaemon458()
+	f.containerInspect = func(context.Context, string) (client.ContainerInspectResult, error) {
+		return client.ContainerInspectResult{}, fmt.Errorf("no such container")
+	}
+	err = (&ContainerHandler{cli: f}).Restore(t.Context(), BackupItem{Name: "app", Settings: map[string]any{}}, fx.sourceDir, noopProgress)
+	if err == nil || !strings.Contains(err.Error(), "refusing in-place restore") {
+		t.Fatalf("err = %v, want an in-place refusal", err)
 	}
 }
 

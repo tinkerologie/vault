@@ -124,6 +124,23 @@ func CheckSnapshotLocation(p string) (string, error) {
 	return cleaned, nil
 }
 
+// ResolvesUnderRoots reports whether p's symlink-resolved form is one of roots
+// or lies beneath one. Failure to resolve counts as outside.
+func ResolvesUnderRoots(p string, roots []string) bool {
+	resolved, err := resolveExistingPrefix(filepath.Clean(p))
+	if err != nil {
+		return false
+	}
+	resolved = canonicalAlias(resolved)
+	for _, root := range append(slices.Clone(roots), tempRoots()...) {
+		root = canonicalAlias(filepath.Clean(root))
+		if resolved == root || isStrictDescendantPath(root, resolved) {
+			return true
+		}
+	}
+	return false
+}
+
 // checkPolicy applies allowed to p as written and to its resolved form, and
 // returns p cleaned.
 func checkPolicy(p, what, hint string, allowed func(string) bool) (string, error) {

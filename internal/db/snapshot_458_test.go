@@ -361,3 +361,31 @@ func TestCopySnapshotPrivately(t *testing.T) {
 		}
 	}
 }
+
+// Committed changes still in the -wal sidecar must survive a restore.
+func TestRestoreFromPathKeepsWALChanges(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "source.db")
+	source, err := Open(srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = source.Close() })
+	if err := source.SetSetting("wal_marker", "committed"); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(srcPath + "-wal"); err != nil || info.Size() == 0 {
+		t.Skipf("no WAL content to test with: %v", err)
+	}
+	target, err := Open(filepath.Join(dir, "target.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = target.Close() })
+	if err := NewSnapshotManager(target, srcPath, srcPath).RestoreFromPath(srcPath); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := target.GetSetting("wal_marker", ""); got != "committed" {
+		t.Fatalf("wal_marker = %q; the WAL was dropped", got)
+	}
+}

@@ -202,3 +202,37 @@ func TestOpenPinnedDir(t *testing.T) {
 		t.Error("relative path accepted")
 	}
 }
+
+func TestNormalizeComponentRejectsDot(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{".", " . "} {
+		if _, err := NormalizeComponent(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestResolvesUnderRoots(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink("/etc", link); err != nil {
+		t.Fatal(err)
+	}
+	roots := []string{"/mnt", "/boot"}
+	if ResolvesUnderRoots(filepath.Join(link, "x"), roots) {
+		t.Error("symlink to /etc accepted")
+	}
+	for _, ok := range []string{"/mnt", "/mnt/user/x", "/boot/config", filepath.Join(dir, "new")} {
+		if !ResolvesUnderRoots(ok, roots) {
+			t.Errorf("%q refused", ok)
+		}
+	}
+	loop := filepath.Join(dir, "loop")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Fatal(err)
+	}
+	if ResolvesUnderRoots(filepath.Join(loop, "x"), roots) {
+		t.Error("unresolvable path accepted")
+	}
+}

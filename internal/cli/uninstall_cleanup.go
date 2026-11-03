@@ -392,12 +392,17 @@ func removeSnapshotArtifacts(path string) error {
 		}
 		return err
 	}
+	name := filepath.Base(cleaned)
+	// Checked again in resolved form: the handle below follows no symlinks.
+	if _, err := safepath.CheckSnapshotLocation(filepath.Join(dir, name)); err != nil {
+		log.Printf("cleanup-uninstall: keeping %s: %v", path, err)
+		return nil
+	}
 	root, err := safepath.OpenPinnedDir(dir)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	name := filepath.Base(cleaned)
 	f, err := root.Open(name)
 	switch {
 	case errors.Is(err, os.ErrNotExist):

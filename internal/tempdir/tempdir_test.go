@@ -737,3 +737,14 @@ func TestCreateDirCascadeSkipsSymlinkedStage(t *testing.T) {
 		t.Fatalf("staged at %s", dir)
 	}
 }
+
+// A persisted override whose parent is a symlink into a system tree is unusable.
+func TestEnsureStageDirRefusesSymlinkedParent(t *testing.T) {
+	link := filepath.Join(t.TempDir(), "override")
+	if err := os.Symlink("/etc", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureStageDir(filepath.Join(link, StageDirName)); err == nil {
+		t.Fatal("stage directory through a symlink to /etc accepted")
+	}
+}

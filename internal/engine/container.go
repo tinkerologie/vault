@@ -1770,28 +1770,6 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	if err != nil {
 		return fmt.Errorf("volumes manifest for %s: %w", item.Name, err)
 	}
-	if restoreDest == "" {
-		var sources []string
-		for i, mount := range inspect.Mounts {
-			if !backupableMount(mount.Type) {
-				continue
-			}
-			entry, found := findVolumeManifestEntry(savedManifest, mount.Source, i)
-			legacyIndex := -1
-			if !manifestPresent {
-				legacyIndex = i
-			}
-			if !manifestPresent || found {
-				if _, archiveErr := resolveVolumeArchive(sourceDir, entry.Archive, mount.Source, legacyIndex); archiveErr == nil {
-					sources = append(sources, mount.Source)
-				}
-			}
-		}
-		if err := authorizeVolumeSources(sources, h.liveMountSources(ctx, item.Name)); err != nil {
-			return err
-		}
-	}
-
 	// The restore file picker's selection arrives as container-internal
 	// absolute paths. Previously it was ignored here entirely and every volume
 	// was extracted whole, whatever the user had picked (issue #275).
@@ -1802,6 +1780,31 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	for _, mount := range inspect.Mounts {
 		if backupableMount(mount.Type) && mount.Destination != "" {
 			allDests = append(allDests, mount.Destination)
+		}
+	}
+
+	// Authorize every volume this restore will write before writing any. It
+	// resolves archives the same way as the loop below, so a mount the manifest
+	// omits cannot slip past on a source-hash archive.
+	var liveSources []string
+	if restoreDest == "" {
+		var sources []string
+		for i, mount := range inspect.Mounts {
+			if !backupableMount(mount.Type) {
+				continue
+			}
+			if _, wanted := containerVolumeIncludes(selection, mount.Destination, allDests); !wanted {
+				continue
+			}
+			entry, found := findVolumeManifestEntry(savedManifest, mount.Source, i)
+			legacyIndex := legacyVolumeIndex(entry, found, manifestPresent, i)
+			if _, archiveErr := resolveVolumeArchive(sourceDir, entry.Archive, mount.Source, legacyIndex); archiveErr == nil {
+				sources = append(sources, mount.Source)
+			}
+		}
+		liveSources = h.liveMountSources(ctx, item.Name)
+		if err := authorizeVolumeSources(sources, liveSources); err != nil {
+			return err
 		}
 	}
 
@@ -1838,6 +1841,12 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 				log.Printf("engine: restore: skipping volume %s — no archive found: %v", mount.Source, err)
 			}
 			continue // skip if archive doesn't exist
+		}
+
+		if restoreDest == "" {
+			if err := authorizeVolumeSources([]string{mount.Source}, liveSources); err != nil {
+				return err
+			}
 		}
 
 		// For named volumes the recreated container's bind is rewritten to
@@ -2901,7 +2910,7 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 			return err
 		}
 		restoreDest = normalized
-	} else if err := authorizeVolumeSources(chunkedVolumeSources(m, inspect), h.liveMountSources(ctx, item.Name)); err != nil {
+	} else if err := authorizeVolumeSources(chunkedVolumeSources(m, inspect, extractRestoreFilePaths(item.Settings)), h.liveMountSources(ctx, item.Name)); err != nil {
 		return err
 	}
 
