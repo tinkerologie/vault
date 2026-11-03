@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 )
 
@@ -29,6 +31,10 @@ import (
 // of the real Unraid path; production never reassigns it. Mirrors
 // dockerTemplatesDir in container.go.
 var unraidUpdateStatusPath = "/var/lib/docker/unraid-update-status.json"
+
+// restoredStatusInspectTimeout bounds the Docker lookups that record a
+// restored container's update status.
+var restoredStatusInspectTimeout = 30 * time.Second
 
 // unraidUpdateStatusMu serialises Vault's read-modify-write of the
 // update-status file.
@@ -157,20 +163,40 @@ func forgetUnraidLocalDigest(imageTag string) {
 // from the container itself, by the ID ContainerCreate returned, not from the
 // tag, which another pull can move after the container is created, nor by
 // name, which a replacement container could take. So the badge never
-// describes an image the restored container is not running (#599). When no
-// digest for the image's repository is known, the recorded one is cleared so
+// describes an image the restored container is not running (#599). When the
+// image's repository digest is not known, the recorded one is cleared so
 // Unraid inspects the image itself.
+//
+// If Docker reports the container gone by the time the status is written,
+// something replaced it, and the entry now describes that container instead:
+// it is left alone rather than cleared (#611). Any other failure says nothing
+// about a replacement, so the digest is cleared as when it is unknown, and
+// Unraid reads it from the image on its next check. The inspect runs under a
+// bounded context that ignores the restore's cancellation, so a restore
+// cancelled at the end still records its status.
 func seedRestoredImageStatus(ctx context.Context, cli dockerClient, image, containerID string) {
-	if image == "" {
+	if image == "" || cli == nil || containerID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoredStatusInspectTimeout)
+	defer cancel()
+	c, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	switch {
+	case cerrdefs.IsNotFound(err):
+		log.Printf("engine: update-status: left %s as it is: the restored container %s was replaced", image, containerID)
+		return
+	case err != nil:
+		log.Printf("engine: update-status: clearing %s: cannot inspect the restored container %s: %v", image, containerID, err)
+		forgetUnraidLocalDigest(image)
+		return
+	case c.Container.Image == "":
+		log.Printf("engine: update-status: clearing %s: the restored container %s reports no image", image, containerID)
+		forgetUnraidLocalDigest(image)
 		return
 	}
 	var ref string
-	if cli != nil && containerID != "" {
-		if c, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{}); err == nil && c.Container.Image != "" {
-			if res, err := cli.ImageInspect(ctx, c.Container.Image); err == nil {
-				ref, _ = backupImageRef(image, res.RepoDigests)
-			}
-		}
+	if res, err := cli.ImageInspect(ctx, c.Container.Image); err == nil {
+		ref, _ = backupImageRef(image, res.RepoDigests)
 	}
 	if sha := extractSHA(ref); sha != "" {
 		seedUnraidUpdateStatus(image, sha)

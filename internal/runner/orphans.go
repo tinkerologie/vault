@@ -107,10 +107,9 @@ func (r *Runner) DeleteStorageOrphans(dest db.StorageDestination, paths []string
 	// files have no restore point row until it finishes, and imports and
 	// replication syncs adopt files the same way. Refuse rather than wait, as
 	// these writers can run for hours and this is a request handler.
-	if r.shouldRefuseStart() {
+	if !r.tryMarkStart() {
 		return 0, []string{"daemon is shutting down"}
 	}
-	r.markStart()
 	defer r.markFinish()
 	if !r.mu.TryLock() {
 		return 0, []string{"a backup or restore is running; try again when it finishes"}
