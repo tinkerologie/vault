@@ -110,7 +110,7 @@ func TestSettingsSetEncryption458_Failures(t *testing.T) {
 		t.Parallel()
 		h, _ := settingsHandler458(t, []byte("short"))
 		w := httptest.NewRecorder()
-		h.SetEncryption(w, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"passphrase":"longenough1"}`)))
+		h.SetEncryption(w, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"passphrase":"orchid-long-enough"}`)))
 		wantStatus458(t, w, http.StatusInternalServerError)
 	})
 
@@ -119,7 +119,7 @@ func TestSettingsSetEncryption458_Failures(t *testing.T) {
 		h, d := settingsHandler458(t, bytes.Repeat([]byte{1}, 32))
 		failSettingKey458(t, d, "encryption_passphrase_sealed")
 		w := httptest.NewRecorder()
-		h.SetEncryption(w, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"passphrase":"longenough1"}`)))
+		h.SetEncryption(w, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"passphrase":"orchid-long-enough"}`)))
 		wantStatus458(t, w, http.StatusInternalServerError)
 	})
 }

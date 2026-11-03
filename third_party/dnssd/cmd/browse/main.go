@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/brutella/dnssd"
+	"github.com/brutella/dnssd/cmd/internal/termsafe" // Vault patch: escape untrusted display data
 	"github.com/brutella/dnssd/log"
 )
 
@@ -37,11 +38,11 @@ func main() {
 	fmt.Printf("Timestamp	A/R	if Domain	Service Type	Service Name\n")
 
 	addFn := func(e dnssd.BrowseEntry) {
-		fmt.Printf("%s	Add	%s	%s	%s	%s (%s)\n", time.Now().Format(timeFormat), e.IfaceName, e.Domain, e.Type, e.Name, e.IPs)
+		fmt.Printf("%s	Add	%s	%s	%s	%s (%s)\n", time.Now().Format(timeFormat), e.IfaceName, termsafe.String(e.Domain), termsafe.String(e.Type), termsafe.String(e.Name), e.IPs) // Vault patch
 	}
 
 	rmvFn := func(e dnssd.BrowseEntry) {
-		fmt.Printf("%s	Rmv	%s	%s	%s	%s\n", time.Now().Format(timeFormat), e.IfaceName, e.Domain, e.Type, e.Name)
+		fmt.Printf("%s	Rmv	%s	%s	%s	%s\n", time.Now().Format(timeFormat), e.IfaceName, termsafe.String(e.Domain), termsafe.String(e.Type), termsafe.String(e.Name)) // Vault patch
 	}
 
 	if err := dnssd.LookupType(ctx, service, addFn, rmvFn); err != nil {

@@ -2,9 +2,11 @@ package dedup
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -128,8 +130,26 @@ func TestRewrapStorageFailures(t *testing.T) {
 		_, fa, cleanup := newFaultyRepo(t)
 		defer cleanup()
 		fa.corruptAfterWrite = true
-		if err := RewrapMaster(fa, newKey, "pw", now); err == nil || !strings.Contains(err.Error(), "did not verify") {
+		err := RewrapMaster(fa, newKey, "pw", now)
+		if err == nil || !strings.Contains(err.Error(), "did not verify") {
 			t.Fatalf("err = %v", err)
+		}
+		// A failed rewrap keeps the rollback copy, which opens with the old key.
+		backups, err := HeaderBackups(fa)
+		if err != nil || len(backups) != 1 {
+			t.Fatalf("rollback copies = %v, %v", backups, err)
+		}
+		rc, err := fa.Read(backups[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rc.Close()
+		var cfg repoConfig
+		if err := json.NewDecoder(rc).Decode(&cfg); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := UnsealMaster(oldKey, cfg.SealedMaster); err != nil {
+			t.Fatalf("rollback copy is not the original: %v", err)
 		}
 	})
 	t.Run("no header backups when the repository root is missing", func(t *testing.T) {
@@ -151,4 +171,108 @@ func (e *exactWriteFail) Write(p string, r io.Reader) error {
 		return errInjected
 	}
 	return e.faultyAdapter.Write(p, r)
+}
+
+// blockingHeaderWrite parks the first repo.json write, so a test can look at
+// what else runs during a rewrap.
+type blockingHeaderWrite struct {
+	storage.Adapter
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingHeaderWrite) Write(p string, r io.Reader) error {
+	if p == repoConfigPath {
+		b.once.Do(func() {
+			close(b.entered)
+			<-b.release
+		})
+	}
+	return b.Adapter.Write(p, r)
+}
+
+// A sweep must not delete the rollback copy of a rewrap still in progress.
+func TestRewrapKeepsRollbackCopyAgainstConcurrentSweep(t *testing.T) {
+	r, fa, cleanup := newFaultyRepo(t)
+	defer cleanup()
+	blocker := &blockingHeaderWrite{Adapter: fa, entered: make(chan struct{}), release: make(chan struct{})}
+	first := make(chan error, 1)
+	go func() {
+		first <- RewrapMaster(blocker, bytes.Repeat([]byte{0x22}, SecretSize), "pw", time.Now())
+	}()
+	<-blocker.entered
+
+	sweep := make(chan error, 1)
+	r.adapter = fa
+	go func() { sweep <- r.RemoveRetiredHeaders() }()
+	select {
+	case err := <-sweep:
+		t.Fatalf("sweep ran during a rewrap: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	// A stalled rewrap holds up only its own repository.
+	other, _, cleanupOther := newTestRepo(t)
+	defer cleanupOther()
+	otherDone := make(chan error, 1)
+	go func() { otherDone <- other.RemoveRetiredHeaders() }()
+	select {
+	case err := <-otherDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("another repository waited for this rewrap")
+	}
+	if backups, err := HeaderBackups(fa); err != nil || len(backups) != 1 {
+		t.Fatalf("rollback copies during rewrap = %v, %v", backups, err)
+	}
+	close(blocker.release)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-sweep; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// replacedRepoAdapter changes repo.json's UUID after the first read, as if the
+// repository were removed and recreated while a rewrap waited for its lock.
+type replacedRepoAdapter struct {
+	storage.Adapter
+	reads int
+}
+
+func (a *replacedRepoAdapter) Read(p string) (io.ReadCloser, error) {
+	if p != repoConfigPath {
+		return a.Adapter.Read(p)
+	}
+	a.reads++
+	rc, err := a.Adapter.Read(p)
+	if err != nil || a.reads == 1 {
+		return rc, err
+	}
+	defer rc.Close()
+	var cfg repoConfig
+	if err := json.NewDecoder(rc).Decode(&cfg); err != nil {
+		return nil, err
+	}
+	cfg.UUID = "replaced"
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewReader(body)), nil
+}
+
+func TestRewrapRefusesReplacedRepository(t *testing.T) {
+	_, fa, cleanup := newFaultyRepo(t)
+	defer cleanup()
+	err := RewrapMaster(&replacedRepoAdapter{Adapter: fa}, bytes.Repeat([]byte{0x22}, SecretSize), "pw", time.Now())
+	if err == nil || !strings.Contains(err.Error(), "replaced") {
+		t.Fatalf("err = %v", err)
+	}
+	if backups, err := HeaderBackups(fa); err != nil || len(backups) != 0 {
+		t.Fatalf("wrote despite the replaced repository: %v, %v", backups, err)
+	}
 }

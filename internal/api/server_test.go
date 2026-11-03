@@ -71,7 +71,7 @@ func TestGetEncryptionPassphrase(t *testing.T) {
 		srv := NewServer(database, ServerConfig{Addr: ":0", ServerKey: serverKey})
 
 		// Set a passphrase via the API.
-		body, _ := json.Marshal(map[string]string{"passphrase": "my-test-passphrase"})
+		body, _ := json.Marshal(map[string]string{"passphrase": "violet-tractor-spoons"})
 		setReq := httptest.NewRequest("POST", "/api/v1/settings/encryption", bytes.NewReader(body))
 		setReq.Header.Set("Content-Type", "application/json")
 		setW := httptest.NewRecorder()
@@ -92,8 +92,8 @@ func TestGetEncryptionPassphrase(t *testing.T) {
 
 		var resp map[string]string
 		json.NewDecoder(getW.Body).Decode(&resp)
-		if resp["passphrase"] != "my-test-passphrase" {
-			t.Errorf("passphrase = %q, want %q", resp["passphrase"], "my-test-passphrase")
+		if resp["passphrase"] != "violet-tractor-spoons" {
+			t.Errorf("passphrase = %q, want %q", resp["passphrase"], "violet-tractor-spoons")
 		}
 	})
 }

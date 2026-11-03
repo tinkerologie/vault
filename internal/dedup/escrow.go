@@ -11,8 +11,8 @@ package dedup
 // It lives in its own file, not in repo.json. Routine backups create and
 // refresh it, and they must never rewrite the one file whose loss would make
 // the destination unreadable — storage adapters cannot rename atomically.
-// repo.json is rewritten only by RewrapMaster, an explicit recovery step, and
-// only after a verbatim backup copy has been written.
+// repo.json is rewritten only by RewrapMaster, an explicit recovery step. Its
+// rollback copy exists only until the new header has been verified.
 
 import (
 	"bytes"
@@ -21,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"sync"
 	"time"
 
 	"github.com/tinkerologie/vault/internal/crypto"
@@ -147,16 +149,41 @@ func OpenRepoFromEscrow(d *db.DB, a storage.Adapter, storageID int64, passphrase
 // original vault.key is restored or RewrapMaster runs.
 func (r *Repo) UnlockedByPassphrase() bool { return r.viaEscrow }
 
+// headerLocks serializes rewrite and cleanup of one repository's repo.json
+// copies, so one rewrap's sweep cannot delete the rollback copy of another still
+// in progress. The lock is per repository UUID because it is held across storage
+// calls, and an unresponsive server must not stall other destinations' backups.
+var headerLocks sync.Map // repo UUID -> *sync.Mutex
+
+func lockHeaders(repoUUID string) (unlock func()) {
+	v, _ := headerLocks.LoadOrStore(repoUUID, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
 // RewrapMaster re-seals the repository's master key with serverKey after
 // recovering it through the passphrase escrow — the step that makes a
 // restored server, which has a new vault.key, able to open the repository
 // on its own again. The current header is first copied verbatim to
 // _vault/repo.json.<time>.bak; the new header is read back and must open
-// with serverKey. Data, packs and the escrow are untouched.
+// with serverKey. Only then are the header copies removed, because each still
+// opens with the retired key (a failed removal is retried by
+// RemoveRetiredHeaders). On failure the copy stays for rollback. Data, packs
+// and the escrow are untouched.
 func RewrapMaster(a storage.Adapter, serverKey []byte, passphrase string, now time.Time) error {
+	current, _, err := readRepoConfig(a)
+	if err != nil {
+		return err
+	}
+	defer lockHeaders(current.UUID)()
+	// Read again under the lock: a rewrap that just finished changed the header.
 	cfg, original, err := readRepoConfig(a)
 	if err != nil {
 		return err
+	}
+	if cfg.UUID != current.UUID {
+		return errors.New("dedup: repository was replaced during the rewrap; run it again")
 	}
 	master, err := readEscrow(a, cfg.UUID, passphrase)
 	if err != nil {
@@ -188,5 +215,33 @@ func RewrapMaster(a storage.Adapter, serverKey []byte, passphrase string, now ti
 	if err != nil {
 		return fmt.Errorf("dedup: rewrapped repo.json did not verify (original kept at %s): %w", backup, err)
 	}
+	if err := removeHeaderBackups(a); err != nil {
+		log.Printf("dedup: could not remove the retired repo.json copies, will retry after the next backup: %v", err)
+	}
 	return nil
+}
+
+// RemoveRetiredHeaders deletes header copies left by an earlier rewrap, which
+// still open with the key that rewrap retired. It does nothing for a repository
+// unlocked through its escrow: there, the current header may still need them.
+func (r *Repo) RemoveRetiredHeaders() error {
+	if r.viaEscrow {
+		return nil
+	}
+	defer lockHeaders(r.uuid)()
+	return removeHeaderBackups(r.adapter)
+}
+
+func removeHeaderBackups(a storage.Adapter) error {
+	backups, err := HeaderBackups(a)
+	if err != nil {
+		return fmt.Errorf("dedup: list header copies: %w", err)
+	}
+	var errs []error
+	for _, b := range backups {
+		if err := a.Delete(b); err != nil && !storage.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("dedup: remove header copy %s: %w", b, err))
+		}
+	}
+	return errors.Join(errs...)
 }

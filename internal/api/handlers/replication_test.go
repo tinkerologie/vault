@@ -657,3 +657,25 @@ func TestReplicationHandlerTestURL_WithAPIKey_Success(t *testing.T) {
 		t.Fatalf("TestURL with api_key: got %d, want 200; body: %s", w.Code, w.Body.String())
 	}
 }
+
+// Even with loopback opted in for these tests, metadata stays unreachable from
+// both probes, and the error names the policy rather than a response (#567).
+func TestReplicationProbes_RefuseMetadataAddress(t *testing.T) {
+	t.Parallel()
+	h, database := setupReplicationTest(t)
+	w := httptest.NewRecorder()
+	h.TestURL(w, httptest.NewRequest(http.MethodPost, "/replication/test-url",
+		strings.NewReader(`{"url":"http://169.254.169.254"}`)))
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "not allowed") {
+		t.Fatalf("TestURL: %d %s", w.Code, w.Body.String())
+	}
+	id, err := database.CreateReplicationSource(db.ReplicationSource{Name: "meta", URL: "http://169.254.169.254", Type: "vault", Config: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	h.TestConnection(w, reqWithID(http.MethodPost, "/x", idStr(id), nil))
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "not allowed") {
+		t.Fatalf("TestConnection: %d %s", w.Code, w.Body.String())
+	}
+}

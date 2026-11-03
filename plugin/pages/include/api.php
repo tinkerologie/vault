@@ -45,15 +45,67 @@ function vault_embed_runtime_config($query, $cfg = '/boot/config/plugins/dynamix
     ];
 }
 
+// The port and bind address choose where the proxy sends requests, so a value
+// that apply.sh would refuse falls back to the default here too.
 function vault_get_port() {
+    global $VAULT_DEFAULTS;
     $cfg = vault_load_config();
-    return trim((string) ($cfg['PORT'] ?? '24085'), " \t\n\r\0\x0B\"'");
+    $port = trim((string) ($cfg['PORT'] ?? ''), " \t\n\r\0\x0B\"'");
+    if (preg_match('/^[0-9]{1,5}$/', $port) !== 1 || (int) $port < 1024 || (int) $port > 65535) {
+        return $VAULT_DEFAULTS['PORT'];
+    }
+    return $port;
 }
 
 function vault_get_bind_address() {
     $cfg = vault_load_config();
-    $bind = trim((string) ($cfg['BIND_ADDRESS'] ?? '127.0.0.1'), " \t\n\r\0\x0B\"'");
-    return $bind === '' ? '127.0.0.1' : $bind;
+    $bind = trim((string) ($cfg['BIND_ADDRESS'] ?? ''), " \t\n\r\0\x0B\"'");
+    if ($bind === '' || !vault_is_allowed_bind_address($bind)) {
+        return '127.0.0.1';
+    }
+    return $bind;
+}
+
+// A bind address must be loopback, a wildcard, or assigned to this host, so the
+// proxy can only ever reach the local daemon, including on a LAN-IP bind.
+function vault_is_allowed_bind_address($bind, $localAddresses = null) {
+    if (vault_is_loopback_bind_address($bind) || vault_is_wildcard_bind_address($bind)) {
+        return true;
+    }
+    $packed = @inet_pton(trim($bind, '[]'));
+    if ($packed === false) {
+        return false;
+    }
+    foreach ($localAddresses ?? vault_interface_addresses() as $address) {
+        if (@inet_pton($address) === $packed) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Every address on this host, including interfaces the bind picker hides, as
+// apply.sh accepts those too. Empty if they cannot be read, which fails closed.
+function vault_interface_addresses() {
+    static $addresses = null;
+    if ($addresses !== null) {
+        return $addresses;
+    }
+    $addresses = [];
+    $interfaces = function_exists('net_get_interfaces') ? @net_get_interfaces() : false;
+    if (is_array($interfaces)) {
+        foreach ($interfaces as $interface) {
+            foreach ($interface['unicast'] ?? [] as $unicast) {
+                if (isset($unicast['address'])) {
+                    $addresses[] = $unicast['address'];
+                }
+            }
+        }
+    }
+    if ($addresses === []) {
+        $addresses = array_column(vault_get_local_ips(), 'ip');
+    }
+    return $addresses;
 }
 
 function vault_ip_binary() {

@@ -51,6 +51,21 @@ publishes its service on `lo0` only, so on Linux it timed out with
 happens with unmodified upstream v1.2.14 too. The test now restores the
 original value when it finishes.
 
+## Patch 3: escape mDNS data in the command-line tools
+
+- **Vault issue:** tinkerologie/vault#568
+- **Files:** new package `cmd/internal/termsafe`; `cmd/dnssd/dnssd.go`,
+  `cmd/resolve/main.go`, `cmd/browse/main.go` and `cmd/filter-ifaces/main.go`,
+  each changed line marked `Vault patch`
+- **Test:** `cmd/internal/termsafe/termsafe_test.go`
+
+Any host on the local link chooses the service names, hosts and TXT values
+these tools print, so a crafted record could send escape sequences to the
+terminal of whoever runs them. They now show control, format and invalid bytes
+as visible escapes. These tools are not part of the Vault binary. `cmd/debug`
+is unchanged: it prints through `miekg/dns`, whose presentation format already
+escapes non-printable bytes.
+
 ## Go and dependency baseline (not a code patch)
 
 - **Vault issues:** tinkerologie/vault#536, #540, #541, #546

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/brutella/dnssd"
+	"github.com/brutella/dnssd/cmd/internal/termsafe" // Vault patch: escape untrusted display data
 )
 
 func main() {
@@ -40,9 +41,9 @@ func queryDNSSD(ctx context.Context) {
 	addFn := func(e dnssd.BrowseEntry) {
 		slog.Printf(
 			"%s can be reached at %s %v\n",
-			e.ServiceInstanceName(),
+			termsafe.String(e.ServiceInstanceName()), // Vault patch
 			e.IPs,
-			e.Text)
+			termsafe.String(fmt.Sprint(e.Text))) // Vault patch
 	}
 
 	if err := dnssd.LookupType(ctx, service, addFn, func(dnssd.BrowseEntry) {}); err != nil {

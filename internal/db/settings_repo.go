@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"log"
 	"strconv"
 )
 
@@ -26,6 +28,34 @@ func (d *DB) SetSetting(key, value string) error {
 		"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 		key, value,
 	)
+	return err
+}
+
+// SFTPHostKeyPinPrefix prefixes the settings keys holding trust-on-first-use
+// SFTP host key fingerprints, one per host:port.
+const SFTPHostKeyPinPrefix = "sftp_host_key_pin:"
+
+// PinSFTPHostKey records fingerprint as the host key for address unless one
+// is already on record, and returns the fingerprint on record. The conditional
+// insert is atomic and a pin is never updated here, so concurrent first
+// connections agree on one pin.
+func (d *DB) PinSFTPHostKey(address, fingerprint string) (string, error) {
+	key := SFTPHostKeyPinPrefix + address
+	res, err := d.Exec("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING", key, fingerprint)
+	if err != nil {
+		return "", err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 1 {
+		log.Printf("SFTP: trusting host key %s for %s on first connection; later connections must present the same key", fingerprint, address) // #nosec G706 -- admin-configured address; fingerprint is base64
+		d.LogActivity("info", "storage", fmt.Sprintf("SFTP host key pinned on first connection: %s is now trusted for %s; a different key will be refused", fingerprint, address), "")
+		return fingerprint, nil
+	}
+	return d.GetSetting(key, "")
+}
+
+// UnpinSFTPHostKey forgets the pin for address.
+func (d *DB) UnpinSFTPHostKey(address string) error {
+	_, err := d.Exec("DELETE FROM settings WHERE key = ?", SFTPHostKeyPinPrefix+address)
 	return err
 }
 
