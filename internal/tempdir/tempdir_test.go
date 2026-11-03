@@ -3,6 +3,7 @@ package tempdir
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -746,5 +747,50 @@ func TestEnsureStageDirRefusesSymlinkedParent(t *testing.T) {
 	}
 	if err := ensureStageDir(filepath.Join(link, StageDirName)); err == nil {
 		t.Fatal("stage directory through a symlink to /etc accepted")
+	}
+}
+
+// Once resolved, the stage location is walked without following links, so a parent
+// swapped for a symlink after the checks cannot redirect the new run directory.
+func TestMkdirPinnedTempRefusesSwappedSymlink(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(dir, "victim")
+	if err := os.Mkdir(victim, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	swapped := filepath.Join(dir, "swapped")
+	if err := os.Symlink(victim, swapped); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{swapped, filepath.Join(swapped, "sub")} {
+		if _, err := mkdirPinnedTemp(target, "backup-*"); err == nil {
+			t.Fatalf("created through symlink at %s", target)
+		}
+	}
+	if entries, _ := os.ReadDir(victim); len(entries) != 0 {
+		t.Fatalf("wrote through the symlink: %v", entries)
+	}
+	name, err := mkdirPinnedTemp(dir, "backup-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(name, "backup-") || strings.Contains(name, "*") {
+		t.Fatalf("name = %q", name)
+	}
+	info, err := os.Stat(filepath.Join(dir, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
+		t.Fatalf("mode = %v", info.Mode())
+	}
+	if _, err := mkdirPinnedTemp(filepath.Join(dir, "missing"), "backup-*"); err == nil {
+		t.Fatal("missing directory accepted")
+	}
+	if _, err := makeStageTemp(filepath.Join(dir, "missing"), "backup-*"); err == nil {
+		t.Fatal("unresolvable stage location accepted")
 	}
 }

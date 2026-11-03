@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tinkerologie/vault/internal/dedup"
@@ -182,6 +183,9 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	// Step 2: Archive the config directory if it exists.
 	progress(item.Name, 40, "archiving config")
 	configDir := pluginPath(pluginName)
+	if _, err := safepath.CheckFolderLocation(configDir); err != nil {
+		return nil, fmt.Errorf("refusing to back up plugin config: %w", err)
+	}
 	if info, err := os.Stat(configDir); err == nil && info.IsDir() {
 		effectiveCompression := MaybeDowngradeCompression(configDir, item.Compression)
 		archivePath := filepath.Join(destDir, "config.tar"+archiveExt(effectiveCompression))
@@ -281,8 +285,7 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	progress(item.Name, 30, "restoring plugin file")
 	plgSrc := filepath.Join(sourceDir, pluginName+".plg")
 	if data, err := os.ReadFile(plgSrc); err == nil { // #nosec G304 — pluginName validated by normalizeRestoreComponent above
-		plgDst := filepath.Join(pluginsDir, pluginName+".plg")
-		if err := os.WriteFile(plgDst, data, 0644); err != nil {
+		if err := writePluginInstaller(pluginName, data); err != nil {
 			return fmt.Errorf("writing plugin file: %w", err)
 		}
 	} else {
@@ -473,9 +476,28 @@ func (h *PluginHandler) restorePluginInstaller(ctx context.Context, item BackupI
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	dst := filepath.Join(pluginsDir, safeName+".plg")
-	if err := os.WriteFile(dst, data, 0644); err != nil { // #nosec G306 — .plg is installed world-readable, matching classic Restore
+	if err := writePluginInstaller(safeName, data); err != nil {
 		return fmt.Errorf("plugin: writing .plg for %q: %w", item.Name, err)
 	}
 	return nil
+}
+
+// writePluginInstaller writes <pluginsDir>/<name>.plg through a handle on the
+// plugins directory, refusing to follow a symlink at that name. name must already
+// be a validated single component.
+func writePluginInstaller(name string, data []byte) error {
+	root, err := os.OpenRoot(pluginsDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	f, err := root.OpenFile(name+".plg", os.O_CREATE|os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, 0o644) // .plg is installed world-readable
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }

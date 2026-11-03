@@ -119,3 +119,22 @@ func TestSetStagingOverrideRejectsSymlinkEscape(t *testing.T) {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestSetAppdataPathRejectsSymlinkEscape(t *testing.T) {
+	h := NewSettingsHandler(newTestDB(t), nil)
+	dir, err := os.MkdirTemp("/tmp", "vault-appdata-*")
+	if err != nil {
+		t.Skipf("no /tmp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink("/etc", link); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"path": link})
+	w := httptest.NewRecorder()
+	h.SetAppdataPath(w, httptest.NewRequest(http.MethodPut, "/x", strings.NewReader(string(body))))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "symlink") {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+}

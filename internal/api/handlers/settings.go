@@ -645,6 +645,10 @@ func (h *SettingsHandler) SetAppdataPath(w http.ResponseWriter, r *http.Request)
 			respondError(w, http.StatusBadRequest, "direct disk paths are not allowed as appdata path")
 			return
 		}
+		if !safepath.ResolvesUnderRoots(normalizedPath, configurablePathRoots) {
+			respondError(w, http.StatusBadRequest, "path must not lead outside approved roots through a symlink")
+			return
+		}
 		if rest := strings.TrimPrefix(normalizedPath, "/mnt/disk"); rest != normalizedPath && rest != "" && rest[0] >= '0' && rest[0] <= '9' {
 			respondError(w, http.StatusBadRequest, "direct disk paths are not allowed as appdata path")
 			return

@@ -106,12 +106,13 @@ func CheckSnapshotLocation(p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Same substring barrier as db.removeValidated, which every snapshot write
-	// already applies, and the form CodeQL's go/path-injection query recognises.
-	if strings.Contains(cleaned, "..") {
-		return "", fmt.Errorf("snapshot path %q must not contain \"..\"", cleaned)
+	// Re-anchored element by element so a name like "backups..2026.db" stays
+	// valid while the path reaching Lstat is provably free of traversal.
+	anchored, err := NormalizeAbsoluteUnderRoots(cleaned, []string{filepath.VolumeName(cleaned) + string(filepath.Separator)})
+	if err != nil {
+		return "", fmt.Errorf("snapshot path %q: %w", cleaned, err)
 	}
-	info, err := os.Lstat(cleaned)
+	info, err := os.Lstat(anchored)
 	if errors.Is(err, fs.ErrNotExist) {
 		return cleaned, nil
 	}
@@ -212,11 +213,13 @@ func OpenPinnedDir(p string) (*os.Root, error) {
 	if !filepath.IsAbs(cleaned) {
 		return nil, fmt.Errorf("pinned directory %q must be absolute", p)
 	}
-	cur, err := os.OpenRoot(string(filepath.Separator))
+	volume := filepath.VolumeName(cleaned)
+	cur, err := os.OpenRoot(volume + string(filepath.Separator))
 	if err != nil {
 		return nil, fmt.Errorf("opening filesystem root: %w", err)
 	}
-	for comp := range strings.SplitSeq(strings.TrimPrefix(cleaned, string(filepath.Separator)), string(filepath.Separator)) {
+	rest := strings.TrimPrefix(cleaned[len(volume):], string(filepath.Separator))
+	for comp := range strings.SplitSeq(rest, string(filepath.Separator)) {
 		if comp == "" {
 			continue
 		}

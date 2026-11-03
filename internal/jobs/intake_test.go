@@ -402,6 +402,7 @@ func TestIntakeRefusesUnsafeItemPaths(t *testing.T) {
 	}
 	for name, item := range map[string]db.JobItem{
 		"plugin traversal": {ItemType: "plugin", ItemName: "../../etc"},
+		"plugin dot":       {ItemType: "plugin", ItemName: "."},
 		"folder symlink":   {ItemType: "folder", ItemName: "f", Settings: string(settings)},
 	} {
 		job := db.Job{Name: "j-" + strings.ReplaceAll(name, " ", "-"), StorageDestID: destID, Schedule: "0 0 * * *", BackupTypeChain: "full", Compression: "none"}

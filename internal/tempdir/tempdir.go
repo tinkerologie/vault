@@ -10,6 +10,7 @@
 package tempdir
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -221,7 +222,7 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 		if info, err := os.Stat(override); err == nil && info.IsDir() {
 			stageBase := filepath.Join(override, StageDirName)
 			if err := ensureStageDir(stageBase); err == nil {
-				dir, err := os.MkdirTemp(stageBase, pattern)
+				dir, err := makeStageTemp(stageBase, pattern)
 				if err == nil {
 					return dir, cleanupFunc(dir, stageBase), nil
 				}
@@ -242,7 +243,7 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 			log.Printf("tempdir: %v", err)
 			return "", nil, false
 		}
-		dir, err := os.MkdirTemp(stageBase, pattern)
+		dir, err := makeStageTemp(stageBase, pattern)
 		if err != nil {
 			return "", nil, false
 		}
@@ -305,6 +306,47 @@ func ensureStageDir(stageBase string) error {
 		return fmt.Errorf("refusing to use %s: it is not a real directory", stageBase)
 	}
 	return nil
+}
+
+// makeStageTemp creates a private run directory inside stageBase. It resolves and
+// re-checks stageBase, then creates through a handle pinned to that real directory,
+// so swapping stageBase or a parent for a symlink after ensureStageDir cannot
+// redirect the creation. The lexical path is returned, as callers and cleanup
+// work relative to the location they configured.
+func makeStageTemp(stageBase, pattern string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(stageBase)
+	if err != nil {
+		return "", fmt.Errorf("resolving %s: %w", stageBase, err)
+	}
+	if _, err := safepath.CheckFolderLocation(resolved); err != nil {
+		return "", fmt.Errorf("refusing to stage at %s: %w", stageBase, err)
+	}
+	name, err := mkdirPinnedTemp(resolved, pattern)
+	if err != nil {
+		return "", fmt.Errorf("creating staging directory in %s: %w", stageBase, err)
+	}
+	return filepath.Join(stageBase, name), nil
+}
+
+// mkdirPinnedTemp creates a mode-0700 directory named from pattern in the already
+// resolved dir, failing if dir or any ancestor is a symlink. It returns the name.
+func mkdirPinnedTemp(resolved, pattern string) (string, error) {
+	root, err := safepath.OpenPinnedDir(resolved)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	for range 100 {
+		name := strings.Replace(pattern, "*", rand.Text(), 1)
+		err := root.Mkdir(name, 0o700)
+		if err == nil {
+			return name, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return "", err
+		}
+	}
+	return "", errors.New("could not find an unused name")
 }
 
 // cleanupFunc returns a function that removes the temp directory and prunes
