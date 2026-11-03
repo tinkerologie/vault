@@ -7,6 +7,12 @@ const HOST_SOURCE = 'vault-embed-host'
 const MAX_LENGTH = 1000000
 
 let visibleTop = 0
+/** @type {number | null} null until the host has said; the frame's height then */
+let visibleHeight = null
+/** @type {Set<() => void>} */
+const areaListeners = new Set()
+/** @type {(() => void) | null} */
+let flushSize = null
 
 /** @param {unknown} value */
 function isLength(value) {
@@ -45,6 +51,7 @@ export function startEmbeddedPresentation(win = window) {
   const app = doc.getElementById('app')
   root.classList.add('vault-embedded')
   visibleTop = 0
+  visibleHeight = null
 
   let lastHeight = -1
   let heard = false
@@ -63,6 +70,7 @@ export function startEmbeddedPresentation(win = window) {
     const viewport = parseViewportMessage(event, win)
     if (!viewport) return
     visibleTop = viewport.top
+    visibleHeight = viewport.height
     root.style.setProperty('--vault-visible-top', `${viewport.top}px`)
     root.style.setProperty('--vault-visible-height', `${viewport.height}px`)
     // The host may have attached after the first report, which it then missed.
@@ -70,16 +78,19 @@ export function startEmbeddedPresentation(win = window) {
       heard = true
       report(true)
     }
+    areaListeners.forEach((fn) => fn())
   }
 
   win.addEventListener('message', onMessage)
   const observer = new win.ResizeObserver(() => report())
   if (app) observer.observe(app)
   report()
+  flushSize = () => report()
 
   return () => {
     win.removeEventListener('message', onMessage)
     observer.disconnect()
+    flushSize = null
   }
 }
 
@@ -90,6 +101,9 @@ export function startEmbeddedPresentation(win = window) {
  * @param {Window} [win]
  */
 export function scrollHostTo(top, win = window) {
+  // Content that just grew may not have been reported yet. The host must size
+  // the frame first, or the page can't scroll as far as asked.
+  flushSize?.()
   postToHost(win, { type: 'scroll', top: Math.max(0, Math.round(top)) })
 }
 
@@ -100,4 +114,24 @@ export function scrollHostTo(top, win = window) {
  */
 export function revealFrameTop(win = window) {
   if (visibleTop > 0) scrollHostTo(0, win)
+}
+
+/**
+ * The part of the frame the user can see, in frame coordinates.
+ * @param {Window} [win]
+ * @returns {{ top: number, height: number }}
+ */
+export function getVisibleArea(win = window) {
+  return { top: visibleTop, height: visibleHeight ?? win.innerHeight }
+}
+
+/**
+ * Calls `fn` whenever the host reports a new visible part: the page-level
+ * equivalent of a scroll event.
+ * @param {() => void} fn
+ * @returns {() => void} unsubscribes
+ */
+export function onVisibleAreaChange(fn) {
+  areaListeners.add(fn)
+  return () => { areaListeners.delete(fn) }
 }
