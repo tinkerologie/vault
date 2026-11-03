@@ -13,6 +13,10 @@
     ontoast = () => {}, // (message, type) — routed to the host page's Toast
   } = $props()
 
+  // Instance-safe ids for the checkbox title/description pairs: the form can be
+  // mounted more than once (Storage modal, Recover wizard).
+  const uid = $props.id()
+
   function defaultForm() {
     return {
       name: '',
@@ -52,6 +56,7 @@
   // svelte-ignore state_referenced_locally
   const init = initial
   let form = $state(initForm(init))
+  let bandwidthLabel = $derived(form.type === 'local' ? 'Disk write speed limit (Mbps)' : 'Bandwidth limit (Mbps)')
   let saving = $state(false)
   // Early feedback for unsafe local roots (#514); the server re-validates.
   let localPathProblem = $derived(form.type === 'local' ? localStoragePathProblem(form.config.path) : '')
@@ -228,10 +233,11 @@
       {/if}
     </div>
     <label class="flex items-start gap-2 text-sm text-text-muted">
-      <input type="checkbox" bind:checked={form.stage_beside_destination} class="accent-vault mt-1" />
+      <input type="checkbox" bind:checked={form.stage_beside_destination} class="accent-vault mt-1"
+        aria-labelledby="{uid}-stage-title" aria-describedby="{uid}-stage-desc" />
       <span class="flex-1">
-        <span class="block font-medium text-text">Stage temporary backups beside this destination</span>
-        <span class="block text-xs text-text-muted mt-0.5">
+        <span id="{uid}-stage-title" class="block font-medium text-text">Stage temporary backups beside this destination</span>
+        <span id="{uid}-stage-desc" class="block text-xs text-text-muted mt-0.5">
           Prefers a hidden <code>.vault-stage</code> folder on the destination disk instead of the cache pool (falling back to the normal staging cascade if unavailable). Useful for large backups that might fill up smaller cache drives during compression.
         </span>
       </span>
@@ -262,12 +268,18 @@
       </div>
     </div>
     <div>
-      <label for="cfg_spath" class="block text-sm font-medium text-text-muted mb-1.5">Remote Path <Tooltip text="Absolute path on the SFTP server where Vault will store backups. The directory must exist and the user must have write permission." /></label>
+      <div class="block text-sm font-medium text-text-muted mb-1.5">
+        <label for="cfg_spath">Remote Path</label>
+        <Tooltip label="Remote Path" text="Absolute path on the SFTP server where Vault will store backups. The directory must exist and the user must have write permission." />
+      </div>
       <input id="cfg_spath" type="text" bind:value={form.config.base_path}
         class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" placeholder="/backups/vault" />
     </div>
     <div>
-      <label for="cfg_shostkey" class="block text-sm font-medium text-text-muted mb-1.5">Host Key Fingerprint <Tooltip text="Optional. Run ssh-keygen -lf on the server's host key and copy the SHA256 value. If left empty, Vault trusts the key seen on the first connection and refuses a different key later. Set this after replacing the server." /></label>
+      <div class="block text-sm font-medium text-text-muted mb-1.5">
+        <label for="cfg_shostkey">Host Key Fingerprint</label>
+        <Tooltip label="Host Key Fingerprint" text="Optional. Run ssh-keygen -lf on the server's host key and copy the SHA256 value. If left empty, Vault trusts the key seen on the first connection and refuses a different key later. Set this after replacing the server." />
+      </div>
       <input id="cfg_shostkey" type="text" autocomplete="off" spellcheck="false" bind:value={form.config.host_key}
         class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" placeholder="SHA256:..." />
     </div>
@@ -279,7 +291,10 @@
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" placeholder="192.168.1.100" />
       </div>
       <div>
-        <label for="cfg_share" class="block text-sm font-medium text-text-muted mb-1.5">Share <Tooltip text="The top-level SMB share name as configured on the server (e.g. Backups). Use the Path field below for a sub-folder within the share." /></label>
+        <div class="block text-sm font-medium text-text-muted mb-1.5">
+          <label for="cfg_share">Share</label>
+          <Tooltip label="Share" text="The top-level SMB share name as configured on the server (e.g. Backups). Use the Path field below for a sub-folder within the share." />
+        </div>
         <input id="cfg_share" type="text" bind:value={form.config.share}
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" placeholder="Backups" />
       </div>
@@ -309,17 +324,26 @@
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
       <div class="col-span-2">
-        <label for="nfs_export" class="block text-sm font-medium text-text-muted mb-1.5">Export Path <Tooltip text="The path the NFS server exports – matches the entry in /etc/exports on the server (e.g. /mnt/user/backups). This is what gets mounted, not a sub-path within it." /></label>
+        <div class="block text-sm font-medium text-text-muted mb-1.5">
+          <label for="nfs_export">Export Path</label>
+          <Tooltip label="Export Path" text="The path the NFS server exports – matches the entry in /etc/exports on the server (e.g. /mnt/user/backups). This is what gets mounted, not a sub-path within it." />
+        </div>
         <input id="nfs_export" type="text" bind:value={form.config.export} placeholder="/mnt/user/backups"
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
       <div>
-        <label for="nfs_base" class="block text-sm font-medium text-text-muted mb-1.5">Base Path <Tooltip text="Optional sub-directory within the mounted export where Vault will write its data. Leave blank to use the export root directly." /></label>
+        <div class="block text-sm font-medium text-text-muted mb-1.5">
+          <label for="nfs_base">Base Path</label>
+          <Tooltip label="Base Path" text="Optional sub-directory within the mounted export where Vault will write its data. Leave blank to use the export root directly." />
+        </div>
         <input id="nfs_base" type="text" bind:value={form.config.base_path} placeholder="vault"
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
       <div>
-        <label for="nfs_version" class="block text-sm font-medium text-text-muted mb-1.5">NFS Version <Tooltip text="NFSv3: wider compatibility, simpler setup. NFSv4: better security and performance, but may require DNS and auth configuration." /></label>
+        <div class="block text-sm font-medium text-text-muted mb-1.5">
+          <label for="nfs_version">NFS Version</label>
+          <Tooltip label="NFS Version" text="NFSv3: wider compatibility, simpler setup. NFSv4: better security and performance, but may require DNS and auth configuration." />
+        </div>
         <select id="nfs_version" bind:value={form.config.version}
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
           <option value="3">NFSv3</option>
@@ -327,14 +351,20 @@
         </select>
       </div>
       <div class="col-span-2">
-        <label for="nfs_options" class="block text-sm font-medium text-text-muted mb-1.5">Mount Options <Tooltip text="Optional NFS mount flags such as rw, sync, hard, soft, or nolock. Leave blank for sensible defaults." /></label>
+        <div class="block text-sm font-medium text-text-muted mb-1.5">
+          <label for="nfs_options">Mount Options</label>
+          <Tooltip label="Mount Options" text="Optional NFS mount flags such as rw, sync, hard, soft, or nolock. Leave blank for sensible defaults." />
+        </div>
         <input id="nfs_options" type="text" bind:value={form.config.options} placeholder="Optional: rw,sync"
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
     </div>
   {:else if form.type === 'webdav'}
     <div>
-      <label for="dav_url" class="block text-sm font-medium text-text-muted mb-1.5">Server URL <Tooltip text="Full URL to the WebDAV endpoint, e.g. https://nextcloud.example.com/remote.php/dav/files/username/" /></label>
+      <div class="block text-sm font-medium text-text-muted mb-1.5">
+        <label for="dav_url">Server URL</label>
+        <Tooltip label="Server URL" text="Full URL to the WebDAV endpoint, e.g. https://nextcloud.example.com/remote.php/dav/files/username/" />
+      </div>
       <input id="dav_url" type="url" bind:value={form.config.url} placeholder="https://webdav.example.com/"
         class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" />
       {#if form.config.url?.trim().toLowerCase().startsWith('http://')}
@@ -354,41 +384,46 @@
       </div>
     </div>
     <div>
-      <label for="dav_base" class="block text-sm font-medium text-text-muted mb-1.5">Base Path <Tooltip text="Optional sub-folder under the server URL where Vault will write its data." /></label>
+      <div class="block text-sm font-medium text-text-muted mb-1.5">
+        <label for="dav_base">Base Path</label>
+        <Tooltip label="Base Path" text="Optional sub-folder under the server URL where Vault will write its data." />
+      </div>
       <input id="dav_base" type="text" bind:value={form.config.base_path} placeholder="vault"
         class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
     </div>
-    <label class="flex items-center gap-2 text-sm text-text-muted">
-      <input type="checkbox" bind:checked={form.config.insecure_skip_verify} class="accent-vault" />
-      Allow self-signed TLS certificates
-      <Tooltip text="Skip TLS certificate validation. Only enable for trusted private servers using self-signed certificates." />
-    </label>
+    <div class="flex items-center gap-2 text-sm text-text-muted">
+      <label class="flex items-center gap-2">
+        <input type="checkbox" bind:checked={form.config.insecure_skip_verify} class="accent-vault" />
+        Allow self-signed TLS certificates
+      </label>
+      <Tooltip label="Allow self-signed TLS certificates" text="Skip TLS certificate validation. Only enable for trusted private servers using self-signed certificates." />
+    </div>
     <details class="group">
       <summary class="text-sm font-medium text-text-muted hover:text-text cursor-pointer select-none">
         Advanced &middot; Transfer
       </summary>
       <div class="flex flex-col gap-3 mt-3">
         <div>
-          <label for="dav_chunk" class="block text-sm font-medium text-text-muted mb-1.5">
-            Chunk size (MiB)
-            <Tooltip text="Splits large uploads into separate pieces so one dropped connection doesn't restart the whole file. Recommended: leave at 0 (uses 50 MiB pieces). Use -1 only if your server rejects chunked uploads." />
-          </label>
+          <div class="block text-sm font-medium text-text-muted mb-1.5">
+            <label for="dav_chunk">Chunk size (MiB)</label>
+            <Tooltip label="Chunk size (MiB)" text="Splits large uploads into separate pieces so one dropped connection doesn't restart the whole file. Recommended: leave at 0 (uses 50 MiB pieces). Use -1 only if your server rejects chunked uploads." />
+          </div>
           <input id="dav_chunk" type="number" bind:value={form.config.chunk_size_mb} placeholder="0 (50 MiB)" min="-1"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
         </div>
         <div>
-          <label for="dav_stall" class="block text-sm font-medium text-text-muted mb-1.5">
-            Stall timeout (seconds)
-            <Tooltip text="Gives up on an upload if no data moves for this many seconds – catches a silently stalled connection. The timer resets whenever data flows, so even huge files finish fine. Recommended: 300 (5 min); use -1 to disable." />
-          </label>
+          <div class="block text-sm font-medium text-text-muted mb-1.5">
+            <label for="dav_stall">Stall timeout (seconds)</label>
+            <Tooltip label="Stall timeout (seconds)" text="Gives up on an upload if no data moves for this many seconds – catches a silently stalled connection. The timer resets whenever data flows, so even huge files finish fine. Recommended: 300 (5 min); use -1 to disable." />
+          </div>
           <input id="dav_stall" type="number" bind:value={form.config.stall_timeout_seconds} placeholder="300" min="-1"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
         </div>
         <div>
-          <label for="dav_overall" class="block text-sm font-medium text-text-muted mb-1.5">
-            Overall request timeout (seconds)
-            <Tooltip text="A hard time limit on every request, including a whole file upload. Set too low, it cuts off large uploads. Recommended: leave at 0 (no limit) – the stall timeout above already handles dead connections." />
-          </label>
+          <div class="block text-sm font-medium text-text-muted mb-1.5">
+            <label for="dav_overall">Overall request timeout (seconds)</label>
+            <Tooltip label="Overall request timeout (seconds)" text="A hard time limit on every request, including a whole file upload. Set too low, it cuts off large uploads. Recommended: leave at 0 (no limit) – the stall timeout above already handles dead connections." />
+          </div>
           <input id="dav_overall" type="number" bind:value={form.config.timeout_seconds} placeholder="0 (unlimited)" min="0"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
         </div>
@@ -396,7 +431,7 @@
     </details>
   {:else if form.type === 's3'}
     <div>
-      <span class="block text-sm font-medium text-text-muted mb-1.5">Provider preset <Tooltip text="Prefills endpoint and region for common S3 providers. You can still edit any field. Placeholders in <angle-brackets> must be filled in with your account details." /></span>
+      <span class="block text-sm font-medium text-text-muted mb-1.5">Provider preset <Tooltip label="Provider preset" text="Prefills endpoint and region for common S3 providers. You can still edit any field. Placeholders in <angle-brackets> must be filled in with your account details." /></span>
       <div class="flex flex-wrap gap-2">
         {#each s3Presets as p (p.label)}
           <button type="button" onclick={() => applyS3Preset(p)}
@@ -413,7 +448,10 @@
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
       <div>
-        <label for="s3_region" class="block text-sm font-medium text-text-muted mb-1.5">Region <Tooltip text="AWS region code, e.g. us-east-1. For S3-compatible providers, use the region required by the provider." /></label>
+        <div class="block text-sm font-medium text-text-muted mb-1.5">
+          <label for="s3_region">Region</label>
+          <Tooltip label="Region" text="AWS region code, e.g. us-east-1. For S3-compatible providers, use the region required by the provider." />
+        </div>
         <input id="s3_region" type="text" bind:value={form.config.region} placeholder="us-east-1"
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
       </div>
@@ -431,38 +469,46 @@
       </div>
     </div>
     <div>
-      <label for="s3_endpoint" class="block text-sm font-medium text-text-muted mb-1.5">Endpoint <Tooltip text="Optional. Required for S3-compatible providers like Backblaze B2, MinIO, Cloudflare R2 or Wasabi. Leave blank for AWS S3." /></label>
+      <div class="block text-sm font-medium text-text-muted mb-1.5">
+        <label for="s3_endpoint">Endpoint</label>
+        <Tooltip label="Endpoint" text="Optional. Required for S3-compatible providers like Backblaze B2, MinIO, Cloudflare R2 or Wasabi. Leave blank for AWS S3." />
+      </div>
       <input id="s3_endpoint" type="text" bind:value={form.config.endpoint} placeholder="https://s3.us-west-002.backblazeb2.com"
         class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" />
     </div>
     <div>
-      <label for="s3_base" class="block text-sm font-medium text-text-muted mb-1.5">Base Path <Tooltip text="Optional key prefix prepended to every object Vault writes." /></label>
+      <div class="block text-sm font-medium text-text-muted mb-1.5">
+        <label for="s3_base">Base Path</label>
+        <Tooltip label="Base Path" text="Optional key prefix prepended to every object Vault writes." />
+      </div>
       <input id="s3_base" type="text" bind:value={form.config.base_path} placeholder="vault"
         class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
     </div>
-    <label class="flex items-center gap-2 text-sm text-text-muted">
-      <input type="checkbox" bind:checked={form.config.force_path_style} class="accent-vault" />
-      Force path-style addressing
-      <Tooltip text="Puts the bucket name in the URL path instead of the hostname. Some older or self-hosted S3 servers (e.g. older MinIO) need this. Recommended: leave off for AWS S3 and most modern providers." />
-    </label>
+    <div class="flex items-center gap-2 text-sm text-text-muted">
+      <label class="flex items-center gap-2">
+        <input type="checkbox" bind:checked={form.config.force_path_style} class="accent-vault" />
+        Force path-style addressing
+      </label>
+      <Tooltip label="Force path-style addressing" text="Puts the bucket name in the URL path instead of the hostname. Some older or self-hosted S3 servers (e.g. older MinIO) need this. Recommended: leave off for AWS S3 and most modern providers." />
+    </div>
     <details class="group">
       <summary class="text-sm font-medium text-text-muted hover:text-text cursor-pointer select-none">
         Advanced &middot; Transfer
       </summary>
       <div class="flex flex-col gap-3 mt-3">
         <div>
-          <label for="s3_upload_timeout" class="block text-sm font-medium text-text-muted mb-1.5">
-            Upload timeout (minutes)
-            <Tooltip text="The longest a single file's upload may take before Vault gives up. Too low and large files on slow links get cut off. Recommended: leave at 0 (defaults to 240 min / 4 h); raise it only for very large files over slow connections." />
-          </label>
+          <div class="block text-sm font-medium text-text-muted mb-1.5">
+            <label for="s3_upload_timeout">Upload timeout (minutes)</label>
+            <Tooltip label="Upload timeout (minutes)" text="The longest a single file's upload may take before Vault gives up. Too low and large files on slow links get cut off. Recommended: leave at 0 (defaults to 240 min / 4 h); raise it only for very large files over slow connections." />
+          </div>
           <input id="s3_upload_timeout" type="number" bind:value={form.config.upload_timeout_minutes} placeholder="240 (default)" min="0"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
         </div>
         <div>
-          <label for="s3_part_size" class="block text-sm font-medium text-text-muted mb-1.5">
-            Part size (MiB)
-            <Tooltip text="Splits large uploads into parts so one network drop doesn't restart the whole transfer. Bigger parts allow bigger single files. Recommended: leave at 0 (64 MiB, handles files up to ~640 GB); raise only for larger files – 256 → ~2.5 TB, 1024 → ~10 TB. Range 5-5120." />
-          </label>
+          <div class="block text-sm font-medium text-text-muted mb-1.5">
+            <label for="s3_part_size">Part size (MiB)</label>
+            <Tooltip label="Part size (MiB)" text="Splits large uploads into parts so one network drop doesn't restart the whole transfer. Bigger parts allow bigger single files. Recommended: leave at 0 (64 MiB, handles files up to ~640 GB); raise only for larger files – 256 → ~2.5 TB, 1024 → ~10 TB. Range 5-5120." />
+          </div>
           <input id="s3_part_size" type="number" bind:value={form.config.part_size_mb} placeholder="0 (64 MiB)" min="0" max="5120"
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
           <p class="mt-1 text-xs text-text-muted" data-testid="s3-part-memory-hint">
@@ -479,14 +525,14 @@
        disk write rate so streaming apps (Plex, Jellyfin) reading from the
        same array keep their I/O headroom during backups (issue #237). -->
   <div>
-    <label for="bandwidth_limit_mbps" class="block text-sm font-medium text-text-muted mb-1.5">
-      {form.type === 'local' ? 'Disk write speed limit (Mbps)' : 'Bandwidth limit (Mbps)'}
+    <div class="block text-sm font-medium text-text-muted mb-1.5">
+      <label for="bandwidth_limit_mbps">{bandwidthLabel}</label>
       {#if form.type === 'local'}
-        <Tooltip text="Caps how fast backups WRITE to this destination so apps streaming from the same disks (e.g. Plex or Jellyfin) keep their I/O headroom while a backup runs. Restores and verification always read at full speed. Note the unit is megabits: 8 Mbps = 1 MB/s, so to cap at 100 MB/s enter 800. Recommended: 0 (unlimited) unless playback stutters during backups." />
+        <Tooltip label={bandwidthLabel} text="Caps how fast backups WRITE to this destination so apps streaming from the same disks (e.g. Plex or Jellyfin) keep their I/O headroom while a backup runs. Restores and verification always read at full speed. Note the unit is megabits: 8 Mbps = 1 MB/s, so to cap at 100 MB/s enter 800. Recommended: 0 (unlimited) unless playback stutters during backups." />
       {:else}
-        <Tooltip text="Limits how much bandwidth this destination may use, in megabits per second, so backups don't saturate a shared internet line. Recommended: 0 (unlimited) on a dedicated link; set a cap if backups slow down other traffic." />
+        <Tooltip label={bandwidthLabel} text="Limits how much bandwidth this destination may use, in megabits per second, so backups don't saturate a shared internet line. Recommended: 0 (unlimited) on a dedicated link; set a cap if backups slow down other traffic." />
       {/if}
-    </label>
+    </div>
     <input id="bandwidth_limit_mbps" type="number" bind:value={form.config.bandwidth_limit_mbps} min="0" placeholder="0 (unlimited)"
       class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
   </div>
@@ -501,14 +547,16 @@
         bind:checked={form.dedup_enabled}
         disabled={init !== null}
         class="accent-vault mt-1"
+        aria-labelledby="{uid}-dedup-title"
+        aria-describedby={init !== null ? `${uid}-dedup-desc ${uid}-dedup-locked` : `${uid}-dedup-desc`}
       />
       <span class="flex-1">
-        <span class="block font-medium text-text">Enable deduplication</span>
-        <span class="block text-xs text-text-muted mt-0.5">
+        <span id="{uid}-dedup-title" class="block font-medium text-text">Enable deduplication</span>
+        <span id="{uid}-dedup-desc" class="block text-xs text-text-muted mt-0.5">
           Stores only changed data blocks across snapshots and jobs targeting this destination. Recommended for backups containing similar data (Immich, Nextcloud, container volumes). <strong>Cannot be changed after creating the destination.</strong>
         </span>
         {#if init !== null}
-          <span class="block text-xs text-warning mt-1 italic">
+          <span id="{uid}-dedup-locked" class="block text-xs text-warning mt-1 italic">
             Dedup mode is locked at creation time. Create a new destination to switch.
           </span>
         {/if}

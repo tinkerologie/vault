@@ -275,6 +275,12 @@
     if (a.scope_kind === 'destination') return `Dest #${a.scope_id}`
     return a.scope_kind || '–'
   }
+
+  // Names a row action after its anomaly ("Dismiss: Backup size spike (Job #3)")
+  // so a screen reader doesn't hear the same "Dismiss" on every row (#608).
+  function rowName(a) {
+    return `${prettyAnomalySummary(a.summary)} (${scopeLabel(a)})`
+  }
 </script>
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />
@@ -359,7 +365,7 @@
       >
         Mark expected
       </button>
-      <Tooltip text="Mark these as normal so future runs like them won't be flagged — this teaches the baseline. Dismiss only clears them once." />
+      <Tooltip label="Mark expected" text="Mark these as normal so future runs like them won't be flagged — this teaches the baseline. Dismiss only clears them once." />
       <button onclick={clearSelected} class="text-xs text-text-muted hover:text-text transition-colors">
         Clear
       </button>
@@ -402,12 +408,14 @@
           aria-label="Select all anomalies"
         />
         {/if}
-        <span class="w-20 shrink-0">Severity</span>
-        <span class="flex-1">Summary</span>
-        <span class="w-24 shrink-0 hidden sm:block">Scope</span>
-        <span class="w-20 shrink-0 hidden md:block">State</span>
-        <span class="w-24 shrink-0 hidden lg:block">First seen</span>
-        <span class="w-32 shrink-0">Actions</span>
+        <!-- Visual column labels only: each row below is a heading with its
+             fields named inline, so screen readers don't need these. -->
+        <span class="w-20 shrink-0" aria-hidden="true">Severity</span>
+        <span class="flex-1" aria-hidden="true">Summary</span>
+        <span class="w-24 shrink-0 hidden sm:block" aria-hidden="true">Scope</span>
+        <span class="w-20 shrink-0 hidden md:block" aria-hidden="true">State</span>
+        <span class="w-24 shrink-0 hidden lg:block" aria-hidden="true">First seen</span>
+        <span class="w-32 shrink-0" aria-hidden="true">Actions</span>
       </div>
 
       <div class="divide-y divide-border">
@@ -428,31 +436,39 @@
 
               <!-- Severity badge -->
               <div class="w-20 shrink-0">
-                <AnomalyBadge count={1} severity={anomaly.severity} />
+                <span class="sr-only">Severity: {anomaly.severity}</span>
+                <span aria-hidden="true"><AnomalyBadge count={1} severity={anomaly.severity} /></span>
               </div>
 
-              <!-- Summary + detector (click to expand inline) -->
-              <button
-                class="flex-1 min-w-0 text-left"
-                onclick={() => toggleDetail(anomaly.id)}
-                aria-expanded={expandedId === anomaly.id}
-              >
-                <p class="text-sm text-text leading-snug">{prettyAnomalySummary(anomaly.summary)}</p>
-                <p class="text-xs text-text-dim mt-0.5">{anomaly.detector}</p>
-              </button>
+              <!-- Summary + detector (click to expand inline). A heading per row
+                   lets screen readers jump between anomalies (#608). role=heading
+                   rather than <h2> so theme heading styles (Retro) don't restyle
+                   the row. -->
+              <div role="heading" aria-level="2" class="flex-1 min-w-0">
+                <button
+                  class="block w-full text-left"
+                  onclick={() => toggleDetail(anomaly.id)}
+                  aria-expanded={expandedId === anomaly.id}
+                  aria-controls={expandedId === anomaly.id ? `anomaly-detail-${anomaly.id}` : undefined}
+                >
+                  <span class="block text-sm text-text leading-snug">{prettyAnomalySummary(anomaly.summary)}</span>
+                  <span class="block text-xs text-text-dim mt-0.5">{anomaly.detector}</span>
+                </button>
+              </div>
 
               <!-- Scope -->
-              <span class="w-24 shrink-0 text-xs text-text-dim hidden sm:block">{scopeLabel(anomaly)}</span>
+              <span class="w-24 shrink-0 text-xs text-text-dim hidden sm:block"><span class="sr-only">Scope: </span>{scopeLabel(anomaly)}</span>
 
               <!-- State -->
               <span class="w-20 shrink-0 hidden md:block">
+                <span class="sr-only">State: </span>
                 <span class="text-[11px] px-2 py-0.5 rounded-full font-medium {stateBadgeClass(anomaly.state)}">
                   {stateLabel[anomaly.state] ?? anomaly.state}
                 </span>
               </span>
 
               <!-- First seen -->
-              <span class="w-24 shrink-0 text-xs text-text-dim hidden lg:block">{relTime(anomaly.first_seen_at)}</span>
+              <span class="w-24 shrink-0 text-xs text-text-dim hidden lg:block"><span class="sr-only">First seen: </span>{relTime(anomaly.first_seen_at)}</span>
 
               <!-- Per-row ack actions (only for open) -->
               <div class="w-32 shrink-0 flex items-center gap-1">
@@ -462,6 +478,7 @@
                     disabled={ackingId === anomaly.id}
                     class="text-xs px-2 py-1 rounded-lg bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text transition-colors disabled:opacity-40"
                     title="Dismiss"
+                    aria-label="Dismiss: {rowName(anomaly)}"
                   >
                     Dismiss
                   </button>
@@ -470,6 +487,7 @@
                     disabled={ackingId === anomaly.id}
                     class="text-xs px-2 py-1 rounded-lg bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text transition-colors disabled:opacity-40"
                     title="Mark as expected"
+                    aria-label="Expected: {rowName(anomaly)}"
                   >
                     Expected
                   </button>
@@ -481,7 +499,7 @@
 
             {#if expandedId === anomaly.id}
               {@const details = parsedDetails(anomaly)}
-              <div class="px-4 pb-3">
+              <div id="anomaly-detail-{anomaly.id}" class="px-4 pb-3">
                 <div class="bg-surface-3 rounded-lg p-3 text-xs text-text-muted space-y-1 text-left">
                   <p><span class="font-medium text-text-dim">Metric:</span> {anomaly.metric}</p>
                   <p><span class="font-medium text-text-dim">Observed:</span> {formatMetricValue(anomaly.metric, anomaly.observed)}</p>

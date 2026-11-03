@@ -1515,7 +1515,7 @@
             <span class="inline-flex items-center gap-1">
               <span class="text-xs font-medium {chainHealthTone(unit.point)}">{chainHealthLabel(unit.point)}</span>
               {#if unit.point?.chain_status !== 'broken' && chainDependencies(unit.point) > 0}
-                <Tooltip text="Chain length is {unit.point.chain_depth}. Restoring replays the base full backup plus intermediate backups in this chain." />
+                <Tooltip label="Chain health" text="Chain length is {unit.point.chain_depth}. Restoring replays the base full backup plus intermediate backups in this chain." />
               {/if}
             </span>
           </div>

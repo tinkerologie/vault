@@ -8,9 +8,18 @@
    * Props:
    * - text: string – tooltip content
    * - id: string (optional) – unique ID for aria-describedby linking
+   * - label: string (optional) – what the tip explains, e.g. the field or
+   *   heading it sits next to. The default trigger is named "More info: {label}"
+   *   so each trigger is distinct. Ignored with custom children, which name the
+   *   trigger themselves.
    * - children: Snippet (optional) – custom trigger content
+   *
+   * Anything inside a <label>, heading or <summary> becomes part of that
+   * element's accessible name ("Max retries More info"). Put the trigger beside
+   * a <label>, not inside it. In a heading or summary, wrap the visible text in
+   * an id'd span and point the container's aria-labelledby at it.
    */
-  let { text = '', id = undefined, children } = $props()
+  let { text = '', id = undefined, label = '', children } = $props()
 
   let visible = $state(false)
   let position = $state('above')
@@ -94,6 +103,9 @@
 
   function onKeydown(e) {
     if (e.key === 'Escape' && visible) {
+      // Escape closes only the tip, not a dialog the tip sits in.
+      e.preventDefault()
+      e.stopPropagation()
       visible = false
       triggerEl?.focus()
     }
@@ -124,9 +136,15 @@
     }
   })
 
-  /** Teleport node to document.body so fixed positioning isn't broken by ancestor transforms/filters. */
+  /**
+   * Teleport the popup out of the trigger's ancestors so fixed positioning isn't
+   * broken by their transforms or filters. It goes to the end of <main> rather
+   * than <body>, so the open tip stays inside a landmark (#608); <main> sets no
+   * transform, filter or z-index, so the popup still paints above the page.
+   * Inside an open modal, floatAboveDialogs moves it into the top dialog.
+   */
   function portal(node) {
-    document.body.appendChild(node)
+    ;(document.getElementById('main-content') ?? document.body).appendChild(node)
     return floatAboveDialogs(node)
   }
 
@@ -155,7 +173,7 @@
         <circle cx="12" cy="12" r="10" />
         <path d="M12 16v-4M12 8h.01" />
       </svg>
-      <span class="sr-only">More info</span>
+      <span class="sr-only">{label ? `More info: ${label}` : 'More info'}</span>
     {/if}
   </button>
 

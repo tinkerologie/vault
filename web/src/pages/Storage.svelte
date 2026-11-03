@@ -484,18 +484,18 @@
             </div>
             <div class="flex items-center gap-1">
               <!-- Browse is read-only, so it stays available in replica mode. -->
-              <button onclick={() => browseDest = dest} class="p-1.5 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Browse files" aria-label="Browse destination files">
+              <button onclick={() => browseDest = dest} class="p-1.5 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Browse files" aria-label="Browse destination files: {dest.name}">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
               </button>
               {#if !isReplicaMode()}
-              <button onclick={() => openImport(dest.id, dest.name)} class="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Import Backups" aria-label="Import backups">
+              <button onclick={() => openImport(dest.id, dest.name)} class="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Import Backups" aria-label="Import backups: {dest.name}">
                 <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
                 Import
               </button>
-              <button onclick={() => openEdit(dest)} class="p-1.5 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit" aria-label="Edit storage">
+              <button onclick={() => openEdit(dest)} class="p-1.5 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit" aria-label="Edit storage: {dest.name}">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
               </button>
-              <button onclick={() => deleteStorage(dest.id, dest.name)} class="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete" aria-label="Delete storage">
+              <button onclick={() => deleteStorage(dest.id, dest.name)} class="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete" aria-label="Delete storage: {dest.name}">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
               </button>
               {/if}
@@ -541,6 +541,7 @@
                   onclick={() => refreshCapacity(dest.id)}
                   disabled={refreshingCapacityId === dest.id}
                   class="text-vault-text hover:underline disabled:opacity-50 not-italic"
+                  aria-label="{refreshingCapacityId === dest.id ? 'Checking…' : 'Check now'}: {dest.name}"
                 >
                   {refreshingCapacityId === dest.id ? 'Checking…' : 'Check now'}
                 </button>
@@ -584,6 +585,7 @@
                     onclick={() => refreshCapacity(dest.id)}
                     disabled={refreshingCapacityId === dest.id}
                     class="text-vault-text hover:underline disabled:opacity-50"
+                    aria-label="{refreshingCapacityId === dest.id ? 'Refreshing…' : 'Refresh'}: {dest.name}"
                   >
                     {refreshingCapacityId === dest.id ? 'Refreshing…' : 'Refresh'}
                   </button>
@@ -669,6 +671,7 @@
                     onclick={() => runCleanup(dest.id)}
                     disabled={cleanupBusy.has(dest.id)}
                     class="px-2.5 py-1 text-xs rounded-md bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text disabled:opacity-50 transition-colors"
+                    aria-label="{cleanupBusy.has(dest.id) ? 'Cleaning…' : 'Run cleanup'}: {dest.name}"
                   >
                     {cleanupBusy.has(dest.id) ? 'Cleaning…' : 'Run cleanup'}
                   </button>
@@ -710,6 +713,7 @@
                 onclick={() => resetBreaker(dest.id)}
                 disabled={breakerBusy.has(dest.id)}
                 class="text-xs px-2.5 py-1 rounded-full font-medium bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text whitespace-nowrap disabled:opacity-50 transition-colors"
+                aria-label="{breakerBusy.has(dest.id) ? 'Resetting…' : 'Reset breaker'}: {dest.name}"
               >
                 {breakerBusy.has(dest.id) ? 'Resetting…' : 'Reset breaker'}
               </button>
@@ -718,6 +722,7 @@
             <button
               onclick={() => testConnection(dest.id)}
               disabled={testing === dest.id}
+              aria-label="{testing === dest.id ? 'Testing…' : tr ? (tr.success ? 'Connected' : 'Failed') : 'Test'}: {dest.name}"
               class="ml-auto shrink-0 text-xs px-2.5 py-1 rounded-full font-medium transition-colors whitespace-nowrap min-w-[88px] text-center inline-flex items-center justify-center gap-1
                 {tr
                   ? (tr.success ? 'bg-success/10 text-success hover:bg-success/20' : 'bg-danger/10 text-danger hover:bg-danger/20')

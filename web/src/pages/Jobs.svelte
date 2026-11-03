@@ -1347,7 +1347,7 @@
                   disabled={progress.cancelling && progress.activeRun?.job_id === job.id}
                   class="p-2 text-danger hover:bg-danger/10 rounded-lg transition-colors disabled:opacity-50"
                   title={progress.activeRun?.job_id === job.id ? 'Cancel running backup' : 'Cancel queued backup'}
-                  aria-label="Cancel backup"
+                  aria-label="Cancel backup: {job.name}"
                 >
                   <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9h6v6H9z"/></svg>
                 </button>
@@ -1357,7 +1357,7 @@
                   disabled={runningJob === job.id}
                   class="p-2 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors"
                   title="Run Now"
-                  aria-label="Run backup now"
+                  aria-label="Run backup now: {job.name}"
                 >
                   {#if runningJob === job.id}
                     <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -1366,13 +1366,13 @@
                   {/if}
                 </button>
               {/if}
-              <button onclick={() => duplicateJob(job)} class="p-2 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Duplicate" aria-label="Duplicate job">
+              <button onclick={() => duplicateJob(job)} class="p-2 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Duplicate" aria-label="Duplicate job: {job.name}">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
               </button>
-              <button onclick={() => openEdit(job.id)} class="p-2 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit" aria-label="Edit job">
+              <button onclick={() => openEdit(job.id)} class="p-2 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit" aria-label="Edit job: {job.name}">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
               </button>
-              <button onclick={() => deleteJob(job.id, job.name)} class="p-2 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete" aria-label="Delete job">
+              <button onclick={() => deleteJob(job.id, job.name)} class="p-2 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete" aria-label="Delete job: {job.name}">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
               </button>
             </div>
@@ -1704,7 +1704,10 @@
     {#if step === 4}
       <div class="space-y-5">
         <div>
-          <label for="name" class="block text-sm font-medium text-text-muted mb-1.5">Job Name <Tooltip text="Used for display and log identification. No strict naming constraints." /></label>
+          <div class="block text-sm font-medium text-text-muted mb-1.5">
+            <label for="name">Job Name</label>
+            <Tooltip label="Job Name" text="Used for display and log identification. No strict naming constraints." />
+          </div>
           <input id="name" type="text" bind:value={form.name} required
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted focus:border-vault focus:ring-1 focus:ring-vault" placeholder="Daily Docker Backup" />
           {#if suggestedName && !form.name.trim()}
@@ -1735,423 +1738,469 @@
           <span class="text-xs text-text-muted">optional — sensible defaults applied</span>
         </div>
         <!-- Advanced: Retention -->
-        <details class="group" open>
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Retention Policy <Tooltip text="'Keep Last N' retains only the most recent N backups. 'Keep For N Days' removes backups older than N days. Both limits apply – whichever triggers first will prune old backups." />
-          </summary>
-          <div class="grid grid-cols-2 gap-4 mt-3 pl-6">
-            <div>
-              <label for="retention_count" class="block text-xs font-medium text-text-muted mb-1">Keep Last</label>
-              <div class="flex items-center gap-2">
-                <input id="retention_count" type="number" bind:value={form.retention_count} min="1"
-                  class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
-                <span class="text-xs text-text-dim shrink-0">backups</span>
-              </div>
-            </div>
-            <div>
-              <label for="retention_days" class="block text-xs font-medium text-text-muted mb-1">Keep For</label>
-              <div class="flex items-center gap-2">
-                <input id="retention_days" type="number" bind:value={form.retention_days} min="1"
-                  class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
-                <span class="text-xs text-text-dim shrink-0">days</span>
-              </div>
-            </div>
-          </div>
-        </details>
-
-        <!-- Advanced: Long-Term Retention (LTR) -->
-        <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Long-Term Retention (LTR) <Tooltip text="Keep N latest, plus the most recent backup per day/week/month/year. A single backup can fill multiple buckets. If any of these is > 0, the simple Retention Policy above is ignored for this job." />
-          </summary>
-          <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-3 pl-6">
-            <div>
-              <label for="keep_latest" class="block text-xs font-medium text-text-muted mb-1">Latest</label>
-              <input id="keep_latest" type="number" bind:value={form.keep_latest} min="0" placeholder="0"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
-            </div>
-            <div>
-              <label for="keep_daily" class="block text-xs font-medium text-text-muted mb-1">Daily</label>
-              <input id="keep_daily" type="number" bind:value={form.keep_daily} min="0" placeholder="0"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
-            </div>
-            <div>
-              <label for="keep_weekly" class="block text-xs font-medium text-text-muted mb-1">Weekly</label>
-              <input id="keep_weekly" type="number" bind:value={form.keep_weekly} min="0" placeholder="0"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
-            </div>
-            <div>
-              <label for="keep_monthly" class="block text-xs font-medium text-text-muted mb-1">Monthly</label>
-              <input id="keep_monthly" type="number" bind:value={form.keep_monthly} min="0" placeholder="0"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
-            </div>
-            <div>
-              <label for="keep_yearly" class="block text-xs font-medium text-text-muted mb-1">Yearly</label>
-              <input id="keep_yearly" type="number" bind:value={form.keep_yearly} min="0" placeholder="0"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
-            </div>
-          </div>
-          {#if ltrActive}
-            <p class="mt-2 pl-6 text-xs text-warning">Long-Term Retention is active – the simple Retention Policy above is ignored for this job.</p>
-            {#if editing}
-              <div class="mt-3 pl-6 text-xs">
-                {#if retentionPreviewLoading}
-                  <span class="text-text-muted">Calculating preview…</span>
-                {:else if retentionPreview}
-                  <div class="bg-surface-3/50 border border-border rounded-lg p-3">
-                    <p class="text-text font-medium">
-                      Would keep {retentionPreview.kept_with_ancestors.length} of {retentionPreview.total_restore_points} current restore points
-                    </p>
-                    <p class="text-text-muted mt-1">
-                      {retentionPreview.would_delete.length} would be pruned · {retentionPreview.kept_directly.length} kept directly · {retentionPreview.kept_with_ancestors.length - retentionPreview.kept_directly.length} kept as chain ancestors
-                    </p>
-                  </div>
-                {:else if retentionPreviewError}
-                  <span class="text-danger">Preview unavailable: {retentionPreviewError}</span>
-                {/if}
-              </div>
-            {:else}
-              <p class="mt-2 pl-6 text-xs text-text-dim">Save the job first to see how many existing restore points this policy would keep.</p>
-            {/if}
-          {/if}
-        </details>
-
-        <!-- Advanced: Scheduled verification (Feature A) -->
-        <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Scheduled verification <Tooltip text="Periodically checks that your latest backup is still intact on its destination. Quick: confirms the files exist at the right size (no download). Deep: re-downloads and checksums everything to catch silent corruption. Recommended: Quick, or Deep for critical data." />
-          </summary>
-          <div class="mt-3 pl-6 space-y-3">
-            <label class="flex items-center gap-2 text-sm text-text-muted">
-              <input type="checkbox" checked={verifyEnabled} onchange={toggleVerifyEnabled} class="accent-vault" />
-              Run verification on a schedule
-            </label>
-            {#if verifyEnabled}
-              <div class="bg-surface-3/50 border border-border rounded-lg p-3">
-                <ScheduleBuilder bind:value={form.verify_schedule} />
+        <div class="relative">
+          {@render summaryTip("Retention Policy", "'Keep Last N' retains only the most recent N backups. 'Keep For N Days' removes backups older than N days. Both limits apply – whichever triggers first will prune old backups.")}
+          <details class="group" open>
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Retention Policy
+            </summary>
+            <div class="grid grid-cols-2 gap-4 mt-3 pl-6">
+              <div>
+                <label for="retention_count" class="block text-xs font-medium text-text-muted mb-1">Keep Last</label>
+                <div class="flex items-center gap-2">
+                  <input id="retention_count" type="number" bind:value={form.retention_count} min="1"
+                    class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+                  <span class="text-xs text-text-dim shrink-0">backups</span>
+                </div>
               </div>
               <div>
-                <label for="verify_mode" class="block text-xs font-medium text-text-muted mb-1">Mode</label>
-                <select id="verify_mode" bind:value={form.verify_mode}
-                  class="w-full sm:w-auto px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
-                  <option value="quick">Quick (HEAD + size, no bandwidth)</option>
-                  <option value="deep">Deep (full SHA-256 reread)</option>
-                </select>
+                <label for="retention_days" class="block text-xs font-medium text-text-muted mb-1">Keep For</label>
+                <div class="flex items-center gap-2">
+                  <input id="retention_days" type="number" bind:value={form.retention_days} min="1"
+                    class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+                  <span class="text-xs text-text-dim shrink-0">days</span>
+                </div>
               </div>
-            {/if}
-          </div>
-        </details>
+            </div>
+          </details>
+        </div>
 
-        <!-- Advanced: Scheduled full backup (issue #322) -->
-        {#if form.backup_type_chain !== 'full'}
+        <!-- Advanced: Long-Term Retention (LTR) -->
+        <div class="relative">
+          {@render summaryTip("Long-Term Retention (LTR)", "Keep N latest, plus the most recent backup per day/week/month/year. A single backup can fill multiple buckets. If any of these is > 0, the simple Retention Policy above is ignored for this job.")}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
               <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              Scheduled full backup <Tooltip text="Runs a full backup on its own cadence, in addition to this job's schedule. Incremental and differential runs chain from the most recent full, so a periodic full keeps restore chains short and bounds how much a single damaged archive can cost you. Without this you need a duplicate job that differs only in backup type." />
+              Long-Term Retention (LTR)
+            </summary>
+            <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-3 pl-6">
+              <div>
+                <label for="keep_latest" class="block text-xs font-medium text-text-muted mb-1">Latest</label>
+                <input id="keep_latest" type="number" bind:value={form.keep_latest} min="0" placeholder="0"
+                  class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+              </div>
+              <div>
+                <label for="keep_daily" class="block text-xs font-medium text-text-muted mb-1">Daily</label>
+                <input id="keep_daily" type="number" bind:value={form.keep_daily} min="0" placeholder="0"
+                  class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+              </div>
+              <div>
+                <label for="keep_weekly" class="block text-xs font-medium text-text-muted mb-1">Weekly</label>
+                <input id="keep_weekly" type="number" bind:value={form.keep_weekly} min="0" placeholder="0"
+                  class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+              </div>
+              <div>
+                <label for="keep_monthly" class="block text-xs font-medium text-text-muted mb-1">Monthly</label>
+                <input id="keep_monthly" type="number" bind:value={form.keep_monthly} min="0" placeholder="0"
+                  class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+              </div>
+              <div>
+                <label for="keep_yearly" class="block text-xs font-medium text-text-muted mb-1">Yearly</label>
+                <input id="keep_yearly" type="number" bind:value={form.keep_yearly} min="0" placeholder="0"
+                  class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+              </div>
+            </div>
+            {#if ltrActive}
+              <p class="mt-2 pl-6 text-xs text-warning">Long-Term Retention is active – the simple Retention Policy above is ignored for this job.</p>
+              {#if editing}
+                <div class="mt-3 pl-6 text-xs">
+                  {#if retentionPreviewLoading}
+                    <span class="text-text-muted">Calculating preview…</span>
+                  {:else if retentionPreview}
+                    <div class="bg-surface-3/50 border border-border rounded-lg p-3">
+                      <p class="text-text font-medium">
+                        Would keep {retentionPreview.kept_with_ancestors.length} of {retentionPreview.total_restore_points} current restore points
+                      </p>
+                      <p class="text-text-muted mt-1">
+                        {retentionPreview.would_delete.length} would be pruned · {retentionPreview.kept_directly.length} kept directly · {retentionPreview.kept_with_ancestors.length - retentionPreview.kept_directly.length} kept as chain ancestors
+                      </p>
+                    </div>
+                  {:else if retentionPreviewError}
+                    <span class="text-danger">Preview unavailable: {retentionPreviewError}</span>
+                  {/if}
+                </div>
+              {:else}
+                <p class="mt-2 pl-6 text-xs text-text-dim">Save the job first to see how many existing restore points this policy would keep.</p>
+              {/if}
+            {/if}
+          </details>
+        </div>
+
+        <!-- Advanced: Scheduled verification (Feature A) -->
+        <div class="relative">
+          {@render summaryTip("Scheduled verification", "Periodically checks that your latest backup is still intact on its destination. Quick: confirms the files exist at the right size (no download). Deep: re-downloads and checksums everything to catch silent corruption. Recommended: Quick, or Deep for critical data.")}
+          <details class="group">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Scheduled verification
             </summary>
             <div class="mt-3 pl-6 space-y-3">
               <label class="flex items-center gap-2 text-sm text-text-muted">
-                <input type="checkbox" checked={fullBackupEnabled} onchange={toggleFullBackupEnabled} class="accent-vault" />
-                Run a full backup on a schedule
+                <input type="checkbox" checked={verifyEnabled} onchange={toggleVerifyEnabled} class="accent-vault" />
+                Run verification on a schedule
               </label>
-              {#if fullBackupEnabled}
+              {#if verifyEnabled}
                 <div class="bg-surface-3/50 border border-border rounded-lg p-3">
-                  <ScheduleBuilder bind:value={form.full_backup_schedule} />
+                  <ScheduleBuilder bind:value={form.verify_schedule} />
                 </div>
-                <p class="text-xs text-text-dim">
-                  This runs in addition to the job's own schedule above. The
-                  {form.backup_type_chain === 'incremental' ? 'incremental' : 'differential'}
-                  runs that follow chain from it, so the chain restarts at each full.
-                </p>
+                <div>
+                  <label for="verify_mode" class="block text-xs font-medium text-text-muted mb-1">Mode</label>
+                  <select id="verify_mode" bind:value={form.verify_mode}
+                    class="w-full sm:w-auto px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+                    <option value="quick">Quick (HEAD + size, no bandwidth)</option>
+                    <option value="deep">Deep (full SHA-256 reread)</option>
+                  </select>
+                </div>
               {/if}
             </div>
           </details>
+        </div>
+
+        <!-- Advanced: Scheduled full backup (issue #322) -->
+        {#if form.backup_type_chain !== 'full'}
+          <div class="relative">
+            {@render summaryTip("Scheduled full backup", "Runs a full backup on its own cadence, in addition to this job's schedule. Incremental and differential runs chain from the most recent full, so a periodic full keeps restore chains short and bounds how much a single damaged archive can cost you. Without this you need a duplicate job that differs only in backup type.")}
+            <details class="group">
+              <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+                <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                Scheduled full backup
+              </summary>
+              <div class="mt-3 pl-6 space-y-3">
+                <label class="flex items-center gap-2 text-sm text-text-muted">
+                  <input type="checkbox" checked={fullBackupEnabled} onchange={toggleFullBackupEnabled} class="accent-vault" />
+                  Run a full backup on a schedule
+                </label>
+                {#if fullBackupEnabled}
+                  <div class="bg-surface-3/50 border border-border rounded-lg p-3">
+                    <ScheduleBuilder bind:value={form.full_backup_schedule} />
+                  </div>
+                  <p class="text-xs text-text-dim">
+                    This runs in addition to the job's own schedule above. The
+                    {form.backup_type_chain === 'incremental' ? 'incremental' : 'differential'}
+                    runs that follow chain from it, so the chain restarts at each full.
+                  </p>
+                {/if}
+              </div>
+            </details>
+          </div>
         {/if}
 
         <!-- Advanced: Scripts -->
-        <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Scripts <Tooltip text="Pre-backup scripts run before any containers are stopped. Post-backup scripts run after all items are backed up. Environment variables like VAULT_JOB_NAME and VAULT_STATUS are available." />
-          </summary>
-          <div class="space-y-4 mt-3 pl-6">
-            <ScriptBrowser bind:value={form.pre_script} label="Pre-Backup Script" placeholder="/path/to/script.sh" />
-            <ScriptBrowser bind:value={form.post_script} label="Post-Backup Script" placeholder="/path/to/script.sh" />
-          </div>
-        </details>
+        <div class="relative">
+          {@render summaryTip("Scripts", "Pre-backup scripts run before any containers are stopped. Post-backup scripts run after all items are backed up. Environment variables like VAULT_JOB_NAME and VAULT_STATUS are available.")}
+          <details class="group">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Scripts
+            </summary>
+            <div class="space-y-4 mt-3 pl-6">
+              <ScriptBrowser bind:value={form.pre_script} label="Pre-Backup Script" placeholder="/path/to/script.sh" />
+              <ScriptBrowser bind:value={form.post_script} label="Post-Backup Script" placeholder="/path/to/script.sh" />
+            </div>
+          </details>
+        </div>
 
         <!-- Advanced: Notifications -->
-        <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Notifications <Tooltip text="Controls when this job sends Unraid system notifications. The global notifications toggle in Settings must be enabled for any to be sent. Discord notifications are configured separately in Settings." />
-          </summary>
-          <div class="mt-3 pl-6">
-            <label for="notify_on" class="block text-xs font-medium text-text-muted mb-1">Notify On</label>
-            <select
-              id="notify_on"
-              bind:value={form.notify_on}
-              class="w-full sm:w-auto px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
-            >
-              <option value="always">All backups (success &amp; failure)</option>
-              <option value="failure">Failures only</option>
-              <option value="never">Never</option>
-            </select>
-          </div>
-        </details>
+        <div class="relative">
+          {@render summaryTip("Notifications", "Controls when this job sends Unraid system notifications. The global notifications toggle in Settings must be enabled for any to be sent. Discord notifications are configured separately in Settings.")}
+          <details class="group">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Notifications
+            </summary>
+            <div class="mt-3 pl-6">
+              <label for="notify_on" class="block text-xs font-medium text-text-muted mb-1">Notify On</label>
+              <select
+                id="notify_on"
+                bind:value={form.notify_on}
+                class="w-full sm:w-auto px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              >
+                <option value="always">All backups (success &amp; failure)</option>
+                <option value="failure">Failures only</option>
+                <option value="never">Never</option>
+              </select>
+            </div>
+          </details>
+        </div>
 
         <!-- Advanced: Verification -->
-        <details class="group" open>
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Backup Verification <Tooltip text="Right after each backup, re-reads the archive and checksums it to confirm nothing was corrupted in transit. Adds time but catches problems while you can still re-run. Recommended: on for important jobs." />
-          </summary>
-          <div class="mt-3 pl-6">
-            <div class="flex items-start gap-3">
-              <label class="relative inline-flex items-center cursor-pointer mt-0.5">
-                <input
-                  type="checkbox"
-                  bind:checked={form.verify_backup}
-                  class="sr-only peer"
-                  aria-labelledby="verify-backup-label"
-                  aria-describedby={verifyCost ? 'verify-backup-help verify-backup-warning' : 'verify-backup-help'}
-                />
-                <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
-              </label>
-              <div>
-                <p id="verify-backup-label" class="text-sm text-text">Verify backups after writing</p>
-                <p id="verify-backup-help" class="text-xs text-text-dim mt-0.5">Reads each file back from storage and validates SHA-256 checksums. Adds a small amount of time but ensures backup integrity.</p>
+        <div class="relative">
+          {@render summaryTip("Backup Verification", "Right after each backup, re-reads the archive and checksums it to confirm nothing was corrupted in transit. Adds time but catches problems while you can still re-run. Recommended: on for important jobs.")}
+          <details class="group" open>
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Backup Verification
+            </summary>
+            <div class="mt-3 pl-6">
+              <div class="flex items-start gap-3">
+                <label class="relative inline-flex items-center cursor-pointer mt-0.5">
+                  <input
+                    type="checkbox"
+                    bind:checked={form.verify_backup}
+                    class="sr-only peer"
+                    id="job-verify-backup"
+                    aria-labelledby="verify-backup-label"
+                    aria-describedby={verifyCost ? 'verify-backup-help verify-backup-warning' : 'verify-backup-help'}
+                  />
+                  <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                </label>
+                <div>
+                  <label for="job-verify-backup" id="verify-backup-label" class="block text-sm text-text">Verify backups after writing</label>
+                  <p id="verify-backup-help" class="text-xs text-text-dim mt-0.5">Reads each file back from storage and validates SHA-256 checksums. Adds a small amount of time but ensures backup integrity.</p>
+                </div>
               </div>
+              {#if verifyCost}
+                <VerifyCostWarning id="verify-backup-warning" providerCharges={verifyCost.providerCharges} />
+              {/if}
             </div>
-            {#if verifyCost}
-              <VerifyCostWarning id="verify-backup-warning" providerCharges={verifyCost.providerCharges} />
-            {/if}
-          </div>
-        </details>
+          </details>
+        </div>
 
         <!-- Advanced: Retry policy override (Task 11 – resilience hardening) -->
-        <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Override retry policy <Tooltip text="Per-job retry settings that override the global defaults in Settings. Leave blank to use the global values. Failed runs are retried in the background after each delay." />
-          </summary>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3 pl-6">
-            <div>
-              <label for="retry-max-override" class="block text-xs font-medium text-text-muted mb-1">Max retries <span class="text-text-dim">(blank = global)</span></label>
-              <input
-                id="retry-max-override"
-                type="number"
-                min="0"
-                max="10"
-                bind:value={form.retry_max_override}
-                placeholder="Global default"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted"
-              />
+        <div class="relative">
+          {@render summaryTip("Override retry policy", "Per-job retry settings that override the global defaults in Settings. Leave blank to use the global values. Failed runs are retried in the background after each delay.")}
+          <details class="group">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Override retry policy
+            </summary>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3 pl-6">
+              <div>
+                <label for="retry-max-override" class="block text-xs font-medium text-text-muted mb-1">Max retries <span class="text-text-dim">(blank = global)</span></label>
+                <input
+                  id="retry-max-override"
+                  type="number"
+                  min="0"
+                  max="10"
+                  bind:value={form.retry_max_override}
+                  placeholder="Global default"
+                  class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted"
+                />
+              </div>
+              <div>
+                <div class="block text-xs font-medium text-text-muted mb-1">Delays between retries <span class="text-text-dim">(blank = global)</span></div>
+                <RetryDelaysEditor bind:value={form.retry_delays_override} placeholder="Use global default" />
+              </div>
             </div>
-            <div>
-              <div class="block text-xs font-medium text-text-muted mb-1">Delays between retries <span class="text-text-dim">(blank = global)</span></div>
-              <RetryDelaysEditor bind:value={form.retry_delays_override} placeholder="Use global default" />
-            </div>
-          </div>
-        </details>
+          </details>
+        </div>
 
         <!-- Advanced: Anomaly sensitivity override (Task 19) – only when anomaly detection is enabled -->
         {#if getAnomalyEnabled()}
-        <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Anomaly sensitivity <Tooltip text="Override the global anomaly detection sensitivity for this job. '(default)' uses the value configured in Settings → General." />
-          </summary>
-          <div class="mt-3 pl-6">
-            <label for="anomaly-sensitivity-override" class="block text-xs font-medium text-text-muted mb-1">
-              Sensitivity <span class="text-text-dim">(blank = global default)</span>
-            </label>
-            <select
-              id="anomaly-sensitivity-override"
-              bind:value={form.anomaly_sensitivity}
-              class="w-full sm:w-auto px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
-            >
-              <option value="">(default)</option>
-              <option value="strict">Strict – flag small deviations</option>
-              <option value="balanced">Balanced</option>
-              <option value="permissive">Permissive – flag large deviations only</option>
-            </select>
-          </div>
-        </details>
+        <div class="relative">
+          {@render summaryTip("Anomaly sensitivity", "Override the global anomaly detection sensitivity for this job. '(default)' uses the value configured in Settings → General.")}
+          <details class="group">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Anomaly sensitivity
+            </summary>
+            <div class="mt-3 pl-6">
+              <label for="anomaly-sensitivity-override" class="block text-xs font-medium text-text-muted mb-1">
+                Sensitivity <span class="text-text-dim">(blank = global default)</span>
+              </label>
+              <select
+                id="anomaly-sensitivity-override"
+                bind:value={form.anomaly_sensitivity}
+                class="w-full sm:w-auto px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              >
+                <option value="">(default)</option>
+                <option value="strict">Strict – flag small deviations</option>
+                <option value="balanced">Balanced</option>
+                <option value="permissive">Permissive – flag large deviations only</option>
+              </select>
+            </div>
+          </details>
+        </div>
         {/if}
 
         <!-- Advanced: Max parallel uploads (Task 12 – storage resilience) -->
-        <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Upload concurrency <Tooltip text="How many files upload to the destination at once. Higher is faster on fast links; set to 1 for fragile or rate-limited remotes." />
-          </summary>
-          <div class="mt-3 pl-6">
-            <label for="job_parallel" class="block text-xs font-medium text-text-muted mb-1">
-              Max parallel uploads <span class="text-text-dim">(1–16)</span>
-            </label>
-            <input
-              id="job_parallel"
-              type="number"
-              min="1"
-              max="16"
-              bind:value={form.max_parallel_uploads}
-              class="w-full sm:w-32 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
-            />
-            <p class="text-xs text-text-dim mt-1">Higher values are faster on reliable high-bandwidth links. Lower to 1 for slow or rate-limited remotes to avoid dropped connections.</p>
-          </div>
-        </details>
+        <div class="relative">
+          {@render summaryTip("Upload concurrency", "How many files upload to the destination at once. Higher is faster on fast links; set to 1 for fragile or rate-limited remotes.")}
+          <details class="group">
+            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Upload concurrency
+            </summary>
+            <div class="mt-3 pl-6">
+              <label for="job_parallel" class="block text-xs font-medium text-text-muted mb-1">
+                Max parallel uploads <span class="text-text-dim">(1–16)</span>
+              </label>
+              <input
+                id="job_parallel"
+                type="number"
+                min="1"
+                max="16"
+                bind:value={form.max_parallel_uploads}
+                class="w-full sm:w-32 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
+              />
+              <p class="text-xs text-text-dim mt-1">Higher values are faster on reliable high-bandwidth links. Lower to 1 for slow or rate-limited remotes to avoid dropped connections.</p>
+            </div>
+          </details>
+        </div>
 
         <!-- Advanced: Deferred remote upload (#77) -->
         {#if true}
           {@const _selectedStorage = storageList.find(s => s.id === form.storage_dest_id)}
           {@const _isLocalDest = !_selectedStorage || _selectedStorage.type === 'local'}
-          <details class="group">
-            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              Deferred Remote Upload <Tooltip text="Best for slow upload links. Stops, backs up, and restarts each container locally first, then uploads everything to the remote destination after all containers are running again. Requires sufficient local staging space." />
-            </summary>
-            <div class="mt-3 pl-6">
-              <div class="flex items-start gap-3">
-                <label class="relative inline-flex items-center cursor-pointer mt-0.5" class:opacity-50={_isLocalDest} class:cursor-not-allowed={_isLocalDest} title={_isLocalDest ? 'Only available when destination is remote' : ''}>
-                  <input type="checkbox" bind:checked={form.defer_remote_upload} disabled={_isLocalDest} aria-labelledby="defer-upload-label" aria-describedby="defer-upload-description" class="sr-only peer" />
-                  <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
-                </label>
-                <div>
-                  <p id="defer-upload-label" class="text-sm text-text">Defer remote upload until all backups complete</p>
-                  <p id="defer-upload-description" class="text-xs text-text-dim mt-0.5">Backs up every container to local staging first and brings them all online before any data is sent to the remote destination. {_isLocalDest ? 'Only available when destination is remote (SFTP, SMB, NFS, S3, WebDAV).' : 'Per-file uploads are retried up to 3 times with exponential backoff (5s → 30s → 2m).'}</p>
+          <div class="relative">
+            {@render summaryTip("Deferred Remote Upload", "Best for slow upload links. Stops, backs up, and restarts each container locally first, then uploads everything to the remote destination after all containers are running again. Requires sufficient local staging space.")}
+            <details class="group">
+              <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+                <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                Deferred Remote Upload
+              </summary>
+              <div class="mt-3 pl-6">
+                <div class="flex items-start gap-3">
+                  <label class="relative inline-flex items-center cursor-pointer mt-0.5" class:opacity-50={_isLocalDest} class:cursor-not-allowed={_isLocalDest} title={_isLocalDest ? 'Only available when destination is remote' : ''}>
+                    <input type="checkbox" bind:checked={form.defer_remote_upload} disabled={_isLocalDest} id="job-defer-upload" aria-labelledby="defer-upload-label" aria-describedby="defer-upload-description" class="sr-only peer" />
+                    <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                  </label>
+                  <div>
+                    <label for="job-defer-upload" id="defer-upload-label" class="block text-sm text-text">Defer remote upload until all backups complete</label>
+                    <p id="defer-upload-description" class="text-xs text-text-dim mt-0.5">Backs up every container to local staging first and brings them all online before any data is sent to the remote destination. {_isLocalDest ? 'Only available when destination is remote (SFTP, SMB, NFS, S3, WebDAV).' : 'Per-file uploads are retried up to 3 times with exponential backoff (5s → 30s → 2m).'}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          </details>
+            </details>
+          </div>
         {/if}
 
-        <details class="group">
-          <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Adaptive Backup <Tooltip text="Checks whether this job's containers, VMs, or folders are actively in use before each scheduled run. Busy workloads (e.g. Plex mid-stream, a folder still being written to) postpone the backup, re-checking every few minutes until idle — or until the max-postpone window elapses, when the backup runs anyway. Manual Run Now always runs immediately. Idle thresholds are configured in Settings." />
-          </summary>
-          <div class="mt-3 pl-6">
-            <div class="flex items-start gap-3">
-              <label class="relative inline-flex items-center cursor-pointer mt-0.5">
-                <input type="checkbox" bind:checked={form.adaptive_enabled} aria-label="Only back up when workloads are idle" class="sr-only peer" />
-                <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
-              </label>
-              <div>
-                <p class="text-sm text-text">Only back up when workloads are idle</p>
-                <p class="text-xs text-text-dim mt-0.5">Scheduled runs are postponed while containers or VMs are busy (CPU/network) or folders were recently written to, and retried automatically once things quiet down.</p>
-              </div>
-            </div>
-          </div>
-        </details>
-
-        {#if form.selectedTypes.includes('containers') || form.selectedTypes.includes('container') || hasContainers || form.auto_include_containers}
+        <div class="relative">
+          {@render summaryTip("Adaptive Backup", "Checks whether this job's containers, VMs, or folders are actively in use before each scheduled run. Busy workloads (e.g. Plex mid-stream, a folder still being written to) postpone the backup, re-checking every few minutes until idle — or until the max-postpone window elapses, when the backup runs anyway. Manual Run Now always runs immediately. Idle thresholds are configured in Settings.")}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
               <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              Auto-Include New Containers <Tooltip text="Automatically adds newly created Docker containers to this job on each backup run, and automatically prunes deleted containers." />
+              Adaptive Backup
             </summary>
             <div class="mt-3 pl-6">
               <div class="flex items-start gap-3">
                 <label class="relative inline-flex items-center cursor-pointer mt-0.5">
-                  <input type="checkbox" bind:checked={form.auto_include_containers} aria-label="Automatically back up new containers" class="sr-only peer" />
+                  <input type="checkbox" bind:checked={form.adaptive_enabled} aria-label="Only back up when workloads are idle" class="sr-only peer" />
                   <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
                 </label>
                 <div>
-                  <p class="text-sm text-text">Automatically back up newly discovered containers</p>
-                  <p class="text-xs text-text-dim mt-0.5">New Docker containers on this server are automatically enrolled into this job on each backup run. Auto-added containers default to backing up appdata mounts and named volumes; non-appdata bind mounts (e.g. large media shares) are excluded by default until reviewed under Container Mounts &amp; Exclusions. Containers carrying the <code class="text-vault-text font-mono text-[11px]">vault.exclude</code> label are skipped.</p>
+                  <p class="text-sm text-text">Only back up when workloads are idle</p>
+                  <p class="text-xs text-text-dim mt-0.5">Scheduled runs are postponed while containers or VMs are busy (CPU/network) or folders were recently written to, and retried automatically once things quiet down.</p>
                 </div>
               </div>
             </div>
           </details>
+        </div>
+
+        {#if form.selectedTypes.includes('containers') || form.selectedTypes.includes('container') || hasContainers || form.auto_include_containers}
+          <div class="relative">
+            {@render summaryTip("Auto-Include New Containers", "Automatically adds newly created Docker containers to this job on each backup run, and automatically prunes deleted containers.")}
+            <details class="group">
+              <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+                <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                Auto-Include New Containers
+              </summary>
+              <div class="mt-3 pl-6">
+                <div class="flex items-start gap-3">
+                  <label class="relative inline-flex items-center cursor-pointer mt-0.5">
+                    <input type="checkbox" bind:checked={form.auto_include_containers} aria-label="Automatically back up new containers" class="sr-only peer" />
+                    <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                  </label>
+                  <div>
+                    <p class="text-sm text-text">Automatically back up newly discovered containers</p>
+                    <p class="text-xs text-text-dim mt-0.5">New Docker containers on this server are automatically enrolled into this job on each backup run. Auto-added containers default to backing up appdata mounts and named volumes; non-appdata bind mounts (e.g. large media shares) are excluded by default until reviewed under Container Mounts &amp; Exclusions. Containers carrying the <code class="text-vault-text font-mono text-[11px]">vault.exclude</code> label are skipped.</p>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
         {/if}
 
         {#if hasVMs}
-          <details class="group" open>
-            <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              VM Restore Verification <Tooltip text="After restoring a VM that was running at backup time, Vault auto-starts it and checks that it came up successfully." />
-            </summary>
-            <div class="space-y-4 mt-3 pl-6">
-              <p class="text-xs text-text-dim">Applies only when a VM was running at backup time and Vault auto-starts it after restore.</p>
-              {#each selectedVMItems as vmItem (vmItem.item_name)}
-                {@const verify = getVMRestoreVerifySettings(vmItem)}
-                {@const verifyIdBase = `vm-restore-verify-${vmItem.sort_order ?? 0}`}
-                <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-4">
-                  <div>
-                    <p class="text-sm font-medium text-text">{vmItem.item_name}</p>
-                    <p class="text-xs text-text-dim mt-0.5">Choose how Vault decides the VM is really ready after it starts.</p>
-                  </div>
-
-                  <div>
-                    <label for={`${verifyIdBase}-mode`} class="block text-xs font-medium text-text-muted mb-1.5">Readiness Check <Tooltip text="Running State: quick check that the VM is powered on. QEMU Guest Agent: waits for the guest OS to respond. TCP Service: waits for a specific port to accept connections." /></label>
-                    <select
-                      id={`${verifyIdBase}-mode`}
-                      value={verify.mode}
-                      onchange={(e) => updateVMRestoreVerifySetting(vmItem.item_name, 'restore_verify_mode', e.currentTarget.value)}
-                      class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
-                    >
-                      {#each vmRestoreVerifyModes as mode (mode.value)}
-                        <option value={mode.value}>{mode.label}</option>
-                      {/each}
-                    </select>
-                    <p class="text-xs text-text-dim mt-1">{vmRestoreVerifyModes.find((mode) => mode.value === verify.mode)?.description}</p>
-                  </div>
-
-                  {#if verify.mode !== 'running'}
-                    <div class="grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <label for={`${verifyIdBase}-timeout`} class="block text-xs font-medium text-text-muted mb-1.5">Timeout</label>
-                        <div class="flex items-center gap-2">
-                          <input
-                            id={`${verifyIdBase}-timeout`}
-                            type="number"
-                            min="1"
-                            value={verify.timeout}
-                            oninput={(e) => updateVMRestoreVerifySetting(vmItem.item_name, 'restore_verify_timeout_seconds', e.currentTarget.value)}
-                            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
-                          />
-                          <span class="text-xs text-text-dim shrink-0">seconds</span>
-                        </div>
-                      </div>
-
-                      {#if verify.mode === 'tcp'}
-                        <div>
-                          <label for={`${verifyIdBase}-port`} class="block text-xs font-medium text-text-muted mb-1.5">TCP Port</label>
-                          <input
-                            id={`${verifyIdBase}-port`}
-                            type="number"
-                            min="1"
-                            max="65535"
-                            value={verify.port}
-                            oninput={(e) => updateVMRestoreVerifySetting(vmItem.item_name, 'restore_verify_tcp_port', e.currentTarget.value)}
-                            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
-                            placeholder="8123"
-                          />
-                        </div>
-
-                        <div class="sm:col-span-2">
-                          <label for={`${verifyIdBase}-host`} class="block text-xs font-medium text-text-muted mb-1.5">Host <span class="text-text-dim">(optional)</span></label>
-                          <input
-                            id={`${verifyIdBase}-host`}
-                            type="text"
-                            value={verify.host}
-                            oninput={(e) => updateVMRestoreVerifySetting(vmItem.item_name, 'restore_verify_tcp_host', e.currentTarget.value)}
-                            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
-                            placeholder="Auto-detect from libvirt"
-                          />
-                          <p class="text-xs text-text-dim mt-1">Leave blank to let Vault ask libvirt for the guest address. Set an explicit host when the VM uses a fixed address or libvirt cannot report it.</p>
-                        </div>
-                      {/if}
+          <div class="relative">
+            {@render summaryTip("VM Restore Verification", "After restoring a VM that was running at backup time, Vault auto-starts it and checks that it came up successfully.")}
+            <details class="group" open>
+              <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
+                <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                VM Restore Verification
+              </summary>
+              <div class="space-y-4 mt-3 pl-6">
+                <p class="text-xs text-text-dim">Applies only when a VM was running at backup time and Vault auto-starts it after restore.</p>
+                {#each selectedVMItems as vmItem (vmItem.item_name)}
+                  {@const verify = getVMRestoreVerifySettings(vmItem)}
+                  {@const verifyIdBase = `vm-restore-verify-${vmItem.sort_order ?? 0}`}
+                  <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-4">
+                    <div>
+                      <p class="text-sm font-medium text-text">{vmItem.item_name}</p>
+                      <p class="text-xs text-text-dim mt-0.5">Choose how Vault decides the VM is really ready after it starts.</p>
                     </div>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-          </details>
+
+                    <div>
+                      <div class="block text-xs font-medium text-text-muted mb-1.5">
+                        <label for={`${verifyIdBase}-mode`}>Readiness Check</label>
+                        <Tooltip label="Readiness Check" text="Running State: quick check that the VM is powered on. QEMU Guest Agent: waits for the guest OS to respond. TCP Service: waits for a specific port to accept connections." />
+                      </div>
+                      <select
+                        id={`${verifyIdBase}-mode`}
+                        value={verify.mode}
+                        onchange={(e) => updateVMRestoreVerifySetting(vmItem.item_name, 'restore_verify_mode', e.currentTarget.value)}
+                        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
+                      >
+                        {#each vmRestoreVerifyModes as mode (mode.value)}
+                          <option value={mode.value}>{mode.label}</option>
+                        {/each}
+                      </select>
+                      <p class="text-xs text-text-dim mt-1">{vmRestoreVerifyModes.find((mode) => mode.value === verify.mode)?.description}</p>
+                    </div>
+
+                    {#if verify.mode !== 'running'}
+                      <div class="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label for={`${verifyIdBase}-timeout`} class="block text-xs font-medium text-text-muted mb-1.5">Timeout</label>
+                          <div class="flex items-center gap-2">
+                            <input
+                              id={`${verifyIdBase}-timeout`}
+                              type="number"
+                              min="1"
+                              value={verify.timeout}
+                              oninput={(e) => updateVMRestoreVerifySetting(vmItem.item_name, 'restore_verify_timeout_seconds', e.currentTarget.value)}
+                              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
+                            />
+                            <span class="text-xs text-text-dim shrink-0">seconds</span>
+                          </div>
+                        </div>
+
+                        {#if verify.mode === 'tcp'}
+                          <div>
+                            <label for={`${verifyIdBase}-port`} class="block text-xs font-medium text-text-muted mb-1.5">TCP Port</label>
+                            <input
+                              id={`${verifyIdBase}-port`}
+                              type="number"
+                              min="1"
+                              max="65535"
+                              value={verify.port}
+                              oninput={(e) => updateVMRestoreVerifySetting(vmItem.item_name, 'restore_verify_tcp_port', e.currentTarget.value)}
+                              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
+                              placeholder="8123"
+                            />
+                          </div>
+
+                          <div class="sm:col-span-2">
+                            <label for={`${verifyIdBase}-host`} class="block text-xs font-medium text-text-muted mb-1.5">Host <span class="text-text-dim">(optional)</span></label>
+                            <input
+                              id={`${verifyIdBase}-host`}
+                              type="text"
+                              value={verify.host}
+                              oninput={(e) => updateVMRestoreVerifySetting(vmItem.item_name, 'restore_verify_tcp_host', e.currentTarget.value)}
+                              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text"
+                              placeholder="Auto-detect from libvirt"
+                            />
+                            <p class="text-xs text-text-dim mt-1">Leave blank to let Vault ask libvirt for the guest address. Set an explicit host when the VM uses a fixed address or libvirt cannot report it.</p>
+                          </div>
+                        {/if}
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            </details>
+          </div>
         {/if}
 
         {#if hasContainers}
@@ -2607,3 +2656,16 @@
       </label>
     </div>
 </ConfirmDialog>
+
+<!-- A summary's "More info" trigger sits outside the <summary>, because a
+     button inside one is a nested control (#608). It is laid over the summary
+     row, after an invisible copy of the title, so it stays where it was. Only
+     the button takes the pointer; everything else passes taps to the summary.
+     Put it in a `relative` wrapper with the <details>. -->
+{#snippet summaryTip(title, text)}
+  <div class="summary-tip absolute top-0 left-0 flex items-center gap-2 text-sm font-medium pointer-events-none [&_button]:pointer-events-auto">
+    <span class="w-4 h-4 shrink-0" aria-hidden="true"></span>
+    <span class="invisible" aria-hidden="true">{title}</span>
+    <Tooltip label={title} {text} />
+  </div>
+{/snippet}

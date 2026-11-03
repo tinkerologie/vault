@@ -505,7 +505,7 @@
         </div>
 
       <div>
-        <span class="block text-sm font-medium text-text mb-1">Sync Schedule <Tooltip text="Controls how frequently Vault pulls restore points from the remote Vault server." /></span>
+        <span class="block text-sm font-medium text-text mb-1">Sync Schedule <Tooltip label="Sync Schedule" text="Controls how frequently Vault pulls restore points from the remote Vault server." /></span>
         <ScheduleBuilder bind:value={form.schedule} />
       </div>
 

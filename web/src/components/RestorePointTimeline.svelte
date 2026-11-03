@@ -202,7 +202,7 @@
                 {:else if chainDeps(rp) > 0}
                   <span class="inline-flex items-center gap-0.5">
                     <span class="text-[11px] px-1.5 py-0.5 rounded-full font-medium bg-info/15 text-info">Chain ×{rp.chain_depth}</span>
-                    <Tooltip text="Chain length is {rp.chain_depth}. Restoring replays the base full backup plus intermediate backups in this chain." />
+                    <Tooltip label="Chain depth" text="Chain length is {rp.chain_depth}. Restoring replays the base full backup plus intermediate backups in this chain." />
                   </span>
                 {/if}
                 {#if rp.retention_preserved}
