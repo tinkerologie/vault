@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -31,7 +32,7 @@ var commonPassphraseWords = []string{
 	"correcthorsebatterystaple",
 }
 
-var passphraseLeet = strings.NewReplacer("0", "o", "1", "i", "3", "e", "4", "a", "5", "s", "7", "t", "@", "a", "$", "s", "!", "i")
+var passphraseLeet = map[rune]rune{'0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't', '@': 'a', '$': 's', '!': 'i'}
 
 // CheckPassphraseStrength rejects passphrases that are cheap to guess offline
 // against a copied backup: too short, too repetitive, a keyboard or number run,
@@ -62,7 +63,7 @@ func CheckPassphraseStrength(p string) error {
 	if isAllDigits(lower) && len(runes) < 20 {
 		return errors.New("passphrase is too predictable: a number needs at least 20 digits")
 	}
-	if onlyCommonWords(lower) || onlyCommonWords(passphraseLeet.Replace(lower)) {
+	if onlyCommonWords(lower, false) || onlyCommonWords(lower, true) {
 		return errors.New("passphrase is too common: use several unrelated words or a generated value")
 	}
 	return nil
@@ -74,24 +75,43 @@ func isAllDigits(s string) bool {
 
 // onlyCommonWords reports whether s contains a common word and fewer than four
 // other letters. Digits and symbols do not count, because guessing tools append
-// them to words first.
-func onlyCommonWords(s string) bool {
-	letters := strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return r
+// them to words first. With leet set, they can also spell a word (p@ssw0rd), but
+// what is left over still counts by what the character originally was, so a
+// suffix such as 12345! is not mistaken for letters.
+func onlyCommonWords(s string, leet bool) bool {
+	var norm []rune
+	var wasLetter []bool
+	for _, r := range s {
+		mapped := r
+		if leet {
+			if m, ok := passphraseLeet[r]; ok {
+				mapped = m
+			}
 		}
-		return -1
-	}, s)
-	whole := letters
-	for _, w := range commonPassphraseWords {
-		letters = strings.ReplaceAll(letters, w, "")
+		if unicode.IsLetter(mapped) || unicode.IsDigit(mapped) {
+			norm = append(norm, mapped)
+			wasLetter = append(wasLetter, unicode.IsLetter(r))
+		}
 	}
-	if letters == whole {
+	found := false
+	for _, w := range commonPassphraseWords {
+		word := []rune(w)
+		for i := 0; i+len(word) <= len(norm); {
+			if !slices.Equal(norm[i:i+len(word)], word) {
+				i++
+				continue
+			}
+			norm = slices.Delete(norm, i, i+len(word))
+			wasLetter = slices.Delete(wasLetter, i, i+len(word))
+			found = true
+		}
+	}
+	if !found {
 		return false
 	}
 	rest := 0
-	for _, r := range letters {
-		if unicode.IsLetter(r) {
+	for _, letter := range wasLetter {
+		if letter {
 			rest++
 		}
 	}

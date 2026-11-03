@@ -8,7 +8,7 @@ func TestCheckPassphraseStrength(t *testing.T) {
 		"", "short", "hunter42!", "elevenchars",
 		"aaaaaaaaaaaaaaaa", "abcabcabcabcabc",
 		"123456789012", "abcdefghijklmnop", "zyxwvutsrqpo",
-		"password1234", "Password1234!", "P@ssw0rd2026!", "Summer2026!!!", "qwertyuiop12",
+		"password1234", "Password1234!", "P@ssw0rd2026!", "P@ssw0rd12345!", "W3lc0me12345!", "Summer2026!!!", "qwertyuiop12",
 		"letmein12345", "unraidbackup1", "correcthorsebatterystaple",
 		"987654321098", "4815162342481516", "my-test-passphrase",
 		"٣٧١٩٤٨٢٦٠٥١٣", "qazwsxedcrfv", "1qaz2wsx3edc4", "zaq12wsxcde3",
