@@ -2659,12 +2659,13 @@
 
 <!-- A summary's "More info" trigger sits outside the <summary>, because a
      button inside one is a nested control (#608). It is laid over the summary
-     row, after an invisible copy of the title, so it stays where it was. Put it
-     in a `relative` wrapper with the <details>. -->
+     row, after an invisible copy of the title, so it stays where it was. Only
+     the button takes the pointer; everything else passes taps to the summary.
+     Put it in a `relative` wrapper with the <details>. -->
 {#snippet summaryTip(title, text)}
-  <div class="absolute top-0 left-0 flex items-center gap-2 text-sm font-medium pointer-events-none">
+  <div class="summary-tip absolute top-0 left-0 flex items-center gap-2 text-sm font-medium pointer-events-none [&_button]:pointer-events-auto">
     <span class="w-4 h-4 shrink-0" aria-hidden="true"></span>
     <span class="invisible" aria-hidden="true">{title}</span>
-    <span class="contents pointer-events-auto"><Tooltip label={title} {text} /></span>
+    <Tooltip label={title} {text} />
   </div>
 {/snippet}

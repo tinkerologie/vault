@@ -757,6 +757,14 @@ html.vault-embedded .sticky.bottom-4 { bottom: calc(var(--vault-visible-bottom) 
     height: 44px;
     transform: translate(-50%, -50%);
   }
+  /* A tooltip laid over a <summary> row (Jobs.svelte summaryTip) grows only to
+     the right, away from the title, and keeps the row's height, so a tap on the
+     title or the space after it still toggles the disclosure. */
+  .summary-tip .hit-target-touch::after {
+    left: 0;
+    height: 24px;
+    transform: translateY(-50%);
+  }
 }
 
 /* Status badge system */

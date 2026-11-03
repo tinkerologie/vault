@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { test, expect, type Frame, type Locator, type Page } from '@playwright/test';
+import { test, expect, devices, type Frame, type Locator, type Page } from '@playwright/test';
 import { setupVaultMockApi } from './mocks/vault-api';
 import { seedTheme, settleMotion } from './helpers/contrast';
 import { tabWalk } from './helpers/keyboard-walk';
@@ -340,12 +340,12 @@ test.describe('screen reader polish (#608)', () => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.goto('/#/anomalies');
       const main = page.getByRole('main');
+      const rows = main.getByRole('heading', { level: 2 });
+      await expect(rows).toHaveCount(2);
       const walk = await tabWalk(page, page.mainFrame());
       expect(walk.stops.map((s) => s.announced)).toContain('button "Backup size spike above baseline size"');
       expect(walk.stops.filter((s) => !s.named)).toEqual([]);
 
-      const rows = main.getByRole('heading', { level: 2 });
-      await expect(rows).toHaveCount(2);
       await expect(rows.nth(0)).toHaveAccessibleName('Backup size spike above baseline size');
       await expect(rows.nth(1)).toHaveAccessibleName('Backup duration spike duration');
 
@@ -395,5 +395,63 @@ test.describe('screen reader polish (#608)', () => {
       }
       await context.close();
     }
+  });
+});
+
+// The job editor's section tooltips are laid over the <summary> row (#608). On a
+// touch screen their enlarged tap area must not take taps meant for the title.
+test.describe('summary tooltips on a touch screen (#608)', () => {
+  const { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch } = devices['Pixel 7'];
+  test.use({ viewport, userAgent, deviceScaleFactor, isMobile, hasTouch });
+
+  test('tapping the title toggles the section, tapping the icon opens the tip', async ({ page }) => {
+    await settleMotion(page);
+    await setupVaultMockApi(page);
+    await page.goto('/#/jobs');
+    await page.getByRole('button', { name: /new job/i }).tap();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: /Containers/i }).first().tap();
+    await dialog.getByRole('button', { name: /plex/i }).first().tap();
+    const next = dialog.getByRole('button', { name: 'Next', exact: true });
+    await next.tap();
+    await page.locator('#storage').selectOption({ label: 'Local Array Backup (local)' });
+    await next.tap();
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+
+    const summary = dialog.locator('summary', { hasText: 'Long-Term Retention (LTR)' });
+    const details = summary.locator('xpath=..');
+    const icon = dialog.getByRole('button', { name: 'More info: Long-Term Retention (LTR)', exact: true });
+    await summary.scrollIntoViewIfNeeded();
+    await expect(details).not.toHaveAttribute('open');
+    // Where the title's text ends, on the title's row.
+    const end = await summary.evaluate((el) => {
+      const text = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent!.trim())!;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const r = [...range.getClientRects()].at(-1)!;
+      return { x: r.right, y: r.top + r.height / 2 };
+    });
+    const box = (await icon.boundingBox())!;
+    expect(box.x).toBeGreaterThan(end.x);
+
+    // The end of the title, and the middle of the space between it and the icon,
+    // toggle the section. Taps right at the icon's edge are left to the browser's
+    // touch adjustment, which may pick either.
+    for (const x of [end.x - 3, (end.x + box.x) / 2, end.x - 3]) {
+      const wasOpen = (await details.getAttribute('open')) !== null;
+      // Taps close together in time and place count as a double-tap, which sends no click.
+      await page.waitForTimeout(500);
+      await page.touchscreen.tap(x, end.y);
+      if (wasOpen) await expect(details).not.toHaveAttribute('open');
+      else await expect(details).toHaveAttribute('open', '');
+      await expect(page.getByRole('tooltip')).toHaveCount(0);
+    }
+
+    // The icon opens the tip and leaves the section as it was.
+    const openBefore = await details.getAttribute('open');
+    await page.waitForTimeout(500);
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.getByRole('tooltip')).toContainText('Keep N latest');
+    expect(await details.getAttribute('open')).toBe(openBefore);
   });
 });
