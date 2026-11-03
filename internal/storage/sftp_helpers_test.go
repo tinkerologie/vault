@@ -112,8 +112,10 @@ func genTestSSHKey(t *testing.T) (ssh.PublicKey, string) {
 func TestSFTPHostKeyCallback_FingerprintMatch(t *testing.T) {
 	t.Parallel()
 	pub, fp := genTestSSHKey(t)
-	a := &SFTPAdapter{config: SFTPConfig{Host: "h", HostKey: fp}}
-	cb := a.hostKeyCallback()
+	cb, err := newHostKeyCallback(SFTPConfig{Host: "h", HostKey: fp})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if cb == nil {
 		t.Fatal("hostKeyCallback returned nil")
 	}
@@ -125,8 +127,11 @@ func TestSFTPHostKeyCallback_FingerprintMatch(t *testing.T) {
 func TestSFTPHostKeyCallback_FingerprintMismatch(t *testing.T) {
 	t.Parallel()
 	pub, _ := genTestSSHKey(t)
-	a := &SFTPAdapter{config: SFTPConfig{Host: "h", HostKey: "deadbeef"}}
-	cb := a.hostKeyCallback()
+	_, other := genTestSSHKey(t)
+	cb, err := newHostKeyCallback(SFTPConfig{Host: "h", HostKey: other})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := cb("h:22", &net.TCPAddr{}, pub); err == nil {
 		t.Error("expected mismatch rejection, got nil")
 	}
@@ -136,33 +141,12 @@ func TestSFTPHostKeyCallback_FingerprintWithSHA256Prefix(t *testing.T) {
 	t.Parallel()
 	pub, fp := genTestSSHKey(t)
 	// Prepend the standard "SHA256:" label users paste from ssh-keygen.
-	a := &SFTPAdapter{config: SFTPConfig{Host: "h", HostKey: "SHA256:" + fp}}
-	cb := a.hostKeyCallback()
+	cb, err := newHostKeyCallback(SFTPConfig{Host: "h", HostKey: "SHA256:" + fp})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := cb("h:22", &net.TCPAddr{}, pub); err != nil {
 		t.Errorf("SHA256:-prefixed fingerprint should match, got %v", err)
-	}
-}
-
-func TestSFTPHostKeyCallback_InsecureFallback(t *testing.T) {
-	t.Parallel()
-	pub, _ := genTestSSHKey(t)
-	a := &SFTPAdapter{config: SFTPConfig{Host: "h"}}
-	cb := a.hostKeyCallback()
-	if err := cb("h:22", &net.TCPAddr{}, pub); err != nil {
-		t.Errorf("insecure fallback should accept any key, got %v", err)
-	}
-}
-
-func TestSFTPHostKeyCallback_KnownHostsBadPathFallsBack(t *testing.T) {
-	t.Parallel()
-	pub, _ := genTestSSHKey(t)
-	a := &SFTPAdapter{config: SFTPConfig{Host: "h", KnownHostsFile: "/no/such/file/that/exists"}}
-	cb := a.hostKeyCallback()
-	if cb == nil {
-		t.Fatal("hostKeyCallback returned nil")
-	}
-	if err := cb("h:22", &net.TCPAddr{}, pub); err != nil {
-		t.Errorf("fallback should accept any key, got %v", err)
 	}
 }
 
@@ -177,14 +161,18 @@ func TestSFTPHostKeyCallback_KnownHostsFileValid(t *testing.T) {
 	if err := os.WriteFile(khPath, []byte(line), 0600); err != nil { // #nosec G306 — test temp file
 		t.Fatalf("write known_hosts: %v", err)
 	}
-	a := &SFTPAdapter{config: SFTPConfig{Host: "h", KnownHostsFile: khPath}}
-	cb := a.hostKeyCallback()
-	if cb == nil {
-		t.Fatal("hostKeyCallback returned nil")
+	cb, err := newHostKeyCallback(SFTPConfig{Host: "h", KnownHostsFile: khPath})
+	if err != nil {
+		t.Fatal(err)
 	}
-	// The success branch is what matters for coverage; we don't invoke the
-	// callback (the knownhosts package is opinionated about host:port format
-	// matching and is exercised by its own tests).
+	addr := &net.TCPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 22}
+	if err := cb("h:22", addr, pub); err != nil {
+		t.Errorf("listed key rejected: %v", err)
+	}
+	other, _ := genTestSSHKey(t)
+	if err := cb("h:22", addr, other); err == nil {
+		t.Error("unlisted key accepted")
+	}
 }
 
 // ---- connect failure paths -------------------------------------------

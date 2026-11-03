@@ -515,8 +515,8 @@
       showToast('Passphrases do not match', 'error')
       return
     }
-    if (encPassphrase.length < 8) {
-      showToast('Passphrase must be at least 8 characters', 'error')
+    if ([...encPassphrase].length < 12) {
+      showToast('Passphrase must be at least 12 characters', 'error')
       return
     }
     encSaving = true
@@ -842,8 +842,8 @@
       showToast('Passphrases do not match', 'error')
       return
     }
-    if (changeNewPass.length < 8) {
-      showToast('Passphrase must be at least 8 characters', 'error')
+    if ([...changeNewPass].length < 12) {
+      showToast('Passphrase must be at least 12 characters', 'error')
       return
     }
     encSaving = true

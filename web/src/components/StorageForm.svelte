@@ -266,6 +266,11 @@
       <input id="cfg_spath" type="text" bind:value={form.config.base_path}
         class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" placeholder="/backups/vault" />
     </div>
+    <div>
+      <label for="cfg_shostkey" class="block text-sm font-medium text-text-muted mb-1.5">Host Key Fingerprint <Tooltip text="Optional. Run ssh-keygen -lf on the server's host key and copy the SHA256 value. If left empty, Vault trusts the key seen on the first connection and refuses a different key later. Set this after replacing the server." /></label>
+      <input id="cfg_shostkey" type="text" autocomplete="off" spellcheck="false" bind:value={form.config.host_key}
+        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" placeholder="SHA256:..." />
+    </div>
   {:else if form.type === 'smb'}
     <div class="grid grid-cols-2 gap-3">
       <div>

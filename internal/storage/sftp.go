@@ -3,8 +3,6 @@ package storage
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -21,7 +19,6 @@ import (
 	"github.com/pkg/sftp"
 	"github.com/tinkerologie/vault/internal/safepath"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 type SFTPConfig struct {
@@ -32,7 +29,7 @@ type SFTPConfig struct {
 	KeyFile        string `json:"key_file"`
 	BasePath       string `json:"base_path"`
 	Path           string `json:"path"`             // Deprecated alias for BasePath; kept for backward compatibility.
-	HostKey        string `json:"host_key"`         // SHA-256 fingerprint of host public key
+	HostKey        string `json:"host_key"`         // SHA-256 fingerprint of host public key (OpenSSH base64 or hex)
 	KnownHostsFile string `json:"known_hosts_file"` // Path to OpenSSH known_hosts file
 }
 
@@ -71,8 +68,9 @@ func (c *sftpConnection) Close() error {
 }
 
 type SFTPAdapter struct {
-	config SFTPConfig
-	pool   *sftpPool
+	config  SFTPConfig
+	pool    *sftpPool
+	hostKey ssh.HostKeyCallback
 }
 
 func NewSFTPAdapter(config SFTPConfig) (*SFTPAdapter, error) {
@@ -87,7 +85,11 @@ func NewSFTPAdapter(config SFTPConfig) (*SFTPAdapter, error) {
 	// check sends the server the same base JoinRemote joins under, even when
 	// Vault runs on Windows (a no-op elsewhere).
 	config.BasePath = filepath.ToSlash(config.BasePath)
-	a := &SFTPAdapter{config: config}
+	hostKey, err := newHostKeyCallback(config)
+	if err != nil {
+		return nil, err
+	}
+	a := &SFTPAdapter{config: config, hostKey: hostKey}
 	a.pool = newSFTPPool(sftpPoolSize, func() (sftpConn, error) {
 		return a.dialConnection()
 	})
@@ -152,7 +154,7 @@ func (s *SFTPAdapter) dialConnection() (*sftpConnection, error) {
 	sshConfig := &ssh.ClientConfig{
 		User:            s.config.User,
 		Auth:            authMethods,
-		HostKeyCallback: s.hostKeyCallback(),
+		HostKeyCallback: s.hostKey,
 	}
 
 	addr := net.JoinHostPort(s.config.Host, fmt.Sprintf("%d", s.config.Port))
@@ -251,40 +253,6 @@ func pathWithinBase(resolved, base string) bool {
 		return strings.HasPrefix(resolved, "/")
 	}
 	return resolved == base || strings.HasPrefix(resolved, base+"/")
-}
-
-// hostKeyCallback returns the appropriate SSH host key callback based on config.
-// Priority: known_hosts_file → host_key fingerprint → insecure (backward compat).
-func (s *SFTPAdapter) hostKeyCallback() ssh.HostKeyCallback {
-	// Option 1: Use a known_hosts file (OpenSSH format).
-	if s.config.KnownHostsFile != "" {
-		cb, err := knownhosts.New(s.config.KnownHostsFile)
-		if err == nil {
-			return cb
-		}
-		// Log the load error and fall through to the next option.
-		log.Printf("Warning: SFTP could not load known_hosts_file %q for host %s: %v. "+
-			"Falling back to insecure host key acceptance — configure a valid known_hosts_file or host_key to prevent MITM attacks.",
-			s.config.KnownHostsFile, s.config.Host, err)
-	}
-
-	// Option 2: Verify against a SHA-256 fingerprint of the host key.
-	if s.config.HostKey != "" {
-		expected := strings.TrimPrefix(s.config.HostKey, "SHA256:")
-		return func(_ string, _ net.Addr, key ssh.PublicKey) error {
-			hash := sha256.Sum256(key.Marshal())
-			actual := hex.EncodeToString(hash[:])
-			if !strings.EqualFold(actual, expected) {
-				return fmt.Errorf("host key mismatch: expected %s, got %s", expected, actual)
-			}
-			return nil
-		}
-	}
-
-	// Fallback: accept any key (backward compatibility with existing configs).
-	log.Printf("Warning: SFTP connection to %s has no host key verification configured. "+
-		"Set host_key or known_hosts_file in storage config to prevent MITM attacks.", s.config.Host)
-	return ssh.InsecureIgnoreHostKey() // #nosec G106 //nolint:gosec // user chose not to configure host key
 }
 
 func (s *SFTPAdapter) Write(path string, reader io.Reader) (retErr error) {

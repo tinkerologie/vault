@@ -61,13 +61,16 @@ Vault's database backups in `_vault/` are kept, and so is everything else in the
 
 ## SFTP
 
-| Field           | Description                                                                                                                                                           |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Host**        | Hostname or IP of the SSH server                                                                                                                                      |
-| **Port**        | SSH port (default: `22`)                                                                                                                                              |
-| **Username**    | SSH user with write access to the remote path                                                                                                                         |
-| **Password**    | Password for the SSH user (not required if using a key)                                                                                                               |
-| **Remote Path** | Absolute path **on the SSH server** where Vault will store backups (e.g. `/volume1/vault-backups`). The directory must exist and the user must have write permission. |
+| Field                    | Description                                                                                                                                                           |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Host**                 | Hostname or IP of the SSH server                                                                                                                                      |
+| **Port**                 | SSH port (default: `22`)                                                                                                                                              |
+| **Username**             | SSH user with write access to the remote path                                                                                                                         |
+| **Password**             | Password for the SSH user (not required if using a key)                                                                                                               |
+| **Remote Path**          | Absolute path **on the SSH server** where Vault will store backups (e.g. `/volume1/vault-backups`). The directory must exist and the user must have write permission. |
+| **Host Key Fingerprint** | Optional. The server's SHA-256 host key fingerprint, from `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server.                                           |
+
+**Host key verification:** Vault never connects to an SFTP server without verifying its key. A configured `known_hosts_file` or Host Key Fingerprint is used if present. Otherwise Vault trusts the key it sees on the first connection, records it in the activity log (**Logs**), and refuses any different key from that address, so compare that fingerprint with the server's if the network between them is not trusted. If you replace the server, the connection fails with both fingerprints: confirm the new one and enter it as the Host Key Fingerprint. An unreadable `known_hosts_file` or malformed fingerprint is an error.
 
 **Tips:**
 

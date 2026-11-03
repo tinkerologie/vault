@@ -17,6 +17,7 @@ import (
 	"github.com/tinkerologie/vault/internal/logx"
 	"github.com/tinkerologie/vault/internal/replication"
 	"github.com/tinkerologie/vault/internal/scheduler"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 var replicaCmd = &cobra.Command{
@@ -50,6 +51,7 @@ disaster recovery.`,
 			return err
 		}
 		defer database.Close()
+		storage.SetHostKeyPinner(database.PinSFTPHostKey)
 
 		// Apply configured log level from database settings.
 		applyLogLevel(database)

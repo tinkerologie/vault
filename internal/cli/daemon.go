@@ -32,6 +32,7 @@ import (
 	"github.com/tinkerologie/vault/internal/replication"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/scheduler"
+	"github.com/tinkerologie/vault/internal/storage"
 	"github.com/tinkerologie/vault/internal/tempdir"
 	"github.com/tinkerologie/vault/internal/unraid"
 )
@@ -261,6 +262,14 @@ var daemonCmd = &cobra.Command{
 			return err
 		}
 		defer func() { _ = database.Close() }() // #nosec G104 — best-effort close at shutdown
+
+		// The closure reads database when called: hybrid mode replaces it below.
+		storage.SetHostKeyPinner(durableHostKeyPinner(func() *db.DB { return database }, func() error {
+			if snapshotMgr == nil {
+				return nil
+			}
+			return snapshotMgr.SaveSnapshotAndUSBBackup()
+		}))
 
 		// In hybrid mode, attempt restoration using a fallback chain.
 		if hybridMode {

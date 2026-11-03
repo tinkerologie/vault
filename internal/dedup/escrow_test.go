@@ -138,13 +138,9 @@ func TestRewrapMasterAfterServerKeyLoss(t *testing.T) {
 	if _, err := OpenRepo(r.db, r.adapter, r.storageID, oldKey); !errors.Is(err, ErrServerKeyMismatch) {
 		t.Fatalf("old key after rewrap: %v", err)
 	}
-	backup := readFile(t, r, repoConfigPath+".20261007T030405Z.bak")
-	var cfg repoConfig
-	if err := json.Unmarshal(backup, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := UnsealMaster(oldKey, cfg.SealedMaster); err != nil {
-		t.Fatalf("backup header is not the original: %v", err)
+	// Nothing the retired key can open may stay behind (#553).
+	if backups, err := HeaderBackups(r.adapter); err != nil || len(backups) != 0 {
+		t.Fatalf("header copies after rewrap = %v, %v", backups, err)
 	}
 	// The escrow keeps working after the rewrap.
 	if _, err := OpenRepoFromEscrow(r.db, r.adapter, r.storageID, "pw"); err != nil {

@@ -3,6 +3,7 @@ package main
 
 import (
 	"github.com/brutella/dnssd"
+	"github.com/brutella/dnssd/cmd/internal/termsafe" // Vault patch: escape untrusted display data
 	"github.com/brutella/dnssd/log"
 
 	"context"
@@ -46,9 +47,9 @@ func resolve(typee, instance string) {
 		if e.ServiceInstanceName() == instance {
 			text := ""
 			for key, value := range e.Text {
-				text += fmt.Sprintf("%s=%s", key, value)
+				text += fmt.Sprintf("%s=%s", termsafe.String(key), termsafe.String(value)) // Vault patch
 			}
-			fmt.Printf("%s	%s can be reached at %s.%s.:%d %v\n", time.Now().Format(timeFormat), e.ServiceInstanceName(), e.Host, e.Domain, e.Port, text)
+			fmt.Printf("%s	%s can be reached at %s.%s.:%d %v\n", time.Now().Format(timeFormat), termsafe.String(e.ServiceInstanceName()), termsafe.String(e.Host), termsafe.String(e.Domain), e.Port, text) // Vault patch
 		}
 	}
 
@@ -149,11 +150,11 @@ func browse(typee string) {
 	fmt.Printf("Timestamp	A/R	if Domain	Service Type	Instance Name\n")
 
 	addFn := func(e dnssd.BrowseEntry) {
-		fmt.Printf("%s	Add	%s	%s	%s	%s (%s)\n", time.Now().Format(timeFormat), e.IfaceName, e.Domain, e.Type, e.Name, e.IPs)
+		fmt.Printf("%s	Add	%s	%s	%s	%s (%s)\n", time.Now().Format(timeFormat), e.IfaceName, termsafe.String(e.Domain), termsafe.String(e.Type), termsafe.String(e.Name), e.IPs) // Vault patch
 	}
 
 	rmvFn := func(e dnssd.BrowseEntry) {
-		fmt.Printf("%s	Rmv	%s	%s	%s	%s\n", time.Now().Format(timeFormat), e.IfaceName, e.Domain, e.Type, e.Name)
+		fmt.Printf("%s	Rmv	%s	%s	%s	%s\n", time.Now().Format(timeFormat), e.IfaceName, termsafe.String(e.Domain), termsafe.String(e.Type), termsafe.String(e.Name)) // Vault patch
 	}
 
 	if err := dnssd.LookupType(ctx, typee, addFn, rmvFn); err != nil {
