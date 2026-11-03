@@ -181,7 +181,7 @@ func (h *AnomalyHandler) List(w http.ResponseWriter, r *http.Request) {
 	var nextCursor string
 	if len(rows) == limit {
 		last := rows[len(rows)-1]
-		nextCursor = db.EncodeAnomalyCursor(last.LastSeenAt, last.ID)
+		nextCursor = db.EncodeAnomalyCursor(last.ID)
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{

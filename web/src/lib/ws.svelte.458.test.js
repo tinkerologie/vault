@@ -391,6 +391,64 @@ describe('poll mode', () => {
     }
   })
 
+  // #593: lookups that keep failing must not hold up later removals.
+  it('still reports later removals while earlier lookups keep failing', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      const many = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, state: 'open' }))
+      const lists = [many]
+      fetchMock.mockImplementation(async (url) => {
+        const one = String(url).match(/\/anomalies\/(\d+)/)
+        if (one) {
+          const id = Number(one[1])
+          return id <= 20 ? jsonResponse({}, false, 500) : jsonResponse({ id, state: 'acknowledged' })
+        }
+        if (String(url).includes('/anomalies')) return jsonResponse({ anomalies: lists.shift() ?? [] })
+        return jsonResponse({ active: false, queue: [] })
+      })
+      const updated = []
+      ws.onWsMessage((m) => { if (m.type === 'anomaly.updated') updated.push(m.data.id) })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(15 * 2000) // baseline: 30 open
+      await vi.advanceTimersByTimeAsync(15 * 2000) // all gone: ids 1-20 fail
+      await vi.advanceTimersByTimeAsync(15 * 2000) // the failures wait behind 21-30
+      expect([...updated].sort((a, b) => a - b)).toEqual(many.slice(20).map((a) => a.id))
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // #593: the queue is bounded; past the limit, listeners reload instead.
+  it('asks listeners to reload when too many removals are queued', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      const many = Array.from({ length: 201 }, (_, i) => ({ id: i + 1, state: 'open' }))
+      const lists = [many]
+      let lookups = 0
+      fetchMock.mockImplementation(async (url) => {
+        if (/\/anomalies\/\d+/.test(String(url))) { lookups++; return jsonResponse({}, false, 500) }
+        if (String(url).includes('/anomalies')) return jsonResponse({ anomalies: lists.shift() ?? [] })
+        return jsonResponse({ active: false, queue: [] })
+      })
+      const bulk = []
+      ws.onWsMessage((m) => { if (m.type === 'anomaly.bulk_resolved') bulk.push(m) })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(15 * 2000) // baseline: 201 open
+      await vi.advanceTimersByTimeAsync(15 * 2000) // all gone: over the limit
+      expect(bulk).toHaveLength(1)
+      expect(lookups).toBe(0)
+      await vi.advanceTimersByTimeAsync(15 * 2000) // nothing left queued
+      expect(lookups).toBe(0)
+      expect(anomalies.setOpenList).toHaveBeenLastCalledWith([])
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('never runs two anomaly checks at once', async () => {
     vi.useFakeTimers()
     try {

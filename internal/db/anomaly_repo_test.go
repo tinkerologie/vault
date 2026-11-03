@@ -479,7 +479,7 @@ func TestAnomalyRepoListKeysetPagination(t *testing.T) {
 			seen[r.ID] = true
 		}
 		last := rows[len(rows)-1]
-		cursor = EncodeAnomalyCursor(last.LastSeenAt, last.ID)
+		cursor = EncodeAnomalyCursor(last.ID)
 	}
 
 	if len(seen) != total {
@@ -577,41 +577,47 @@ func TestAnomalyRepoListFilters(t *testing.T) {
 }
 
 // TestAnomalyRepoCursorRoundTrip verifies EncodeAnomalyCursor →
-// DecodeAnomalyCursor round-trips correctly, and that a malformed cursor
-// returns an error.
+// DecodeAnomalyCursor round-trips, that a pre-upgrade "<seconds>:<id>"
+// cursor is recognised as legacy, and that a malformed cursor returns an
+// error.
 func TestAnomalyRepoCursorRoundTrip(t *testing.T) {
-	ts := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	id := int64(42)
+	encoded := EncodeAnomalyCursor(42)
+	if encoded != "v2:42" {
+		t.Errorf("EncodeAnomalyCursor(42) = %q, want %q", encoded, "v2:42")
+	}
+	id, legacy, err := DecodeAnomalyCursor(encoded)
+	if err != nil || legacy || id != 42 {
+		t.Errorf("DecodeAnomalyCursor(%q) = %d, %v, %v; want 42, false, nil", encoded, id, legacy, err)
+	}
 
-	encoded := EncodeAnomalyCursor(ts, id)
+	if _, legacy, err := DecodeAnomalyCursor("1780142400:42"); err != nil || !legacy {
+		t.Errorf("DecodeAnomalyCursor(legacy) = legacy %v, err %v; want true, nil", legacy, err)
+	}
 
-	decodedTs, decodedID, err := DecodeAnomalyCursor(encoded)
+	for _, bad := range []string{"", "nocolon", "abc:42", "1234567890:xyz", "v2:", "v2:abc", "v2:1:2", "v3:1"} {
+		if _, _, err := DecodeAnomalyCursor(bad); err == nil {
+			t.Errorf("DecodeAnomalyCursor(%q): want error, got nil", bad)
+		}
+	}
+}
+
+// TestAnomalyRepoListLegacyCursorEndsList verifies a pre-upgrade cursor
+// returns an empty page rather than an error or repeated rows.
+func TestAnomalyRepoListLegacyCursorEndsList(t *testing.T) {
+	d := setupTestDB(t)
+	if _, err := d.InsertOpenAnomaly(makeAnomaly("fp-legacy")); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	cursor := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10) + ":99"
+	rows, err := d.ListAnomalies(AnomalyFilter{Cursor: cursor})
 	if err != nil {
-		t.Fatalf("DecodeAnomalyCursor: %v", err)
+		t.Fatalf("ListAnomalies(legacy cursor): %v", err)
 	}
-	if !decodedTs.Equal(ts) {
-		t.Errorf("decoded time = %v, want %v", decodedTs, ts)
+	if len(rows) != 0 {
+		t.Errorf("ListAnomalies(legacy cursor) returned %d rows, want 0", len(rows))
 	}
-	if decodedID != id {
-		t.Errorf("decoded id = %d, want %d", decodedID, id)
-	}
-
-	// Malformed: no colon separator.
-	_, _, err = DecodeAnomalyCursor("nocolon")
-	if err == nil {
-		t.Error("DecodeAnomalyCursor(malformed): want error, got nil")
-	}
-
-	// Malformed: non-integer timestamp.
-	_, _, err = DecodeAnomalyCursor("abc:42")
-	if err == nil {
-		t.Error("DecodeAnomalyCursor(bad timestamp): want error, got nil")
-	}
-
-	// Malformed: non-integer ID.
-	_, _, err = DecodeAnomalyCursor("1234567890:xyz")
-	if err == nil {
-		t.Error("DecodeAnomalyCursor(bad id): want error, got nil")
+	if _, err := d.ListAnomalies(AnomalyFilter{Cursor: "v2:x"}); err == nil {
+		t.Error("ListAnomalies(malformed cursor): want error, got nil")
 	}
 }
 

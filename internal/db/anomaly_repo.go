@@ -214,36 +214,47 @@ type AnomalyFilter struct {
 	ScopeID    *int64
 	Since      *time.Time
 	Limit      int
-	Cursor     string // opaque; encodes last_seen_at_unix:id
+	Cursor     string // opaque; see EncodeAnomalyCursor
 }
 
-// EncodeAnomalyCursor encodes the pagination cursor from the last row of a
-// page. The cursor is a colon-separated pair of unix timestamp + row ID.
-func EncodeAnomalyCursor(lastSeenAt time.Time, id int64) string {
-	return strconv.FormatInt(lastSeenAt.UTC().Unix(), 10) + ":" + strconv.FormatInt(id, 10)
+// anomalyCursorPrefix marks cursors that page on the row id.
+const anomalyCursorPrefix = "v2:"
+
+// EncodeAnomalyCursor encodes the pagination cursor from the id of the last
+// row of a page. Rows are paged on id, which is unique and never changes, so
+// no row is skipped or repeated at a page boundary.
+func EncodeAnomalyCursor(id int64) string {
+	return anomalyCursorPrefix + strconv.FormatInt(id, 10)
 }
 
 // DecodeAnomalyCursor decodes a cursor produced by EncodeAnomalyCursor.
-// Returns an error if the cursor is malformed.
-func DecodeAnomalyCursor(cursor string) (lastSeenAt time.Time, id int64, err error) {
-	parts := strings.SplitN(cursor, ":", 2)
-	if len(parts) != 2 {
-		return lastSeenAt, 0, fmt.Errorf("malformed anomaly cursor %q", cursor)
+// legacy is true for a "<unix seconds>:<id>" cursor issued before paging
+// moved to id; such a cursor carries no usable position. Returns an error if
+// the cursor is malformed.
+func DecodeAnomalyCursor(cursor string) (id int64, legacy bool, err error) {
+	if rest, ok := strings.CutPrefix(cursor, anomalyCursorPrefix); ok {
+		id, err = strconv.ParseInt(rest, 10, 64)
+		if err != nil {
+			return 0, false, fmt.Errorf("malformed anomaly cursor id: %w", err)
+		}
+		return id, false, nil
 	}
-	ts, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		return lastSeenAt, 0, fmt.Errorf("malformed anomaly cursor timestamp: %w", err)
+	ts, rest, ok := strings.Cut(cursor, ":")
+	if !ok {
+		return 0, false, fmt.Errorf("malformed anomaly cursor %q", cursor)
 	}
-	id, err = strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
-		return lastSeenAt, 0, fmt.Errorf("malformed anomaly cursor id: %w", err)
+	if _, err := strconv.ParseInt(ts, 10, 64); err != nil {
+		return 0, false, fmt.Errorf("malformed anomaly cursor timestamp: %w", err)
 	}
-	return time.Unix(ts, 0).UTC(), id, nil
+	if _, err := strconv.ParseInt(rest, 10, 64); err != nil {
+		return 0, false, fmt.Errorf("malformed anomaly cursor id: %w", err)
+	}
+	return 0, true, nil
 }
 
-// ListAnomalies returns anomaly rows matching filter, ordered by
-// last_seen_at DESC, id DESC. Keyset pagination via Cursor keeps page
-// fetches efficient on large tables.
+// ListAnomalies returns anomaly rows matching filter, newest first by id
+// (the order they were first detected). Keyset pagination via Cursor keeps
+// page fetches efficient on large tables.
 func (d *DB) ListAnomalies(filter AnomalyFilter) ([]Anomaly, error) {
 	limit := filter.Limit
 	if limit <= 0 {
@@ -253,16 +264,20 @@ func (d *DB) ListAnomalies(filter AnomalyFilter) ([]Anomaly, error) {
 	var conditions []string
 	var args []any
 
-	// Cursor-based pagination: rows strictly before (lastSeenAt, id).
-	// SQLite supports row-value comparison: (a, b) < (x, y) ≡ a<x OR (a=x AND b<y).
+	// Cursor-based pagination: rows strictly before the cursor's id.
 	if filter.Cursor != "" {
-		cursorTime, cursorID, err := DecodeAnomalyCursor(filter.Cursor)
+		cursorID, legacy, err := DecodeAnomalyCursor(filter.Cursor)
 		if err != nil {
 			return nil, fmt.Errorf("list anomalies: %w", err)
 		}
-		conditions = append(conditions,
-			"(last_seen_at < ? OR (last_seen_at = ? AND id < ?))")
-		args = append(args, cursorTime.UTC(), cursorTime.UTC(), cursorID)
+		if legacy {
+			// The tab holding this cursor paged in the old last_seen_at
+			// order, so any rows returned now could repeat ones it already
+			// shows. End its list instead; a reload starts a fresh one.
+			return []Anomaly{}, nil
+		}
+		conditions = append(conditions, "id < ?")
+		args = append(args, cursorID)
 	}
 
 	if len(filter.States) > 0 {
@@ -303,7 +318,7 @@ func (d *DB) ListAnomalies(filter AnomalyFilter) ([]Anomaly, error) {
 		// aikido-ignore-next-line AIK_go_G202 -- conditions are constant column predicates (e.g. "scope_id=?"); every filter value is bound via args and is never interpolated into the SQL string.
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY last_seen_at DESC, id DESC LIMIT ?"
+	query += " ORDER BY id DESC LIMIT ?"
 	args = append(args, limit)
 
 	rows, err := d.Query(query, args...)

@@ -41,6 +41,8 @@ const ANOMALY_POLL_MAX_PAGES = 20
 const ANOMALY_POLL_SINCE = '1970-01-01T00:00:00Z'
 // Records fetched per check for anomalies that left the open list.
 const ANOMALY_POLL_MAX_GONE = 20
+// Removals queued for those lookups. Past this, listeners reload instead.
+const ANOMALY_POLL_MAX_QUEUED = 200
 /** Anomalies that left the open list and haven't been reported yet. @type {number[]} */
 let goneAnomalies = []
 const ANOMALY_POLL_TIMEOUT_MS = 15000
@@ -172,12 +174,21 @@ async function pollAnomalies() {
     // Any beyond the per-check cap wait for the next check rather than being lost.
     const newlyGone = [...knownAnomalies.keys()].filter((id) => !next.has(id) && !goneAnomalies.includes(id))
     goneAnomalies = [...goneAnomalies, ...newlyGone].filter((id) => !next.has(id))
-    for (const id of goneAnomalies.slice(0, ANOMALY_POLL_MAX_GONE)) {
+    if (goneAnomalies.length > ANOMALY_POLL_MAX_QUEUED) {
+      // Too many to report one by one: have listeners reload their lists.
+      goneAnomalies = []
+      emitMessage({ type: 'anomaly.bulk_resolved', data: {} })
+    }
+    // This batch moves to the back, so a lookup that keeps failing is retried
+    // after the rest rather than holding them up.
+    const batch = goneAnomalies.slice(0, ANOMALY_POLL_MAX_GONE)
+    goneAnomalies = [...goneAnomalies.slice(ANOMALY_POLL_MAX_GONE), ...batch]
+    for (const id of batch) {
       const { url: oneUrl, options: oneOptions } = buildApiRequest('GET', `/anomalies/${id}`)
       const one = await fetch(oneUrl, { ...oneOptions, signal: controller.signal })
       noteUnauthorized(one)
       if (one.ok) emitMessage({ type: 'anomaly.updated', data: await one.json() })
-      // A deleted row has nothing to report; a failure is retried next time.
+      // A deleted row has nothing to report; a failure is retried later.
       if (one.ok || one.status === 404) goneAnomalies = goneAnomalies.filter((g) => g !== id)
     }
     knownAnomalies = next
