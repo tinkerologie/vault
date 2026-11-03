@@ -16,6 +16,7 @@ import {
   handleMountActive,
   handleMountUnmounted,
   handleMountFailed,
+  setActiveMounts,
 } from './mounts.svelte.js'
 
 let ws = null
@@ -28,6 +29,10 @@ let pollTicks = 0
 /** Open anomalies at the last poll, by id, serialized to detect changes. @type {Map<number, string>} */
 let knownAnomalies = new Map()
 let anomalyPollInFlight = false
+let knownMounts = ''
+let mountPollInFlight = false
+// Mounts are started by hand, so someone is usually watching: every 10 s.
+const MOUNT_POLL_EVERY = 5
 // /runner/status polls every 2 s, so this checks anomalies every 30 s.
 const ANOMALY_POLL_EVERY = 15
 // The API's largest page, and a default window that would hide older open ones.
@@ -171,10 +176,35 @@ async function pollAnomalies() {
   }
 }
 
+/** Stands in for the mount.* WebSocket events a polling client never gets. */
+async function pollMounts() {
+  if (mountPollInFlight) return
+  mountPollInFlight = true
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ANOMALY_POLL_TIMEOUT_MS)
+  try {
+    const { url, options } = buildApiRequest('GET', '/mounts?active=true')
+    const res = await fetch(url, { ...options, signal: controller.signal })
+    if (!res.ok) return
+    const list = await res.json()
+    const serialized = JSON.stringify(list)
+    if (Array.isArray(list) && serialized !== knownMounts) {
+      knownMounts = serialized
+      setActiveMounts(list)
+    }
+  } catch {
+    // Best-effort: the next check catches up.
+  } finally {
+    clearTimeout(timer)
+    mountPollInFlight = false
+  }
+}
+
 async function pollRunnerStatus() {
   if (!pollEnabled) return
 
   pollTicks++
+  if (pollTicks % MOUNT_POLL_EVERY === 0) void pollMounts()
   if (pollTicks % ANOMALY_POLL_EVERY === 0) void pollAnomalies()
 
   try {

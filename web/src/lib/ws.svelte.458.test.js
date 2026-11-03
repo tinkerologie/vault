@@ -18,6 +18,7 @@ const mounts = vi.hoisted(() => ({
   handleMountActive: vi.fn(),
   handleMountUnmounted: vi.fn(),
   handleMountFailed: vi.fn(),
+  setActiveMounts: vi.fn(),
 }))
 vi.mock('./anomalies.svelte.js', () => anomalies)
 vi.mock('./mounts.svelte.js', () => mounts)
@@ -290,6 +291,58 @@ describe('websocket mode', () => {
 })
 
 describe('poll mode', () => {
+  it('refreshes mounts a polling client gets no events for, only when they change', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      mounts.setActiveMounts.mockClear()
+      const m1 = { id: 1, status: 'active' }
+      const replies = [[m1], [m1], [], { error: 'not a list' }]
+      fetchMock.mockImplementation(async (url) => {
+        if (String(url).includes('/mounts')) {
+          const next = replies.shift()
+          return next === undefined ? jsonResponse({}, false, 500) : jsonResponse(next)
+        }
+        return jsonResponse({ active: false, queue: [], anomalies: [] })
+      })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(5 * 2000)
+      expect(mounts.setActiveMounts).toHaveBeenLastCalledWith([m1])
+      await vi.advanceTimersByTimeAsync(5 * 2000)
+      expect(mounts.setActiveMounts).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(5 * 2000)
+      expect(mounts.setActiveMounts).toHaveBeenLastCalledWith([])
+      await vi.advanceTimersByTimeAsync(10 * 2000) // a bad body, then an error
+      expect(mounts.setActiveMounts).toHaveBeenCalledTimes(2)
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('gives up on a stalled mount check, and never runs two at once', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      let calls = 0
+      fetchMock.mockImplementation((url, options) => {
+        if (!String(url).includes('/mounts')) return Promise.resolve(jsonResponse({ active: false, queue: [], anomalies: [] }))
+        calls++
+        return new Promise((_, reject) => {
+          options.signal.addEventListener('abort', () => reject(new Error('aborted')))
+        })
+      })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(12000) // past the first check at 10 s
+      expect(calls).toBe(1)
+      await vi.advanceTimersByTimeAsync(20000) // aborted at 25 s, next check at 30 s
+      expect(calls).toBe(2)
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('never runs two anomaly checks at once', async () => {
     vi.useFakeTimers()
     try {
