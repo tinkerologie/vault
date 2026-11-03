@@ -524,3 +524,30 @@ func TestCancelledRestorePutsTheTagBack(t *testing.T) {
 		t.Errorf("tag left on %q after a cancelled restore", got)
 	}
 }
+
+// Issue #611: when the restored container is gone by the time the status is
+// written, something replaced it, so the entry describes that container now
+// and is left alone instead of being cleared.
+func TestSeedLeavesTheEntryOfAReplacedContainer(t *testing.T) {
+	const before = `{"library/nginx:1":{"local":"sha256:live","remote":"sha256:live","status":"true"}}`
+	content := before
+	statusPath := withUpdateStatusPath458(t, &content)
+	r := newImageRegistry()
+	r.containerInspect = func(context.Context, string) (client.ContainerInspectResult, error) {
+		return client.ContainerInspectResult{}, errInspectMissing // removed by a later restore
+	}
+	seedRestoredImageStatus(t.Context(), r, "nginx:1", "c1")
+	if got := readFile458(t, statusPath); got != before {
+		t.Errorf("entry of the live container changed: %s", got)
+	}
+	// A container that is still there but has no known digest is cleared.
+	trackCreatedContainer(r, nil)
+	r.tags["nginx:1"] = "plain-image"
+	if _, err := r.ContainerCreate(t.Context(), client.ContainerCreateOptions{Config: &containertypes.Config{Image: "nginx:1"}}); err != nil {
+		t.Fatal(err)
+	}
+	seedRestoredImageStatus(t.Context(), r, "nginx:1", "c1")
+	if got := readStatus458(t, statusPath)["library/nginx:1"]["local"]; got != nil {
+		t.Errorf("local = %v, want cleared", got)
+	}
+}

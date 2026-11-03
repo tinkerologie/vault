@@ -173,6 +173,8 @@ type Runner struct {
 	snapshotManager *db.SnapshotManager
 	breaker         *Breaker
 	mu              sync.Mutex
+	// untrackedRestoreFn stands in for restoreItem in tests; nil in production.
+	untrackedRestoreFn func(ctx context.Context, rp db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...RestoreItemOptions) error
 
 	// evaluator is an optional anomaly evaluator. When non-nil, EnqueueRun is
 	// called (non-blocking) after every run completes so the anomaly engine can
@@ -4316,11 +4318,61 @@ type RestoreItemOptions struct {
 // For incremental/differential restore points, the full chain is restored
 // in order (base full → incremental/differential overlays).
 // The destination is replaced unless opts says otherwise (issue #321).
+//
+// Like every untracked restore it refuses with ErrRunnerBusy while a backup,
+// restore or maintenance task holds the runner, rather than run alongside it
+// (#611).
 func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...RestoreItemOptions) error {
+	release, err := r.acquireUntrackedRestore()
+	if err != nil {
+		return err
+	}
+	defer release()
 	// Deliberately context.Background(): this is the un-tracked scripted/MCP
 	// entry point with no registered cancel func or stall watchdog. The tracked
 	// RunRestore path threads its own cancellable ctx through the chain.
-	return r.restoreItem(context.Background(), restorePoint, itemName, itemType, destination, passphrase, opts...)
+	return r.untrackedRestore(context.Background(), restorePoint, itemName, itemType, destination, passphrase, opts...)
+}
+
+// ErrRunnerBusy refuses an untracked restore while a backup, restore or
+// maintenance task holds the runner.
+var ErrRunnerBusy = errors.New("a backup, restore or maintenance task is running; try again when it finishes")
+
+// errRunnerDraining refuses an untracked restore while the daemon shuts down.
+var errRunnerDraining = errors.New("the Vault daemon is shutting down; try again after it restarts")
+
+// acquireUntrackedRestore gives an untracked restore the same exclusion as a
+// tracked one: it holds r.mu, which backups, tracked restores, dedup GC and
+// orphan deletes also hold, and joins the drain protocol so shutdown waits
+// for it. It refuses rather than queue: the MCP caller gets its answer once
+// the restore is past its approval checks (#601), and a queued wait behind a
+// backup could hold that call open for hours (#611). release must be called
+// once the restore has finished.
+func (r *Runner) acquireUntrackedRestore() (release func(), err error) {
+	if r.shouldRefuseStart() {
+		return nil, errRunnerDraining
+	}
+	r.markStart()
+	if !r.mu.TryLock() {
+		r.markFinish()
+		return nil, ErrRunnerBusy
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.mu.Unlock()
+			r.markFinish()
+		})
+	}, nil
+}
+
+// untrackedRestore runs an untracked restore once the runner is held. It is
+// restoreItem, except in tests that stand in a fake to watch for overlap.
+func (r *Runner) untrackedRestore(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...RestoreItemOptions) error {
+	if r.untrackedRestoreFn != nil {
+		return r.untrackedRestoreFn(ctx, restorePoint, itemName, itemType, destination, passphrase, opts...)
+	}
+	return r.restoreItem(ctx, restorePoint, itemName, itemType, destination, passphrase, opts...)
 }
 
 // restoreItem is RestoreItem on a caller-supplied context, which must carry no
@@ -4343,9 +4395,18 @@ func (r *Runner) restoreItem(ctx context.Context, restorePoint db.RestorePoint, 
 // the restore started (#601). A refusal names the Vault UI step that approves
 // it. ctx bounds only the wait: the restore carries on without it, and its
 // later failures are logged.
+//
+// It refuses straight away with ErrRunnerBusy while a backup, restore or
+// maintenance task holds the runner (#611), and holds the runner itself until
+// the background restore ends.
 func (r *Runner) StartRestoreItem(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...RestoreItemOptions) error {
+	release, err := r.acquireUntrackedRestore()
+	if err != nil {
+		return err
+	}
 	return startUntilApprovalsSettled(ctx, itemName, func(restoreCtx context.Context) error {
-		return r.restoreItem(restoreCtx, restorePoint, itemName, itemType, destination, passphrase, opts...)
+		defer release()
+		return r.untrackedRestore(restoreCtx, restorePoint, itemName, itemType, destination, passphrase, opts...)
 	})
 }
 

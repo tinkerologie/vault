@@ -157,20 +157,25 @@ func forgetUnraidLocalDigest(imageTag string) {
 // from the container itself, by the ID ContainerCreate returned, not from the
 // tag, which another pull can move after the container is created, nor by
 // name, which a replacement container could take. So the badge never
-// describes an image the restored container is not running (#599). When no
-// digest for the image's repository is known, the recorded one is cleared so
+// describes an image the restored container is not running (#599). When the
+// image's repository digest is not known, the recorded one is cleared so
 // Unraid inspects the image itself.
+//
+// If the container is gone by the time the status is written, something
+// replaced it, and the entry now describes that container instead: it is left
+// alone rather than cleared (#611).
 func seedRestoredImageStatus(ctx context.Context, cli dockerClient, image, containerID string) {
-	if image == "" {
+	if image == "" || cli == nil || containerID == "" {
+		return
+	}
+	c, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if err != nil || c.Container.Image == "" {
+		log.Printf("engine: update-status: left %s as it is: the restored container %s can no longer be inspected: %v", image, containerID, err)
 		return
 	}
 	var ref string
-	if cli != nil && containerID != "" {
-		if c, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{}); err == nil && c.Container.Image != "" {
-			if res, err := cli.ImageInspect(ctx, c.Container.Image); err == nil {
-				ref, _ = backupImageRef(image, res.RepoDigests)
-			}
-		}
+	if res, err := cli.ImageInspect(ctx, c.Container.Image); err == nil {
+		ref, _ = backupImageRef(image, res.RepoDigests)
 	}
 	if sha := extractSHA(ref); sha != "" {
 		seedUnraidUpdateStatus(image, sha)
