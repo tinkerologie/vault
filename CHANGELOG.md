@@ -36,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Security
 
+- **Bad data from peers and backup storage can no longer crash or exhaust the daemon (#559):** A replication peer sending null metadata no longer crashes Vault, and any panic during a sync now marks that sync failed. Replication JSON responses, run manifests, tar index sidecars and WebDAV chunk manifests have size limits well above real backups (1 GiB, 256 MiB, 4 GiB and 256 MiB). SFTP connects and handshakes time out after 60 seconds and NFS mount helpers after 3 minutes, so an unresponsive server no longer leaks a connection or process per health check. The MCP `test_storage` and file-listing tools now close their connections and NFS mounts.
 - **Go 1.27.3 and updated dnssd dependencies (#536, #540, #541, #546):** Vault now builds with Go 1.27.3. The bundled mDNS library no longer declares an end-of-life Go version or vulnerable `golang.org/x/net`, and Dependabot and `make security-check` now cover it.
 - **Release publishing is isolated from release code (#537):** Releases now run only from tags on `main`. The token that updates the plugin manifest on `main` no longer shares a job with code from the tag, and no longer appears in a git URL.
 - **CI tool and token scope (#537):** CI now uses a fixed golangci-lint version, and the Codecov identity token is held by a job that runs no repository code.

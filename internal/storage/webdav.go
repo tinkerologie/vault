@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/studio-b12/gowebdav"
+	"github.com/tinkerologie/vault/internal/bounded"
 	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/safepath"
 )
@@ -674,7 +675,7 @@ func (w *WebDAVAdapter) readManifest(c *gowebdav.Client, full string) (webDAVChu
 	}
 	defer rc.Close()
 	var manifest webDAVChunkManifest
-	if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
+	if err := bounded.DecodeJSON(rc, bounded.ManifestBytes, &manifest); err != nil {
 		return webDAVChunkManifest{}, false, fmt.Errorf("webdav: decode chunk manifest %s: %w", webDAVManifestPath(full), err)
 	}
 	if manifest.Version != webDAVManifestVersion {
@@ -1089,7 +1090,7 @@ func (w *WebDAVAdapter) List(prefix string) ([]FileInfo, error) {
 					return nil, fmt.Errorf("webdav: read chunk manifest %s: %w", manifestPath, readErr)
 				}
 				var manifest webDAVChunkManifest
-				decodeErr := json.NewDecoder(rc).Decode(&manifest)
+				decodeErr := bounded.DecodeJSON(rc, bounded.ManifestBytes, &manifest)
 				_ = rc.Close()
 				if decodeErr != nil {
 					return nil, fmt.Errorf("webdav: decode chunk manifest %s: %w", manifestPath, decodeErr)

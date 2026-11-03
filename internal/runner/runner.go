@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tinkerologie/vault/internal/bounded"
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/dedup"
@@ -4883,7 +4884,7 @@ func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db
 		ResolvedSource string `json:"resolved_source,omitempty"`
 		Archive        string `json:"archive,omitempty"`
 	}
-	decodeErr := json.NewDecoder(manifestRC).Decode(&vols)
+	decodeErr := bounded.DecodeJSON(manifestRC, bounded.ManifestBytes, &vols)
 	_ = manifestRC.Close()
 	if decodeErr != nil {
 		return nil, nil
@@ -6689,9 +6690,10 @@ func ScanManifests(adapter storage.Adapter, d *db.DB, destID int64, serverKey []
 			if err != nil {
 				continue // No manifest — skip.
 			}
-			data, err := io.ReadAll(rc)
+			data, err := bounded.ReadAll(rc, bounded.ManifestBytes)
 			_ = rc.Close()
 			if err != nil {
+				log.Printf("runner: scan: skipping %s: %v", manifestPath, err)
 				continue
 			}
 
@@ -6721,7 +6723,7 @@ func ScanManifests(adapter storage.Adapter, d *db.DB, destID int64, serverKey []
 					if pass != "" {
 						if cipherBytes, decErr := decodeManifestEnvelope(env); decErr == nil {
 							if decReader, err := crypto.DecryptReader(pass, bytes.NewReader(cipherBytes)); err == nil {
-								if pt, readErr := io.ReadAll(decReader); readErr == nil {
+								if pt, readErr := bounded.ReadAll(decReader, bounded.ManifestBytes); readErr == nil {
 									plaintext = pt
 								}
 								_ = decReader.Close()
@@ -6960,7 +6962,7 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 				log.Printf("runner: import: failed to read manifest %s: %v", manifestPath, err)
 				continue
 			}
-			data, err := io.ReadAll(rc)
+			data, err := bounded.ReadAll(rc, bounded.ManifestBytes)
 			_ = rc.Close()
 			if err != nil {
 				log.Printf("runner: import: failed to read %s: %v", manifestPath, err)
@@ -6980,7 +6982,7 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 					if pass != "" {
 						if cipherBytes, decErr := decodeManifestEnvelope(env); decErr == nil {
 							if decReader, err := crypto.DecryptReader(pass, bytes.NewReader(cipherBytes)); err == nil {
-								if pt, readErr := io.ReadAll(decReader); readErr == nil {
+								if pt, readErr := bounded.ReadAll(decReader, bounded.ManifestBytes); readErr == nil {
 									plaintext = pt
 								}
 								_ = decReader.Close()

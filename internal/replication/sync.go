@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"path"
+	"runtime/debug"
 	"strings"
 
 	"github.com/tinkerologie/vault/internal/credentials"
@@ -52,11 +53,23 @@ type SyncResult struct {
 
 // SyncSource performs a sync operation for a replication source.
 // It pulls backups from the remote Vault instance.
-func (s *Syncer) SyncSource(sourceID int64, progress ProgressFunc) (*SyncResult, error) {
+func (s *Syncer) SyncSource(sourceID int64, progress ProgressFunc) (result *SyncResult, err error) {
 	src, err := s.db.GetReplicationSource(sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("get replication source: %w", err)
 	}
+
+	// Sync processes data from another machine on a goroutine of its own, where
+	// an uncaught panic would take the whole daemon down.
+	defer func() {
+		if p := recover(); p != nil {
+			log.Printf("replication: sync of source %d panicked: %v\n%s", sourceID, p, debug.Stack())
+			msg := fmt.Sprintf("internal error during sync: %v", p)
+			s.updateSyncStatus(sourceID, "failed", msg)
+			s.logSyncError(sourceID, src.Name, msg)
+			result, err = nil, fmt.Errorf("sync source %q: %s", src.Name, msg)
+		}
+	}()
 
 	// Guard nil progress callback.
 	if progress == nil {
@@ -435,6 +448,10 @@ func (s *Syncer) rewriteMetadata(original, sourceName string) string {
 	if trimmed := strings.TrimSpace(original); trimmed != "" {
 		if err := json.Unmarshal([]byte(trimmed), &meta); err != nil {
 			log.Printf("replication: metadata from source %q is not valid JSON (%v); keeping origin marker only", sourceName, err)
+			meta = map[string]any{}
+		}
+		// A JSON null decodes without error and leaves the map nil.
+		if meta == nil {
 			meta = map[string]any{}
 		}
 	}

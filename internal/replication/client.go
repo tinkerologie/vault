@@ -1,7 +1,6 @@
 package replication
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tinkerologie/vault/internal/bounded"
 	"github.com/tinkerologie/vault/internal/credentials"
 )
 
@@ -210,6 +210,11 @@ func (c *Client) DownloadFile(storageID int64, filePath string) (io.ReadCloser, 
 	return resp.Body, nil
 }
 
+// maxPeerJSONBytes limits one JSON response from a peer. Listings of jobs,
+// restore points and files stay far below this; file downloads are streamed and
+// not subject to it.
+var maxPeerJSONBytes int64 = 1 << 30
+
 // getJSON performs a GET request and decodes the JSON response.
 func (c *Client) getJSON(path string, target any) error {
 	return c.getJSONWithParams(path, nil, target)
@@ -227,7 +232,7 @@ func (c *Client) getJSONWithParams(path string, params map[string]string, target
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("status %d: %s", resp.StatusCode, body)
 	}
-	return json.NewDecoder(resp.Body).Decode(target)
+	return bounded.DecodeJSON(resp.Body, maxPeerJSONBytes, target)
 }
 
 // doRequestWithParams builds and executes an HTTP request with query params.

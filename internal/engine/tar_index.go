@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/tinkerologie/vault/internal/bounded"
 )
 
 // TarIndex describes the contents of a tar archive (plain or compressed) for
@@ -116,8 +118,12 @@ func WriteTarIndex(archivePath string) error {
 // ReadTarIndex parses a tar-index JSON file produced by WriteTarIndex.
 // Returns an error if the file is missing or the schema version is unknown.
 func ReadTarIndex(r io.Reader) (TarIndex, error) {
+	return readTarIndexLimited(r, bounded.IndexBytes)
+}
+
+func readTarIndexLimited(r io.Reader, limit int64) (TarIndex, error) {
 	var idx TarIndex
-	if err := json.NewDecoder(r).Decode(&idx); err != nil {
+	if err := bounded.DecodeJSON(r, limit, &idx); err != nil {
 		return idx, fmt.Errorf("decoding tar index: %w", err)
 	}
 	if idx.Version != tarIndexVersion {

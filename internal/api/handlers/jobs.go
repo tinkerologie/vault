@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/tinkerologie/vault/internal/bounded"
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/dedup"
@@ -799,7 +800,7 @@ func (h *JobHandler) containerVolumeIndex(adapter storage.Adapter, itemPrefix, i
 		Archive     string `json:"archive,omitempty"`
 		IsFile      bool   `json:"is_file,omitempty"`
 	}
-	decodeErr := json.NewDecoder(manifestRC).Decode(&volumes)
+	decodeErr := bounded.DecodeJSON(manifestRC, bounded.ManifestBytes, &volumes)
 	_ = manifestRC.Close()
 	if decodeErr != nil {
 		return engine.TarIndex{}, false, false, nil

@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 // callToolRaw returns the result without failing the test on IsError,
@@ -739,5 +741,45 @@ func TestGetHealthReadOnly(t *testing.T) {
 	res := callTool(t, session, ctx, "get_health", nil)
 	if !strings.Contains(res, `"mode": "replica"`) {
 		t.Errorf("expected replica mode, got: %s", res)
+	}
+}
+
+// closeTrackingAdapter records Close, so a leak of a pooled SFTP connection or
+// an NFS mount shows up without a real server (#559).
+type closeTrackingAdapter struct {
+	storage.Adapter
+	closed *atomic.Int32
+}
+
+func (a closeTrackingAdapter) Close() error {
+	a.closed.Add(1)
+	return nil
+}
+
+func TestStorageTools_CloseTheirAdapters(t *testing.T) {
+	var closed atomic.Int32
+	prev := newStorageAdapter
+	newStorageAdapter = func(typ, cfg string) (storage.Adapter, error) {
+		a, err := prev(typ, cfg)
+		if err != nil {
+			return nil, err
+		}
+		return closeTrackingAdapter{Adapter: a, closed: &closed}, nil
+	}
+	t.Cleanup(func() { newStorageAdapter = prev })
+
+	session, database := setupTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	id, err := database.CreateStorageDestination(db.StorageDestination{Name: "l", Type: "local", Config: `{"path":"` + t.TempDir() + `"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"test_storage", "list_storage_files"} {
+		before := closed.Load()
+		callTool(t, session, ctx, tool, map[string]any{"id": float64(id)})
+		if closed.Load() != before+1 {
+			t.Errorf("%s did not close its adapter", tool)
+		}
 	}
 }

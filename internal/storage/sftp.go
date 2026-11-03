@@ -156,16 +156,38 @@ func (s *SFTPAdapter) dialConnection() (*sftpConnection, error) {
 	}
 
 	addr := net.JoinHostPort(s.config.Host, fmt.Sprintf("%d", s.config.Port))
-	sshConn, err := ssh.Dial("tcp", addr, sshConfig)
+	return dialSFTP(addr, sshConfig, sftpConnectTimeout)
+}
+
+// sftpConnectTimeout bounds connection setup: TCP connect, SSH handshake and
+// the SFTP version exchange. Without it, a server that accepts and then says
+// nothing holds a socket and goroutine for good: a timed-out caller cannot
+// reach a connection still being set up, so each health sweep would leak
+// another one.
+const sftpConnectTimeout = 60 * time.Second
+
+// dialSFTP opens the SSH and SFTP sessions under one deadline, which ssh.Dial
+// and sftp.NewClient do not have. It is lifted before the long-lived connection
+// is used.
+func dialSFTP(addr string, config *ssh.ClientConfig, timeout time.Duration) (*sftpConnection, error) {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial: %w", err)
 	}
-
+	// A failure here means the socket is closed, which the handshake reports.
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("ssh dial: %w", err)
+	}
+	sshConn := ssh.NewClient(c, chans, reqs)
 	sftpClient, err := sftp.NewClient(sshConn, sftpClientOptions()...)
 	if err != nil {
 		_ = sshConn.Close()
 		return nil, fmt.Errorf("sftp client: %w", err)
 	}
+	_ = conn.SetDeadline(time.Time{})
 	return &sftpConnection{ssh: sshConn, sftp: sftpClient}, nil
 }
 
