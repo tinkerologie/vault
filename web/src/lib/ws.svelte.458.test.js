@@ -335,6 +335,55 @@ describe('poll mode', () => {
     }
   })
 
+  it('reads every page of open anomalies, of any age, before replacing the list', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      const a1 = { id: 1, state: 'open' }
+      const a2 = { id: 2, state: 'open' }
+      const urls = []
+      fetchMock.mockImplementation(async (url) => {
+        if (!String(url).includes('/anomalies')) return jsonResponse({ active: false, queue: [] })
+        urls.push(new URL(url, 'http://x').searchParams)
+        return urls.length === 1
+          ? jsonResponse({ anomalies: [a1], next_cursor: 'c2' })
+          : jsonResponse({ anomalies: [a2], next_cursor: '' })
+      })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(15 * 2000)
+      expect(urls).toHaveLength(2)
+      expect(urls[0].get('since')).toBe('1970-01-01T00:00:00Z')
+      expect(urls[1].get('cursor')).toBe('c2')
+      expect(anomalies.setOpenList).toHaveBeenLastCalledWith([a1, a2])
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the shared list when a later page fails or never ends', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadWs({ liveMode: 'poll' })
+      anomalies.setOpenList.mockClear()
+      let calls = 0
+      fetchMock.mockImplementation(async (url) => {
+        if (!String(url).includes('/anomalies')) return jsonResponse({ active: false, queue: [] })
+        calls++
+        return calls === 2
+          ? jsonResponse({}, false, 500)
+          : jsonResponse({ anomalies: [{ id: calls }], next_cursor: 'more' })
+      })
+      ws.connectWs()
+      await vi.advanceTimersByTimeAsync(2 * 15 * 2000)
+      expect(calls).toBeGreaterThan(20)
+      expect(anomalies.setOpenList).not.toHaveBeenCalled()
+      ws.disconnectWs()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('reports anomaly changes a polling client gets no events for', async () => {
     vi.useFakeTimers()
     try {

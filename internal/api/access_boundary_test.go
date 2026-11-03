@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -273,6 +275,24 @@ func TestParseAllowedOrigins(t *testing.T) {
 	}
 	if len(invalid) != 8 {
 		t.Errorf("invalid = %v, want 8 entries", invalid)
+	}
+}
+
+// A rejected entry can be a URL with a login in it, so its value is never logged.
+func TestInvalidOriginWarningOmitsValue(t *testing.T) {
+	var buf bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	NewServer(testDB(t), ServerConfig{Addr: ":0", AllowedOrigins: []string{"https://user:hunter2@a.example"}})
+
+	got := buf.String()
+	if strings.Contains(got, "hunter2") {
+		t.Errorf("warning leaked the entry: %s", got)
+	}
+	if !strings.Contains(got, "ignoring 1 allowed origin") {
+		t.Errorf("no warning about the rejected entry: %s", got)
 	}
 }
 

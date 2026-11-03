@@ -52,8 +52,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(middleware.Heartbeat("/ping"))
 	r.Use(BodySizeLimit(maxRequestBodySize))
 	validOrigins, invalidOrigins := parseAllowedOrigins(s.config.AllowedOrigins)
-	for _, origin := range invalidOrigins {
-		log.Printf("Warning: ignoring allowed origin %q: expected an exact http(s)://host[:port]", origin) // #nosec G706 //nolint:gosec // operator-supplied configuration, no credentials
+	if len(invalidOrigins) > 0 {
+		// A count, not the values: a rejected entry can be a URL with a login in it.
+		log.Printf("Warning: ignoring %d allowed origin(s): each must be an exact http(s)://host[:port]", len(invalidOrigins))
 	}
 	allowedOrigins := newOriginSet(validOrigins)
 	s.hub.SetAllowedOrigins(validOrigins)

@@ -30,7 +30,10 @@ let knownAnomalies = new Map()
 let anomalyPollInFlight = false
 // /runner/status polls every 2 s, so this checks anomalies every 30 s.
 const ANOMALY_POLL_EVERY = 15
-const ANOMALY_POLL_LIMIT = 100
+// The API's largest page, and a default window that would hide older open ones.
+const ANOMALY_POLL_LIMIT = 500
+const ANOMALY_POLL_MAX_PAGES = 20
+const ANOMALY_POLL_SINCE = '1970-01-01T00:00:00Z'
 const ANOMALY_POLL_TIMEOUT_MS = 15000
 let status = $state('disconnected')
 
@@ -113,6 +116,27 @@ function emitMessage(msg) {
 }
 
 /**
+ * Every open anomaly, whatever its age. Returns null unless the whole set was
+ * read, because replacing the shared list with part of it would drop the rest.
+ */
+async function fetchOpenAnomalies(signal) {
+  const list = []
+  let cursor = ''
+  for (let page = 0; page < ANOMALY_POLL_MAX_PAGES; page++) {
+    const params = new URLSearchParams({ state: 'open', since: ANOMALY_POLL_SINCE, limit: String(ANOMALY_POLL_LIMIT) })
+    if (cursor) params.set('cursor', cursor)
+    const { url, options } = buildApiRequest('GET', `/anomalies?${params}`)
+    const res = await fetch(url, { ...options, signal })
+    if (!res.ok) return null
+    const body = await res.json()
+    list.push(...(body?.anomalies ?? []))
+    cursor = body?.next_cursor ?? ''
+    if (!cursor) return list
+  }
+  return null
+}
+
+/**
  * Stands in for the anomaly.* WebSocket events a polling client never gets.
  * Emits what changed since the last check, so pages keep their usual handling.
  */
@@ -124,10 +148,8 @@ async function pollAnomalies() {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ANOMALY_POLL_TIMEOUT_MS)
   try {
-    const { url, options } = buildApiRequest('GET', `/anomalies?state=open&limit=${ANOMALY_POLL_LIMIT}`)
-    const res = await fetch(url, { ...options, signal: controller.signal })
-    if (!res.ok) return
-    const list = (await res.json())?.anomalies ?? []
+    const list = await fetchOpenAnomalies(controller.signal)
+    if (!list) return
     const next = new Map(list.map((a) => [a.id, JSON.stringify(a)]))
     for (const anomaly of list) {
       const before = knownAnomalies.get(anomaly.id)
