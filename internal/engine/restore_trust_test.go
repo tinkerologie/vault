@@ -380,3 +380,32 @@ func TestHostPrivilegesFollowsSymlinksUnderMnt(t *testing.T) {
 		t.Errorf("symlinked host path not listed: %v", got)
 	}
 }
+
+func TestPinBackupImageLeavesDigestConfigsUntagged(t *testing.T) {
+	r := newImageRegistry()
+	r.tags[pinRef] = "old"
+	if err := pinBackupImage(t.Context(), r, "nginx@"+pinDigest, pinRef); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.tagged) != 0 {
+		t.Errorf("tagged a digest reference: %v", r.tagged)
+	}
+}
+
+func TestFailedImageRecheckKeepsTheExistingContainer(t *testing.T) {
+	r := newImageRegistry()
+	removed := false
+	r.containerRemove = func(context.Context, string) (client.ContainerRemoveResult, error) {
+		removed = true
+		return client.ContainerRemoveResult{}, nil
+	}
+	var ri restoreInspect
+	ri.Name = "/web"
+	ri.Config.Image = "nginx:1"
+	ri.pinnedImage = pinRef // not available locally, and the pull fails
+	r.pullErr = errFake458
+	err := (&ContainerHandler{cli: r}).recreateAndStartContainer(t.Context(), BackupItem{Name: "web"}, ri, "", "", noopProgress)
+	if err == nil || removed {
+		t.Fatalf("err = %v, removed = %v", err, removed)
+	}
+}

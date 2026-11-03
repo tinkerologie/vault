@@ -58,8 +58,12 @@ func pinBackupImage(ctx context.Context, cli dockerClient, image, digestRef stri
 			return fmt.Errorf("pulled image does not carry digest %s", digestRef)
 		}
 	}
-	if image == digestRef {
-		return nil
+	// A config that already names a digest is immutable and cannot be a tag
+	// target, whatever form the digest was written in.
+	if named, err := reference.ParseNormalizedNamed(image); err == nil {
+		if _, isDigest := named.(reference.Canonical); isDigest {
+			return nil
+		}
 	}
 	if _, err := cli.ImageTag(ctx, client.ImageTagOptions{Source: digestRef, Target: image}); err != nil {
 		return fmt.Errorf("pointing %s at %s: %w", image, digestRef, err)

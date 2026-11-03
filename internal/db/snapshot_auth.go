@@ -308,8 +308,10 @@ func (sm *SnapshotManager) checkSigned(path string) error {
 	if auth == nil {
 		return nil
 	}
-	if _, err := os.Lstat(envelopePath(path)); err != nil {
-		return nil //nolint:nilerr // nothing was signed for this path
+	if _, err := os.Lstat(envelopePath(path)); errors.Is(err, os.ErrNotExist) {
+		return nil // nothing was signed for this path
+	} else if err != nil {
+		return fmt.Errorf("reading envelope: %w", err)
 	}
 	_, release, err := auth.VerifiedCopy(path)
 	release()
@@ -323,8 +325,10 @@ func (sm *SnapshotManager) reauthenticate(path string) error {
 	if auth == nil {
 		return nil
 	}
-	if _, err := os.Lstat(envelopePath(path)); err != nil {
-		return nil //nolint:nilerr // nothing was signed for this path
+	if _, err := os.Lstat(envelopePath(path)); errors.Is(err, os.ErrNotExist) {
+		return nil // nothing was signed for this path
+	} else if err != nil {
+		return fmt.Errorf("reading envelope: %w", err)
 	}
 	return auth.Sign(path)
 }

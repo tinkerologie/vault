@@ -2030,6 +2030,15 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 	}
 	containerName = safeContainerName
 
+	// Volumes may have taken hours, and an update could have moved the tag in
+	// the meantime, so it is pointed back and checked again just before create.
+	// It runs before the existing container is removed, so a failure leaves it in place.
+	if inspect.pinnedImage != "" {
+		if err := pinBackupImage(ctx, h.cli, inspect.Config.Image, inspect.pinnedImage); err != nil {
+			return fmt.Errorf("re-checking backup-time image: %w", err)
+		}
+	}
+
 	// Remove existing container with the same name if present.
 	if existResult, err := h.cli.ContainerInspect(ctx, containerName, client.ContainerInspectOptions{}); err == nil {
 		existing := existResult.Container
@@ -2171,13 +2180,6 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 		}
 	}
 
-	// Volumes may have taken hours, and an update could have moved the tag in
-	// the meantime, so it is pointed back and checked again just before create.
-	if inspect.pinnedImage != "" {
-		if err := pinBackupImage(ctx, h.cli, inspect.Config.Image, inspect.pinnedImage); err != nil {
-			return fmt.Errorf("re-checking backup-time image: %w", err)
-		}
-	}
 	created, err := h.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config:           containerConfig,
 		HostConfig:       hostConfig,

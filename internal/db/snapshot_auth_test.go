@@ -399,3 +399,26 @@ func TestSealPersistentCopiesSkipsReplacedSignedCopy(t *testing.T) {
 		release()
 	}
 }
+
+func TestUnreadableEnvelopeIsNotTreatedAsUnsigned(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	a, _ := testAuth(t, false)
+	d := setupTestDB(t)
+	sm := NewSnapshotManager(d, filepath.Join(t.TempDir(), "x.db"), "")
+	sm.SetSnapshotAuth(a)
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked")
+	snap := writeSnapshot(t, locked, "vault.db", "x")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o750) })
+	if err := sm.checkSigned(snap); err == nil {
+		t.Error("checkSigned: want error")
+	}
+	if err := sm.reauthenticate(snap); err == nil {
+		t.Error("reauthenticate: want error")
+	}
+}
