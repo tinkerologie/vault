@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.11.00] - 2026-11-07
+
 ### Added
 
 - **Dracula style (#590):** Settings > Appearance now offers Dracula, which keeps the Default fonts and layout and recolours every page, chart, badge, dialog and the Logs console. Dracula is always dark, so the colour mode buttons are disabled while it's selected, and your saved mode comes back when you choose another style. Text meets WCAG AA, and a few official colours are lightened where they would not. Palette by Dracula Theme (<https://draculatheme.com>), MIT licence.
