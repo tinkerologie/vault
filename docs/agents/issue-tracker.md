@@ -8,7 +8,8 @@ Use the gh CLI from this repository.
 - Follow `AGENTS.md`'s issue forms and Coding Plan requirements.
 - Read: `gh issue view <number> --json number,title,body,labels,comments`
 - List: `gh issue list --state open`
-- Create: `gh issue create --template <official-template>`
+- Create a bug: `gh issue create --template 01-bug-report.yml`.
+- Create an enhancement: `gh issue create --template 02-enhancement-request.yml`.
 - For multiline bodies, write the content to a temporary file and use
   `--body-file`.
 - Apply or remove labels with `gh issue edit`.

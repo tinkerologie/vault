@@ -6,8 +6,8 @@ Layout: single-context.
 
 - Read GLOSSARY.md at the repository root when present.
 - Read relevant architecture decisions in docs/adr/.
-- If these files are absent, proceed silently. Domain-modeling creates
-  them when terms or decisions are resolved.
+- If these files are absent, proceed silently. Matt Pocock's
+  `domain-modeling` skill creates them when terms or decisions are resolved.
 - Read the existing CONTEXT.md for established vocabulary and module
   context. When adding GLOSSARY.md, keep vocabulary there and retain
   implementation context in CONTEXT.md.
