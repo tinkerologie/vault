@@ -257,20 +257,9 @@ metadata is injected with linker flags defined in the `Makefile`.
 
 ## Agent skills
 
-### Issue tracker
-
-Issues are tracked in GitHub Issues on `tinkerologie/vault` via the `gh` CLI.
-See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Default canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`,
-`ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context layout: one `CONTEXT.md` at the repo root plus ADRs in
-`docs/adr/`. See `docs/agents/domain.md`.
+Before using engineering skills, read the [Agent skills section in
+CLAUDE.md](CLAUDE.md#agent-skills) for issue tracker, triage label, and domain
+documentation configuration.
 
 ## Issue and Pull Request Governance
 

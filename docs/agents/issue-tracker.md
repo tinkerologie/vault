@@ -1,21 +1,24 @@
 # Issue tracker
 
-Issues for this repo live in **GitHub Issues** on
-[`tinkerologie/vault`](https://github.com/tinkerologie/vault/issues).
-
-Skills such as `to-tickets`, `triage`, and `to-spec` read from and write to
-this tracker using the [`gh` CLI](https://cli.github.com/).
+Issues and specs live in GitHub Issues on `tinkerologie/vault`.
+Use the gh CLI from this repository.
 
 ## Conventions
 
-- Create issues with `gh issue create`.
-- List and inspect issues with `gh issue list` / `gh issue view`.
-- Reference issues by number (for example `#123`) in commits, branches, and
-  pull requests.
-- Move issues through the queue using the triage labels defined in
-  `docs/agents/triage-labels.md`.
+- Follow `AGENTS.md`'s issue forms and Coding Plan requirements.
+- Read: `gh issue view <number> --json number,title,body,labels,comments`
+- List: `gh issue list --state open`
+- Create: `gh issue create --template <official-template>`
+- For multiline bodies, write the content to a temporary file and use
+  `--body-file`.
+- Apply or remove labels with `gh issue edit`.
+- Publish specs as issues; fetch tickets with `gh issue view`.
+- Use `docs/agents/triage-labels.md` for triage roles.
+- Link child issues through GitHub sub-issues when available; otherwise
+  use a parent task list and a `Part of #<parent>` reference.
+- Record dependencies using GitHub issue dependencies when available;
+  otherwise use `Blocked by: #<number>` references.
 
-## PRs as a request surface
+## Pull requests as a triage surface
 
-**Off.** External pull requests are not part of the triage queue. Flip this
-flag to `on` if you want incoming PRs triaged alongside issues.
+**PRs as a request surface: no.**
