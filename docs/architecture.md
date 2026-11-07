@@ -63,7 +63,7 @@ can route them through the dedup repo on dedup-enabled destinations.
 
 - `vm.go`, `vm_restore.go`, and other libvirt-touching files use `//go:build linux` — real libvirt RPC against `/var/run/libvirt/libvirt-sock`
 - `vm_stub.go`: `//go:build !linux` — stubs for macOS / Windows so the rest of the daemon still builds and tests run
-- ZFS (`engine/zfs.go`) calls out to the host `zfs` binary and is Linux-only
+- ZFS ([`internal/engine/zfs.go`](../internal/engine/zfs.go)) calls out to the host `zfs` binary and is Linux-only
 - Local builds and the full test suite work on macOS without libvirt installed
 
 ## Database
