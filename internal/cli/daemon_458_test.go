@@ -39,15 +39,8 @@ func newDaemonEnv458(t *testing.T) *daemonEnv458 {
 		usbBackup: filepath.Join(dir, "vault.db.backup"),
 		dbPath:    filepath.Join(dir, "boot", "vault.db"),
 	}
-	// The heartbeat goroutine writes asynchronously and may outlive RunE.
-	// A directory at each heartbeat path makes that write fail harmlessly
-	// instead of racing t.TempDir cleanup.
-	for _, d := range []string{
-		e.mntDir,
-		filepath.Join(filepath.Dir(e.dbPath), "heartbeat"),
-		filepath.Join(dir, "hybrid", "heartbeat"),
-	} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+	for _, path := range []string{e.mntDir, filepath.Dir(e.dbPath), filepath.Join(dir, "hybrid")} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -189,6 +182,9 @@ func TestDaemon458_NoPool_CorruptUSBBackup(t *testing.T) {
 	}
 	if _, err := os.Stat(e.dbPath); err != nil {
 		t.Errorf("fresh DB not created: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(e.dbPath), "heartbeat")); err != nil {
+		t.Errorf("heartbeat not completed before daemon returned: %v", err)
 	}
 }
 
