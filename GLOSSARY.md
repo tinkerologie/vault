@@ -59,7 +59,7 @@ A backup of changes since the full backup in its chain.
 _Avoid_: incremental backup
 
 **Stale Item**:
-A retained record of an item that is no longer present in the current source discovery.
+A Job Item whose source is confirmed missing and is skipped until it reappears or its selection is removed.
 _Avoid_: unprotected item
 
 ## Storage and protection
@@ -93,12 +93,12 @@ A discovered item with recorded backup data in a retained Restore Point.
 _Avoid_: configured item
 
 **Pending Item**:
-An item selected by a Job that does not yet have recorded backup protection.
+An item selected by a Job without recorded protection in a retained Restore Point.
 _Avoid_: protected item
 
 **Unprotected Item**:
-A discovered item without recorded protection, including an item pending its first backup.
-_Avoid_: unselected item
+A discovered item without recorded protection; recovery summaries include Pending Items, while the Dashboard uses this label for items outside both the protected and pending groups.
+_Avoid_: assuming every view reports the same count
 
 **Anomaly**:
 A recorded condition requiring attention in backup operations or protection coverage.
