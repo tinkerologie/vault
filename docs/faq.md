@@ -2,32 +2,41 @@
 
 ## Is Vault free?
 
-Yes. Vault is free and open source, licensed under AGPL-3.0. There are no paid tiers or locked features.
+Yes. Vault is free and open source. The license is AGPL-3.0. All functions are available at no cost.
 
 ## Where should my backups go?
 
-Keep at least one copy off the server itself — an SMB/NFS/SFTP share on another machine, or S3-compatible cloud storage. The Dashboard's 3-2-1 widget shows how close you are to the classic rule (3 copies, 2 media, 1 off-site). See [Storage Destinations](guides/storage-destinations.md).
+Keep at least one copy on a different server or in S3-compatible storage.
+The 3-2-1 rule uses three copies on two types of media, with one copy at a different site.
+The Dashboard shows whether the storage destinations are likely to meet this rule.
+See [Storage Destinations](guides/storage-destinations.md).
 
 ## Do I need the backup password to restore?
 
-Only if your backups are encrypted — they are whenever you set a password under Settings → Encryption (recommended). Keep the password somewhere off the server, like a password manager; without it, encrypted backups cannot be decrypted by anyone.
+For a classic backup with age encryption, use the password for that backup. To use age encryption, set a backup password and select age encryption on the job.
+Keep the backup password outside the server. You cannot decrypt an encrypted backup without its password.
 
-## What happens if my server dies completely?
+## What happens if my server fails?
 
-You reinstall Unraid and the Vault plugin, then use the Recover Vault wizard to reconnect your backup storage and bring your settings and data back. Nothing from the old server is needed. The [Disaster Recovery guide](guides/disaster-recovery.md) walks through it step by step.
+Install Unraid on a replacement server. Install the Vault plugin. Use **Recover Vault** to connect to the backup storage and recover the Vault settings.
+See [Disaster Recovery](guides/disaster-recovery.md) for the procedure to recover your settings and data.
 
 ## Does Vault back up Docker volumes?
 
-Yes. A container backup includes the container image, its XML template, and every mapped volume — including named volumes and appdata paths. You can exclude sub-paths per container (e.g. caches). See [Backup Jobs](guides/backup-jobs.md).
+Yes. A container backup includes the container image, its XML template when available, and its mapped volumes. This includes named volumes and appdata paths.
+You can exclude subpaths for each container. See [Backup Jobs](guides/backup-jobs.md).
 
-## What about a container that has no volumes at all?
+## What about a container that has no volumes?
 
-It is still worth backing up, and Vault backs it up. The image, the container configuration and the Unraid template (when available) are captured regardless of how many mounts the container has, which is everything needed to recreate it exactly as it was — so there is no need to keep a compose file or a note of the settings safe separately. The job wizard says so where it lists the mount points.
+Vault backs up the container image and configuration even when the container has no mounts.
+Vault also includes the Unraid XML template when it is available.
 
-## Can I run a job manually instead of on a schedule?
+## Can I run a job manually?
 
-Yes. Every job has a **Run Now** button, and you can leave the schedule empty to create a manual-only job that never runs on its own. See [Backup Jobs](guides/backup-jobs.md).
+Yes. Click **Run Now** on the job to start it manually.
+If you want a job to run only on command, leave its schedule empty.
+See [Backup Jobs](guides/backup-jobs.md).
 
 <!-- prettier-ignore -->
 !!! note
-    This page grows from questions asked on the Unraid forums. Have one that isn't answered here? Ask on the forum thread.
+    You can ask other questions about Vault on the Unraid forum.

@@ -11,34 +11,34 @@ A Vault job backs up one or more sources on your Unraid host:
 - **ZFS datasets** — using native `zfs send`/`receive` with snapshot management.
 - **Folders and plugins** — any path on the host, plus all installed Unraid plugins.
 
-Vault also performs stale-item detection: when a source disappears from the host, it is flagged so jobs stay clean rather than silently failing.
+Vault marks a source when it cannot find the source on the host.
 
 ## Backup strategies
 
-Vault supports three backup strategies that trade off speed against storage:
+Vault supports three backup types.
 
-- **Full** — a complete, self-contained copy of every source. A full backup depends on nothing else.
-- **Incremental** — captures only what changed since the previous backup (full or incremental) in the chain. Incrementals are small and fast but must be replayed in order on top of their parent full.
-- **Differential** — captures everything that changed since the last full backup. Each differential is larger than an incremental but only ever depends on a single full.
+- **Full.** Vault makes a complete copy of each source.
+- **Incremental.** Vault copies changes since the previous backup in the chain. To restore an incremental backup, Vault applies each change in order after the full backup.
+- **Differential.** Vault copies changes since the last full backup. To restore a differential backup, Vault uses the full backup and the selected differential backup.
 
-Chains form from these building blocks: a full backup anchors the chain, and subsequent incremental or differential runs attach to it. Restoring reconstructs a point in time by combining the anchoring full with the necessary incrementals or the relevant differential.
+A full backup starts a backup chain. Later runs add incremental or differential backups to the chain.
 
+<!-- prettier-ignore -->
 !!! note "The first run is always a full backup"
-
-    Selecting **Incremental** or **Differential** on a brand-new job is safe: the very first run automatically performs a **Full** backup (there is nothing yet for an increment to attach to), and only subsequent runs capture changes — `Full → Incremental → Incremental → …`. You do **not** need to run a manual Full first before switching the job to Incremental.
+    The first run of a new job makes a **Full** backup. Later runs use the selected backup type.
 
 ## Retention
 
 Retention decides how many backups to keep and which to prune. Vault offers two models:
 
 - **Simple count** — keep the most recent N backups and prune the rest.
-- **Long-Term Retention (LTR)** — bucketed retention that keeps backups across multiple time horizons. Buckets are `keep_latest`, `daily`, `weekly`, `monthly`, and `yearly`, so you can retain, for example, the last few runs plus one per day, week, month, and year.
+- **Long-Term Retention (LTR)** keeps backups for different intervals. Use `keep_latest` for the newest runs. Use the daily, weekly, monthly, and yearly settings to keep backups for those intervals.
 
 For the exact retention fields on a job, see the [Job Configuration reference](reference/job-config.md).
 
 ## Encryption
 
-Backups can be encrypted with your backup password using **age** encryption — a modern, audited standard. Encryption is applied to the backup content and to run manifests (`manifest.json`) so that data at rest and backup metadata (such as job name, items, and settings) on the storage destination cannot be read without the password.
+If you enable age encryption for a classic backup job, Vault encrypts the backup data and its run manifest (`manifest.json`). To read the encrypted data or manifest, use the backup password.
 
 For deduplicated storage destinations, manifests are automatically encrypted using AES-256-GCM keyed off the destination's master key, keeping metadata protected without extra user intervention.
 
@@ -53,7 +53,7 @@ When creating classic compressed archives (such as folder items), Vault temporar
 Staging path selection follows a prioritized cascade:
 
 1. **Custom staging override** — if configured under **Settings > Temporary Work Area**.
-2. **Destination-adjacent staging** — if the destination is a local path with **Stage temporary backups beside this destination** enabled, staging happens in a hidden `.vault-stage` directory on that disk.
+2. **Storage destination.** For a local destination with **Stage temporary backups beside this destination** on, Vault uses the hidden `.vault-stage` directory on that disk.
 3. **Cache pools** — Unraid SSD/NVMe cache pools (`/mnt/cache`, `/mnt/fast_nvme`, etc.), ranked by available free space.
 4. **Local storage destination** — local backup storage disks.
 5. **System temporary directory** — `/tmp` or OS default temp dir.
@@ -62,8 +62,14 @@ Staged archives are automatically cleaned up when the run finishes or upon daemo
 
 ## Verification
 
-Every run produces a **SHA-256 verification** of what was written, and you can trigger an on-demand verify of any restore point. Verification confirms that stored backup data matches what Vault expects, so you find integrity problems before you need to restore.
+Vault calculates a SHA-256 digest when it uploads data. If verification is on, Vault reads the stored data and calculates the digest again. You can also start verification for a restore point. A difference between the digests shows a problem with the stored backup data.
 
 ## Progress
 
-While a job runs, the dashboard shows what the current item is actually doing: its phase (scanning, preparing, processing, transferring, verifying, or finalizing) and the real work done in that phase, for example `Uploading 84.2 GB / 225 GB — 37%` with the transfer rate and, once enough of the phase has passed, an estimate of the time left. A phase whose total is not known yet shows the phase and its counters without a percentage. Folder backups scan the source first, so archiving and chunking have a real total; container volumes, whose combined size is only known once they have been read, show live bytes and files instead. If nothing moves for two minutes, the card says how long it has been quiet, so a slow but healthy upload can be told apart from a stalled one. The same information is available from `GET /api/v1/runner/status` and the MCP `get_runner_status` tool (see [Progress](api.md#progress)).
+The Dashboard shows the phase and progress of the current item. Phases include scanning, preparing, processing, transferring, verifying, and finalizing.
+
+Vault shows a percentage if it knows the total. For example, it can show `Uploading 84.2 GB / 225 GB — 37%`. When enough data is available, Vault shows the rate and estimates the remaining time.
+
+Vault scans folders before it archives or divides their data into chunks. For container volumes, Vault shows the number of bytes and files as it reads them. If progress does not change for two minutes, Vault shows the time since the last change.
+
+You can also read this data from `GET /api/v1/runner/status` or the MCP `get_runner_status` tool. See [Progress](api.md#progress).

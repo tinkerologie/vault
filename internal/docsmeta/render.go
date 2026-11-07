@@ -28,8 +28,8 @@ func escapeCell(s string) string {
 func RenderAppSettings() string {
 	var b strings.Builder
 	b.WriteString("# App / Daemon Settings\n\n")
-	b.WriteString("Settings persisted in Vault's settings table, grouped by area. ")
-	b.WriteString("Defaults are the built-in values used when a setting is unset.\n")
+	b.WriteString("Vault stores these settings in its database. ")
+	b.WriteString("If you do not specify a setting, Vault uses the default value.\n")
 
 	for _, g := range appGroupOrder {
 		b.WriteString("\n## ")
@@ -44,7 +44,7 @@ func RenderAppSettings() string {
 func RenderNotifications() string {
 	var b strings.Builder
 	b.WriteString("# Notifications\n\n")
-	b.WriteString("Settings controlling outbound notification delivery.\n\n")
+	b.WriteString("Use these settings to control how Vault sends notifications.\n\n")
 	writeSettingsTable(&b, settingsForGroup(GroupNotifications))
 	return b.String()
 }
@@ -114,7 +114,7 @@ func RenderStruct(title string, v any) string {
 func RenderLocal() string {
 	desc := FieldDocs["LocalConfig.Path"]
 	if desc == "" {
-		desc = "Absolute path on the host filesystem where backups are stored."
+		desc = "Absolute path on the host for the backups."
 	}
 	var b strings.Builder
 	b.WriteString("# Storage: Local\n\n")

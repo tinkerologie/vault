@@ -1,6 +1,6 @@
 # Architecture decisions
 
-These retrospective records describe existing architecture verified against release [v2026.11.00](https://github.com/tinkerologie/vault/tree/v2026.11.00) on 2026-11-07. They do not assert original decision dates or new approvals; rationale follows the source and operating constraints.
+These records describe the architecture in release [v2026.11.00](https://github.com/tinkerologie/vault/tree/v2026.11.00). The source code and operating conditions give the reasons for the decisions.
 
 See the [glossary](../../GLOSSARY.md), [implementation context](../../CONTEXT.md) and [architecture overview](../architecture.md). Record a new, linked ADR when superseding a decision.
 

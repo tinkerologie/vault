@@ -1,6 +1,6 @@
 # Storage Destinations
 
-Every destination card has a **Browse** button that opens a read-only file browser — drill into folders like an FTP client to see exactly what Vault sees on the destination. It never writes anything, so it's also available in replica mode.
+Click **Browse** on a storage destination to see its files. The browser is read-only. You can also use it in replica mode.
 
 Vault writes compressed (and optionally encrypted) backup archives to a storage destination. This page explains how to configure each supported type.
 
@@ -12,7 +12,7 @@ Vault writes compressed (and optionally encrypted) backup archives to a storage 
 | ---------- | ------------------------------------------------------------------------------------------- |
 | **Local**  | Unraid array share, directly attached USB/SSD, or any locally mounted path                  |
 | **SFTP**   | Any Linux/BSD server reachable by SSH — another NAS, a VPS, a cloud VM                      |
-| **SMB**    | Windows shares and Samba servers; common for Synology and TrueNAS SCALE                     |
+| **SMB**    | Windows shares and Samba servers, including Synology and TrueNAS SCALE                      |
 | **NFS**    | NFS exports from Linux/BSD servers and most NAS devices                                     |
 | **WebDAV** | Stateless HTTP backup target — Nextcloud, ownCloud, Synology WebDAV, generic WebDAV servers |
 | **S3**     | AWS S3 and S3-compatible object storage — Backblaze B2, MinIO, Cloudflare R2, Wasabi        |
@@ -30,9 +30,9 @@ Vault writes compressed (and optionally encrypted) backup archives to a storage 
 
 - Local destinations are the fastest option — no network overhead.
 - Avoid putting backups on the same array as the source data if you want protection against disk failure.
-- Vault only wakes the destination disk when it needs to write; it does not keep disks spinning between runs.
+- Vault wakes the destination disk when it writes data. Vault does not keep disks active between runs.
 - **Use a dedicated folder.** Vault keeps its backups in `<job name>/<run>/` folders, plus `_vault/` for deduplicated data and database backups. Other files in the folder are never deleted, but a dedicated folder keeps backups easy to find and manage.
-- **Staging beside destination:** When enabled, classic folder backups and other staged items create their temporary archives in a hidden `.vault-stage` directory directly on the destination disk. This avoids filling smaller NVMe/SSD cache drives when creating multi-gigabyte archives. Vault automatically excludes this `.vault-stage` folder if the destination path lives inside the folder being backed up.
+- **Staging beside the destination.** If you enable this option, Vault puts temporary archives in the hidden `.vault-stage` directory on the destination disk. This reduces the space that large archives use on cache drives. Vault excludes `.vault-stage` if the destination is inside the backup source.
 
 ### Allowed local paths
 
@@ -51,11 +51,11 @@ Vault checks the path as typed and again after following symlinks, so a link tha
 
 **Delete Storage & Files** removes only data that Vault can prove it owns:
 
-- the restore points Vault has recorded for jobs on the destination;
-- run folders that contain a Vault `manifest.json` (a file with that name from another app does not count);
-- the deduplication repository in `_vault/`.
+- Restore points that Vault recorded for jobs on the destination
+- Run directories that contain a Vault `manifest.json`
+- The deduplication repository in `_vault/`
 
-Vault's database backups in `_vault/` are kept, and so is everything else in the folder. If some files could not be removed, the destination is still deleted and the page shows a warning. If Vault cannot open or list the destination, nothing is deleted, the destination is kept, and you can choose **Keep backup files** instead. Deleting a job or a restore point, and retention cleanup, follow the same rules.
+Vault's database backups in `_vault/` are kept, and so is everything else in the folder. If some files could not be removed, the destination is still deleted and the page shows a warning. If Vault cannot open or list the destination, nothing is deleted, the destination is kept, and you can select **Keep backup files**. Deleting a job or a restore point, and retention cleanup, follow the same rules.
 
 ---
 
@@ -70,14 +70,16 @@ Vault's database backups in `_vault/` are kept, and so is everything else in the
 | **Remote Path**          | Absolute path **on the SSH server** where Vault will store backups (e.g. `/volume1/vault-backups`). The directory must exist and the user must have write permission. |
 | **Host Key Fingerprint** | Optional. The server's SHA-256 host key fingerprint, from `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server.                                           |
 
-**Host key verification:** Vault never connects to an SFTP server without verifying its key. A configured `known_hosts_file` or Host Key Fingerprint is used if present. Otherwise Vault trusts the key it sees on the first connection, records it in the activity log (**Logs**), and refuses any different key from that address, so compare that fingerprint with the server's if the network between them is not trusted. If you replace the server, the connection fails with both fingerprints: confirm the new one and enter it as the Host Key Fingerprint. An unreadable `known_hosts_file` or malformed fingerprint is an error.
+**Host key verification.** Vault uses the configured `known_hosts_file` or **Host Key Fingerprint** if present. If neither is present, Vault records the first key it receives in **Logs**. On later connections, Vault refuses a different key from that address.
+
+If the network is untrusted, compare the fingerprint in **Logs** with the server's fingerprint. If you replace the server, Vault shows both fingerprints when the connection fails. Confirm the new fingerprint. Then enter it in **Host Key Fingerprint**. An unreadable `known_hosts_file` or an incorrectly formatted fingerprint causes an error.
 
 **Tips:**
 
 - Prefer key-based authentication for unattended backups. Add the Unraid server's public key (`~/.ssh/id_rsa.pub`) to the remote user's `~/.ssh/authorized_keys`.
 - Test the connection before saving — Vault will attempt to list the remote directory and report any permission or connectivity errors.
 - SFTP is the most broadly supported remote protocol and works with virtually any server running OpenSSH.
-- Each upload pipelines up to 64 requests using compatible 32 KiB packets, including compressed or encrypted streams whose size is unknown. This avoids waiting for a network round trip per packet. **Parallel uploads** controls how many files upload together; per-file pipelining requires no configuration.
+- Each upload pipelines up to 64 requests using compatible 32 KiB packets, including compressed or encrypted streams whose size is unknown. This avoids waiting for a network round trip per packet. **Parallel uploads** controls how many files Vault uploads at the same time. Vault uses pipelining for each file.
 
 ---
 
@@ -130,7 +132,7 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 **Tips:**
 
 - The export path must be listed in `/etc/exports` on the NFS server and the Unraid server's IP must be allowed.
-- NFS v3 is used by default. Ensure the `nfs-utils` package or equivalent is installed on the server.
+- Vault uses NFS version 4 by default. Make sure that the server has `nfs-utils` or an equivalent package.
 - NFS offers the lowest overhead for LAN backups to a Linux-based NAS.
 
 ---
@@ -146,19 +148,19 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 | **Allow self-signed TLS certificates** | Skip TLS validation. Only enable for trusted private servers.                                                                                                                                                      |
 | **Chunk size (MiB)**                   | Optional. Files larger than this are split into independent WebDAV PUT requests with a manifest sidecar. Default `0` = 50 MiB. Set `-1` to disable chunking.                                                       |
 | **Stall timeout (seconds)**            | Optional. Abort an upload if no bytes flow for this many seconds. Default `300`. Set `-1` to disable the stall watchdog.                                                                                           |
-| **Overall request timeout (seconds)**  | Optional hard ceiling per WebDAV request. Default `0` = unlimited; recommended for large backups over slower links.                                                                                                |
+| **Overall request timeout (seconds)**  | Optional time limit for each WebDAV request. The default of `0` gives no time limit. Use this value for large backups on slow connections.                                                                         |
 
 **Security Best Practices:**
 
 - **Use a dedicated, least-privileged service account** scoped only to the backup directory — do not reuse a personal or admin account.
 - **Avoid anonymous access for production backups.** Anonymous writes leave the destination open to unauthenticated tampering and prevent per-account auditing.
-- **Always use TLS (`https://`).** WebDAV authentication is HTTP Basic/Digest; over plain HTTP, credentials are sent in cleartext (Basic) or trivially crackable (Digest).
+- **Always use TLS (`https://`).** WebDAV uses HTTP Basic or Digest authentication. Without TLS, Basic sends credentials in cleartext. Digest authentication also exposes credentials to attacks without TLS.
 - **Restrict server-side write permissions to the backup path.** Configure the WebDAV server so the service account cannot read or modify other users' data.
 
 **Notes:**
 
 - WebDAV is **stateless HTTP**: each operation opens its own connection and closes it. This avoids the per-user concurrent-connection caps that affect SFTP/SMB on managed providers like Synology and TrueNAS.
-- Large WebDAV files are uploaded as bounded chunks with a small JSON manifest, so a transient network failure only retries the current chunk instead of a multi-GB archive from byte zero.
+- Vault uploads large WebDAV files in chunks and writes a small JSON manifest. If the network fails during an upload, Vault retries the current chunk.
 - Existing non-chunked WebDAV backups remain readable. Vault detects a chunk manifest when present and falls back to the original single-file read path otherwise.
 - Vault uses `gowebdav`'s auto-auth, so Basic and Digest authentication are negotiated automatically.
 - For Nextcloud, the server URL **must** include `/remote.php/dav/files/<username>/` — the share-root WebDAV endpoint is not the file-storage endpoint.
@@ -176,9 +178,9 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 | **Secret Access Key**           | Matching secret key.                                                                                                                                                                                                   |
 | **Endpoint**                    | Optional. Required for S3-compatible providers. Examples: `https://s3.us-west-002.backblazeb2.com` (B2), `https://<account>.r2.cloudflarestorage.com` (R2), `http://minio.local:9000` (MinIO). Leave blank for AWS S3. |
 | **Base Path**                   | Optional key prefix prepended to every object Vault writes.                                                                                                                                                            |
-| **Force path-style addressing** | Enable for older S3-compatible servers (e.g. older MinIO) that don't support virtual-hosted-style buckets. AWS S3 does not need this.                                                                                  |
+| **Force path-style addressing** | Enable for older S3-compatible servers (e.g. older MinIO) that do not support virtual-hosted-style buckets. For AWS S3, leave this setting off.                                                                        |
 | **Upload timeout (minutes)**    | Optional. Hard ceiling on a single object upload (including multipart transfers). Default `0` = 240 (4 hours). Raise for very large files over slow links.                                                             |
-| **Part size (MiB)**             | Optional. Multipart part size used for uploads. S3 caps the number of parts at 10,000 so this directly sets the per-object ceiling (`part_size × 10,000`). Default `0` = 64 MiB → 640 GB ceiling. Range 5–5120 MiB.    |
+| **Part size (MiB)**             | Part size for multipart uploads. A value of `0` uses 64 MiB. S3 permits a maximum of 10,000 parts. With the default part size, this gives a maximum of 625 GiB. The permitted part size is 5 to 5120 MiB.              |
 
 **Provider notes:**
 
@@ -194,8 +196,10 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 
 - Vault uses the AWS SDK v2's reusable client, which pools HTTP connections internally — a single S3 destination can sustain many concurrent uploads.
 - Server-side encryption is your provider's responsibility. Vault's own encryption (Settings → Security) layers on top and protects backups even from the storage operator.
-- **"Test connection succeeds but every upload fails with `SignatureDoesNotMatch`"** — a known quirk of many S3-compatible providers (MEGA, Backblaze B2, IDrive E2, older MinIO), and Vault handles it for you automatically whenever a custom **Endpoint** is set. Background: recent AWS SDK versions add a checksum trailer to every upload that these providers don't understand, so they reject the request; the connection test passes because it sends no data. With a custom endpoint Vault omits the trailer (real AWS S3 keeps it), and Vault's own SHA-256 verification still guarantees backup integrity either way. If you see this error anyway, double-check the Endpoint URL and region.
-- **Sizing Part size** — the S3 protocol caps a multipart upload at 10,000 parts, so the maximum object Vault can upload is `part_size × 10,000`. Default 64 MiB → 640 GB ceiling, which fits typical home-server workloads. For Immich libraries, full-disk images, or other multi-TB datasets, raise the value: 256 → 2.5 TB, 512 → 5 TB, 1024 → 10 TB. Peak upload memory ≈ `part_size × 5` per upload stream, times the job's **Parallel uploads** (default 3): the 64 MiB default holds about 960 MiB while a job uploads, and 1 GiB parts about 15 GiB. If you set a **Memory limit** under Settings → General → Memory, keep it above this figure. The limit is soft, so going over it makes the garbage collector run almost continuously instead of failing the upload. The Memory card lists any S3 job that can exceed the limit, and the run log warns when an upload starts. Backblaze B2, MinIO, AWS S3, Cloudflare R2, and Wasabi all accept parts in the 5 MiB – 5 GiB range.
+- **`SignatureDoesNotMatch` during upload.** Some S3-compatible providers reject the checksum trailer that the AWS SDK sends. The connection test can pass because it sends no file data. Vault omits the trailer when you set a custom **Endpoint**. Vault still uses its own SHA-256 verification. If the error continues, examine the endpoint URL and region.
+- **Part size.** S3 permits a maximum of 10,000 parts for each upload. The maximum object size is `part_size × 10,000`. The 64 MiB default permits an object of approximately 625 GiB. Part sizes of 256 MiB, 512 MiB, and 1 GiB permit approximately 2.44 TiB, 4.88 TiB, and 9.77 TiB.
+
+  Estimate peak upload memory as `part_size × 5 × parallel_uploads`. The default of three parallel uploads uses approximately 960 MiB with 64 MiB parts. With 1 GiB parts, it uses approximately 15 GiB. Set **Memory limit** under **Settings** → **General** → **Memory** to a value more than this estimate. Above this soft limit, the garbage collector runs more often. The Memory card identifies jobs that can exceed the limit. The run log shows a warning when an affected upload starts. AWS S3, Backblaze B2, MinIO, Cloudflare R2, and Wasabi accept parts from 5 MiB to 5 GiB.
 
 ---
 
@@ -208,7 +212,7 @@ After filling in the fields, always click **Test connection** before saving. Wha
 - **S3** — Vault only checks that the bucket exists and is accessible (no data is written).
 - **SMB** — Vault only lists the configured directory (no data is written).
 
-On failure you get a specific error (wrong password, path not found, permission denied, etc.) — fix it before saving. Note that on S3 and SMB a passing test can still be followed by an upload failure if the bucket or share is read-only, because the test does not write any data there.
+If the test fails, correct the problem before you save. An S3 or SMB test can pass on a read-only bucket or share because the test does not write data.
 
 ---
 
@@ -222,15 +226,15 @@ If you have existing Vault backups (or AppData Backup archives) on a storage des
 4. Click **Scan** — Vault will list all importable archives it finds
 5. Select the archives to import and click **Import**
 
-Imported backups appear as restore points on the relevant jobs so you can restore from them immediately. Vault imports only entries it can find on the destination: a Vault backup folder with a Vault `manifest.json`, or an AppData Backup archive inside an `ab_*` folder.
+Vault shows imported backups as restore points on their jobs. Vault imports a Vault backup directory with a Vault `manifest.json` or an AppData Backup archive in an `ab_*` directory.
 
 ---
 
 ## Encryption
 
-If you have configured an encryption passphrase under **Settings → Security → Encryption**, all backup archives written to storage are encrypted with your backup password (age encryption — a modern, audited standard) before they leave the server. Make sure to keep the password safe, as there is no recovery path if it is lost.
+If you enable age encryption for a classic backup job, Vault encrypts its archives before upload. Keep the backup password in a safe place. Use the password to restore the encrypted backup.
 
-Encryption is transparent to storage destinations — it applies regardless of destination type.
+Vault applies age encryption the same way for all storage types.
 
 ---
 

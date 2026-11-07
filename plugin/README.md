@@ -1,3 +1,3 @@
 #### Vault
 
-Backup manager for Unraid. Schedule and run backups of Docker containers, virtual machines, folders, plugins, and ZFS datasets to local or remote storage (SFTP, SMB, NFS, WebDAV, S3) with encryption, deduplication, retention, scheduled verification, and one-click restore from a modern web UI.
+Use Vault to schedule backups of Docker containers, virtual machines, folders, plugins, and ZFS datasets. Vault supports local and remote storage. You can use encryption, deduplication, retention, and scheduled verification. Restore backups from the web UI.

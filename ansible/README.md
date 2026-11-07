@@ -33,11 +33,11 @@ the file is missing, or if `ansible_password` is still set. `make build` needs n
 
 ### Moving from password login
 
-Remove `ansible_password` and any `PubkeyAuthentication=no` or
-`PreferredAuthentications=password` options from `inventory.yml`, then follow step 3.
-`sshpass` is no longer needed. An older run that was interrupted may have left a file holding
-your password; delete it with `rm -f "${TMPDIR:-/tmp}"/vault-sshpass-*`. Turning off password
-login on the server is optional and separate.
+Remove `ansible_password` and the `PubkeyAuthentication=no` and
+`PreferredAuthentications=password` options from `inventory.yml` if present.
+Then do step 3. An interrupted run from an older release can leave a password file.
+To delete these files, use `rm -f "${TMPDIR:-/tmp}"/vault-sshpass-*`.
+You can disable password login on the server separately.
 
 ## Usage
 
@@ -94,18 +94,17 @@ python -m pip install -r ansible/tests/requirements.txt
 make test-ansible
 ```
 
-The tests execute the real deploy and verify roles at `-vvv --diff` using a
-synthetic key and API key. A test connection replaces all remote commands; local
-SSH, SCP, curl, Go, and Playwright commands use fakes, and endpoint requests go
-to a temporary loopback HTTP server. No inventory or Unraid host is needed.
+The tests run the deploy and verify roles with `-vvv --diff` and test keys. A test connection replaces the remote commands. The tests substitute local SSH, SCP, curl, Go, and Playwright commands. A temporary loopback HTTP server handles endpoint requests. The tests do not need an inventory or an Unraid host.
 
-Coverage includes key-only options on all 13 SCP paths (including `rc.vault`), the SSH
-tunnel and Ansible's own connection; proof that `sshpass` is never invoked; the preflight
-failures for an unset key, a missing key file and a stored password, through every role
-that connects; API key censoring in output; and authentication failures, an unreachable
-host and included verification failures. Endpoint errors are checked according to the
-role's existing behavior: they are reported and ignored. Test callbacks remove retry
-delays without changing the production roles.
+The tests cover these conditions:
+
+- Key-only options on all 13 SCP paths (including `rc.vault`), the SSH tunnel, and the Ansible connection
+- No calls to `sshpass`
+- Pre-flight errors in every connecting role for an unset key, a missing key file, or a stored password
+- API key removal from output
+- Authentication errors, an unreachable host, and verification errors
+
+The verify role reports endpoint errors and continues. Test callbacks remove retry delays from the tests.
 
 CI runs `make test-ansible` in the **Ansible SSH key handling** job. The existing
 Codecov configuration excludes `ansible/**`, so Codecov's patch percentage does

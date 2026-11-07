@@ -1,188 +1,188 @@
 # Getting Started with Vault
 
-This guide walks you through installing Vault and completing your first backup from scratch.
+Use this guide to install Vault and make your first backup.
 
 ## Prerequisites
 
-- Unraid 7.0 or later
-- At least one storage destination — local path, SFTP server, SMB share, NFS export, WebDAV server, or S3-compatible bucket
-
----
+- Unraid 7.0 or later.
+- One storage destination. Vault supports local paths, SFTP, SMB, NFS, WebDAV, and S3-compatible object storage.
 
 ## 1. Install the Plugin
 
-Until Vault is listed in the Community Applications store, install it manually:
+1. In the Unraid web UI, open **Plugins** → **Install Plugin**.
+2. Paste this URL.
 
-1. In the Unraid web UI, go to **Plugins** → **Install Plugin**
-2. Paste the following URL and click **Install**:
-
-   ```
+   ```text
    https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/vault.plg
    ```
 
-3. Once installed, Vault appears under **Settings** → **Vault** in the Unraid menu.
+3. Click **Install**.
 
----
+After installation, Unraid shows Vault under **Settings** → **Vault**.
 
 ## 2. Open the Vault UI
 
-Click **Open Web UI** on the Vault settings page, or navigate to:
+Click **Open Web UI** on the Vault settings page.
 
-```
-http://<your-unraid-ip>:24085
-```
+By default, Vault listens on `127.0.0.1`. The Unraid plugin proxy gives you access to the Vault UI on that address.
 
-> **Accessing directly on port 24085:** By default Vault binds to `127.0.0.1`, so it is reachable only through the Unraid plugin proxy. To access it directly (e.g. from Home Assistant or the CLI), change `BIND_ADDRESS` to `0.0.0.0` or your server's LAN IP under **Settings → Vault** in Unraid and restart the daemon. You still don't need a key to use Vault from the Unraid web UI. A key is only needed for replication and for Home Assistant; generate it under **Settings → Security → API Access**.
+### Use port 24085 directly
+
+1. In Unraid, open **Settings** → **Vault**.
+2. Set **Bind Address** to the server's LAN IP address or `0.0.0.0`.
+3. Click **Apply**.
+4. Open `http://<your-unraid-ip>:24085`.
+
+You can use the Unraid web UI without a Vault API key. If Home Assistant runs on another device, it cannot connect to the default loopback address. Use the LAN address and port `24085` in Home Assistant. Make an API key in Vault under **Settings** → **Security** → **API Access**. Enter the key when Home Assistant asks for it.
 
 ### Network discovery (mDNS)
 
-When Vault is bound to a non-loopback address it advertises the `_vault._tcp` service over mDNS so Home Assistant can discover it automatically.
+When Vault listens on a non-loopback address, it publishes the `_vault._tcp` service over mDNS. Home Assistant uses this service to find Vault.
 
-- Loopback binds (`127.0.0.1`, `::1`) are never advertised.
-- A specific LAN IP (for example `192.0.2.10`) is announced only on the interface that owns it, and only that address is published. A device on another local network on the same server, such as a Docker or VM bridge, that explicitly asks for Vault can still be told that address. All-interface binds (`0.0.0.0`, `::`) advertise on every LAN interface, and each interface carries only its own addresses.
-- Vault publishes the service under its own host name, `vault-<hostname>.local`, and answers address lookups for that name. It never claims the Unraid host name, so it does not conflict with Unraid's `avahi-daemon` (`<hostname>.local` stays unchanged). If another device already uses `vault-<hostname>.local`, Vault picks the next free name (for example `vault-<hostname>-2.local`).
-- To stop advertising, set **Network Discovery (mDNS)** to **No** under **Settings → Vault**, or start the daemon with `--mdns=false`. The API remains reachable at the bind address.
+- Vault does not publish the loopback addresses `127.0.0.1` and `::1`.
+- For a specific LAN IP address, Vault publishes that address only on its interface. A Docker or VM bridge on the same server can get that address if it queries Vault.
+- For `0.0.0.0` or `::`, Vault publishes on all LAN interfaces. Each interface publishes only its own addresses.
+- Vault publishes `vault-<hostname>.local`. If another device uses that name, Vault selects the next available name (for example, `vault-<hostname>-2.local`). The Unraid host name `<hostname>.local` stays the same.
 
-The Dashboard shows a three-step welcome guide: add storage → create job → run backup.
+To stop discovery, set **Network Discovery (mDNS)** to **No** under **Settings** → **Vault** in Unraid. You can also start the daemon with `--mdns=false`. The API stays available at the bind address.
 
-A status banner at the top of the Dashboard gives one verdict on your backups, names anything that needs you, and links to the page that fixes it.
+The Dashboard shows the status of your backups. If a problem shows in the status banner, use the link to the applicable page.
 
 ![Dashboard welcome screen](screenshots/01-dashboard.png)
 
----
-
 ## 3. Add a Storage Destination
 
-Vault needs somewhere to write your backups before you can create any jobs.
+Add a storage destination before you create a backup job.
 
-1. Go to **Storage** in the left sidebar
-2. Click **Add Storage**
-3. Give it a name (e.g. "NAS Backups")
-4. Choose a type:
+1. Open **Storage** in the sidebar.
+2. Click **Add Storage**.
+3. Enter a name for the destination (for example, "NAS Backups").
+4. Select a destination type.
 
-   | Type       | Use case                                                                                   |
-   | ---------- | ------------------------------------------------------------------------------------------ |
-   | **Local**  | A path on your Unraid array or a directly attached drive                                   |
-   | **SFTP**   | Any server reachable by SSH (another NAS, a VPS, …)                                        |
-   | **SMB**    | Windows shares and Samba servers on your LAN (Synology, TrueNAS SCALE, Windows Server)     |
-   | **NFS**    | Linux/NAS NFS exports                                                                      |
-   | **WebDAV** | Stateless HTTP target — Nextcloud, ownCloud, Synology WebDAV, generic servers              |
-   | **S3**     | AWS S3 and S3-compatible object storage — Backblaze B2, MinIO, Cloudflare R2, Wasabi, MEGA |
+   | Type       | Destination                                                                   |
+   | ---------- | ----------------------------------------------------------------------------- |
+   | **Local**  | A path on the Unraid array or an attached drive                               |
+   | **SFTP**   | A server that supports SSH                                                    |
+   | **SMB**    | A Windows share or a Samba server                                             |
+   | **NFS**    | An NFS export                                                                 |
+   | **WebDAV** | A WebDAV server such as Nextcloud, ownCloud, or Synology WebDAV               |
+   | **S3**     | AWS S3 or compatible storage such as Backblaze B2, MinIO, R2, Wasabi, or MEGA |
 
-5. Fill in the connection details. See [Storage Destinations](guides/storage-destinations.md) for field-by-field guidance.
-6. Click **Test connection** to verify Vault can reach the destination.
-7. Click **Save**.
+5. Enter the connection settings. See [Storage Destinations](guides/storage-destinations.md) for the settings for each type.
+6. Click **Test connection**.
+7. If the test is successful, click **Save**.
 
 ![Storage destinations page](screenshots/03-storage.png)
 
----
-
 ## 4. Create a Backup Job
 
-A job defines _what_ to back up, _where_ to put it, _when_ to run, and how many copies to keep.
+A backup job specifies the items, storage destination, schedule, and retention policy.
 
-1. Go to **Jobs** in the left sidebar
-2. Click **Create Job**
-3. Work through the wizard:
-
-   **Step 1 — What**
-
-   - Pick which Docker containers, VMs, ZFS datasets, folders, or plugins to include
-   - Items are listed automatically from what Vault discovers on your server
-   - For containers you can also list sub-paths to exclude (e.g. Plex transcode cache)
-
-   **Step 2 — Where & when**
-
-   - Select the storage destination you created earlier
-   - Set a schedule (hourly, daily, weekly, monthly, yearly, or custom cron) — or leave it empty for a manual-only job
-
-   **Step 3 — How**
-
-   - Choose a backup type: **Full**, **Incremental**, or **Differential**
-   - Optionally adjust compression and advanced options like retention: either _keep last N restore points_ or a Long-Term Retention (LTR) policy that keeps a tunable number of daily / weekly / monthly / yearly snapshots
-
-   **Step 4 — Name & review**
-
-   - Give the job a descriptive name (e.g. "Weekly Container Backup")
-
-4. Review the summary and click **Save**.
+1. Open **Jobs** in the sidebar.
+2. Click **Create Job**.
+3. In **What**, select the items to back up. Vault shows Docker containers, VMs, ZFS datasets, folders, and plugins from your server. For containers, you can also specify subpaths to exclude.
+4. In **Where & when**, select a storage destination. Set a schedule. For a manual job, leave the schedule empty.
+5. In **How**, select **Full**, **Incremental**, or **Differential**. If necessary, change the compression and retention settings. You can keep a fixed number of restore points or use Long-Term Retention (LTR).
+6. In **Name & review**, enter a name for the job.
+7. Examine the summary.
+8. Click **Create Job**.
 
 ![Jobs page](screenshots/04-jobs.png)
 
-> **Tip:** To run a backup immediately without waiting for the schedule, open the job and click the **Run Now** button.
-
----
-
 ## 5. Run Your First Backup
 
-1. On the **Jobs** page, find your new job
-2. Click the **Run Now** button (play icon)
-3. A progress bar appears in real time via WebSocket streaming
+1. On **Jobs**, find the new job.
+2. Click **Run Now** (the play icon).
 
-Once complete, the job card shows the last run time, duration, and size.
-
----
+Vault shows the progress while the backup runs. When the backup completes, the job card shows the last run time, duration, and size.
 
 ## 6. Verify and Restore
 
-After at least one successful backup:
+After a successful backup:
 
-1. Go to **Restore** in the left sidebar
-2. Select your job — you should see one or more restore points listed
-3. Click a restore point to open the guided wizard
-4. Choose which items to restore and confirm
+1. Open **Restore** in the sidebar.
+2. Select your job.
+3. Select a restore point.
+4. Select the items to restore.
+5. Confirm the restore.
 
-Each restore point also shows chain health annotations so you can see the referenced full backup that anchors the chain for an incremental or differential point, along with chain depth tooltips.
+For an incremental or differential restore point, Vault shows the full backup that starts its backup chain. Vault also shows the chain depth.
 
 ![Restore page](screenshots/06-restore.png)
 
----
-
 ## What's Next
 
-| Goal                                              | Where to look                                                                            |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Configure SFTP, SMB, NFS, WebDAV, or S3 in detail | [Storage Destinations](guides/storage-destinations.md)                                   |
-| Tune jobs (retention, LTR, encryption, dedup)     | [Backup Jobs](guides/backup-jobs.md)                                                     |
-| Set up encryption                                 | Settings → Security → Encryption                                                         |
-| Enable Discord notifications                      | Settings → Notifications                                                                 |
-| Replicate backups to a second Vault server        | Replication page (in-app guidance)                                                       |
-| Verify a restore point on demand                  | Restore page → restore point → _Verify_                                                  |
-| Run dedup maintenance from the CLI                | `vault dedup repair --dest <id>`, `vault dedup gc --dest <id>`                           |
-| Get files back with no Vault server (any OS)      | [Disaster Recovery](guides/disaster-recovery.md#recovering-files-without-a-vault-server) |
-| Export a diagnostics bundle for support           | Settings → Support → _Download diagnostics_                                              |
-| Automate with Home Assistant                      | [ha-vault](https://github.com/tinkerologie/ha-vault)                                     |
-| Use the REST API                                  | [API Reference](api.md)                                                                  |
-| Use the MCP server                                | [MCP](mcp.md)                                                                            |
+| Task                                               | Location                                                                                 |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Configure a storage destination                    | [Storage Destinations](guides/storage-destinations.md)                                   |
+| Change retention, encryption, or deduplication     | [Backup Jobs](guides/backup-jobs.md)                                                     |
+| Set a backup password                              | **Settings** → **Security** → **Encryption**                                             |
+| Enable Discord notifications                       | **Settings** → **Notifications**                                                         |
+| Replicate backups to a second Vault server         | **Replication**                                                                          |
+| Verify a restore point                             | **Restore** → restore point → **Verify**                                                 |
+| Repair deduplicated storage                        | `vault dedup repair --dest <id>`                                                         |
+| Remove unreferenced data from deduplicated storage | `vault dedup gc --dest <id>`                                                             |
+| Recover files without a Vault server               | [Disaster Recovery](guides/disaster-recovery.md#recovering-files-without-a-vault-server) |
+| Download diagnostics                               | **Settings** → **Support** → **Download diagnostics bundle**                             |
+| Use Home Assistant                                 | [ha-vault](https://github.com/tinkerologie/ha-vault)                                     |
+| Use the REST API                                   | [API Reference](api.md)                                                                  |
+| Use the MCP server                                 | [MCP](mcp.md)                                                                            |
 
-> **Prepare for disaster now:** Enable **Include in DB backup** on at least one
-> storage destination so your Vault settings travel with your data, and keep
-> your backup password somewhere safe off the server. If you ever lose the
-> server, the [Disaster Recovery guide](guides/disaster-recovery.md) walks you
-> through bringing everything back.
+### Prepare for recovery
 
----
+1. Enable **Include in DB backup** on at least one storage destination.
+2. Keep the backup password outside the server.
+3. Keep a copy of the server key (`vault.key`) outside the server.
+
+If you lose the server, follow the [Disaster Recovery guide](guides/disaster-recovery.md).
 
 ## Troubleshooting
 
-**"Vault daemon not available" after saving a job**
-This can appear if the daemon restarts mid-request. Wait a few seconds and refresh — your job was likely saved successfully. If the error persists, check the **Logs** page for details.
+### "Vault daemon not available" after saving a job
 
-**Configuration lost after reboot**
-Vault uses a hybrid SQLite layout — a working DB in RAM, a periodic snapshot on a discovered cache pool, and a USB shadow on the Unraid flash drive. On boot it restores the freshest valid copy among the persisted copies (cache snapshot, rotated copies, USB shadow, and the USB-direct database left by a boot where no pool was mounted), so configuration — including the Temporary Work Area path — survives reboots and pool-mount races. You can confirm which source was used by running `curl http://127.0.0.1:24085/api/v1/health` on the server (`startup.restoration`). If you've changed the snapshot path manually, confirm it points to persistent storage under **Settings → General → Database Location**.
+The daemon can restart before it responds to a save request.
 
-**What is `/mnt/user/.vault`?**
-It is Vault's database snapshot directory, `<pool>/.vault`, which holds `vault.db` and its `rotated/` copies. Unraid shows every top-level pool directory as a user share, so it also appears under `/mnt/user`. Don't delete it while Vault is running; move it under **Settings → General → Database Location** instead. `.vault-stage` next to it is temporary staging.
+1. Wait a few seconds.
+2. Refresh the page.
+3. Make sure that Vault shows the job.
+4. If the error continues, open **Logs**.
 
-**Fix Common Problems reports "Invalid folder vault-fuse contained within /mnt"**
-Older releases created `/mnt/vault-fuse` for FUSE backup mounts. Vault now mounts under `/mnt/addons/vault-fuse` and removes the old directory at startup once it is empty. If the warning persists, check that no backup mount is still active, then restart Vault.
+### Configuration lost after reboot
 
-**Mirrored cache pool not detected**
-Vault scans `/mnt/` for pool mounts at startup. If your pool isn't shown, make sure it's mounted before the Vault service starts, then override the snapshot path manually under **Settings → General → Database Location**.
+Vault uses a working database in RAM. Vault saves copies to a cache pool and to the Unraid flash drive.
 
-**Diagnostics bundle for support**
-Settings → Support → _Download diagnostics_ exports a ZIP containing system info, schema, recent runs, scheduler state, and the in-memory daemon log — all credential values are redacted. Attach it to bug reports.
+At startup, Vault selects the newest valid copy. It can use a cache snapshot, a rotated copy, a USB shadow, or the USB-direct database from a startup without a pool.
+
+1. On the server, run `curl http://127.0.0.1:24085/api/v1/health`.
+2. Read `startup.restoration` to find the source of the database.
+3. If you set a custom snapshot path, make sure that the path is on persistent storage.
+   Find the path under **Settings** → **General** → **Database Location**.
+
+### What is `/mnt/user/.vault`?
+
+Vault stores `vault.db` and its `rotated/` copies in `<pool>/.vault`. Unraid also shows top-level pool directories as user shares. Thus the same directory appears under `/mnt/user`.
+
+Do not delete the directory while Vault runs. To move it, use **Settings** → **General** → **Database Location**. The adjacent `.vault-stage` directory holds temporary data.
+
+### Fix Common Problems reports "Invalid folder vault-fuse contained within /mnt"
+
+Older releases used `/mnt/vault-fuse` for FUSE backup mounts. Vault now uses `/mnt/addons/vault-fuse`. At startup, Vault removes the old directory if it is empty.
+
+1. If the warning continues, make sure that no backup mount is active.
+2. Restart Vault.
+
+### Mirrored cache pool not detected
+
+Vault scans `/mnt/` for pool mounts at startup. If Vault does not show the pool, make sure that Unraid mounts it before Vault starts. Set the snapshot path under **Settings** → **General** → **Database Location**.
+
+### Diagnostics bundle for support
+
+Open **Settings** → **Support** → **Download diagnostics bundle**. Vault puts system data, the database schema, recent runs, scheduler status, and the daemon log in a ZIP file. Vault removes credential values from the file.
+
+Attach the ZIP file to the bug report.
 
 ## Optional: "Backups" link in the top navigation
 
-Vault can add a **Backups** entry to the Unraid top navigation bar for one-click access to the web UI, embedded inside the Unraid interface. The embedded view fits the page: a compact row of links replaces Vault's own header, sidebar and bottom bar, the page scrolls as one, and it follows Unraid's light or dark theme until you choose a mode in Vault's settings. It is **off by default** — enable it under _Settings → Utilities → Vault → Quick Access_. The entry uses Unraid's supported plugin menu extension point; no core files are modified.
+The **Backups** entry opens Vault inside the Unraid web UI. The embedded view uses a row of links in place of Vault's header, sidebar, and bottom bar. It uses the Unraid theme until you select a theme in Vault.
+
+The **Backups** entry is off by default. To enable it, open **Settings** → **Utilities** → **Vault** → **Quick Access** in Unraid. Vault uses the Unraid plugin menu to add this entry.
