@@ -4,6 +4,8 @@ This page is for developers and contributors — it describes Vault's internal d
 
 Vault is a single Go binary that runs as a daemon on Unraid servers. It provides backup and restore for Docker containers, libvirt VMs, ZFS datasets, folders, and plugins.
 
+Domain terms live in the [glossary](../GLOSSARY.md); source-linked trade-offs live in the [ADR index](adr/README.md).
+
 ## Layered Design
 
 ```text
@@ -15,7 +17,7 @@ CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / En
 | CLI         | `internal/cli/`         | Cobra commands: `vault daemon`, `vault replica`, `vault dedup`, `vault recover`, `vault api-key` |
 | API         | `internal/api/`         | Chi router, REST handlers, WebSocket integration                                                 |
 | MCP         | `internal/mcp/`         | Model Context Protocol tools over streamable HTTP                                                |
-| Job Intake  | `internal/jobs/`        | Validates, persists and activates every Job write; REST and MCP adapt to it                      |
+| Job Intake  | `internal/jobs/`        | Shares REST/MCP Job creation, update and deletion policy; imports have distinct ownership        |
 | Database    | `internal/db/`          | SQLite (WAL, pure-Go driver) with hybrid snapshot + USB shadow                                   |
 | Storage     | `internal/storage/`     | Local, SFTP, SMB, NFS, WebDAV, and S3 adapters (factory-dispatched)                              |
 | Engine      | `internal/engine/`      | Per-type backup/restore handlers (container, VM, ZFS, folder, plugin)                            |
@@ -33,24 +35,10 @@ CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / En
 
 ### storage.Adapter
 
-```go
-type Adapter interface {
-    Write(path string, reader io.Reader) error
-    WriteFrom(path string, open func() (io.ReadCloser, error)) error
-    Read(path string) (io.ReadCloser, error)
-    ReadRange(path string, offset, length int64) (io.ReadCloser, error)
-    Delete(path string) error
-    List(prefix string) ([]FileInfo, error)
-    Stat(path string) (FileInfo, error)
-    TestConnection() error
-    GetCapacity(ctx context.Context) (Capacity, error)
-    Usage() (free, total int64, err error)
-}
-```
-
+The [storage contract](../internal/storage/adapter.go) owns the current interface.
 `WriteFrom` lets the retry layer re-issue a failed upload from a fresh stream;
-`ReadRange` serves the dedup layer's partial pack reads; `GetCapacity` and
-`Usage` feed the capacity widgets and trajectory detector.
+`ReadRange` serves the dedup layer's partial pack reads; `GetCapacity` feeds
+capacity reporting.
 
 Adapters that hold persistent resources (SFTP, SMB) implement `io.Closer` and
 are released by `storage.CloseAdapter`. Bandwidth throttling is layered on
@@ -75,7 +63,7 @@ can route them through the dedup repo on dedup-enabled destinations.
 
 - `vm.go`, `vm_restore.go`, and other libvirt-touching files use `//go:build linux` — real libvirt RPC against `/var/run/libvirt/libvirt-sock`
 - `vm_stub.go`: `//go:build !linux` — stubs for macOS / Windows so the rest of the daemon still builds and tests run
-- ZFS (`engine/zfs.go`) calls out to the host `zfs` binary; the code itself is platform-neutral
+- ZFS ([`internal/engine/zfs.go`](../internal/engine/zfs.go)) calls out to the host `zfs` binary and is Linux-only
 - Local builds and the full test suite work on macOS without libvirt installed
 
 ## Database
@@ -86,7 +74,7 @@ SQLite with WAL mode and busy timeout. Pure Go driver via `modernc.org/sqlite` (
 sql.Open("sqlite", path+"?_txlock=immediate&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(67108864)")
 ```
 
-Schema is applied inline at open time via `CREATE TABLE IF NOT EXISTS` (no versioned migrations). Twelve tables: `storage_destinations`, `jobs`, `job_items`, `job_runs`, `restore_points`, `settings`, `activity_log`, `verify_runs`, `replication_sources`, `dedup_packs`, `dedup_chunks`, `dedup_gc_runs`.
+Database opening applies the base schema and idempotent column/data migrations. See [database opening](../internal/db/db.go) and [migrations](../internal/db/migrations.go) for the current schema and upgrade behavior.
 
 ### Hybrid snapshot layout
 
@@ -165,7 +153,7 @@ make redeploy            # Full lifecycle: uninstall -> build -> deploy -> verif
 
 ```bash
 make deps                # Download and tidy Go modules
-make build-local         # Build for the current platform
+make build-local         # Build Linux/amd64 by default; GOOS/GOARCH can override
 make test                # Run all unit tests
 make test-short          # Run short tests only
 make test-coverage       # Generate coverage.out and coverage.html
@@ -179,7 +167,8 @@ make clean               # Remove build artifacts
 ### Running the Daemon
 
 ```bash
-./build/vault daemon --db=vault.db --addr=:24085
+# On Linux, using the default build target:
+./build/vault-linux-amd64 daemon --db=vault.db --addr=:24085
 ```
 
 The production binary is built with `CGO_ENABLED=0` using `modernc.org/sqlite`, keeping it pure Go.
