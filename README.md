@@ -8,7 +8,12 @@
 ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/tinkerologie/vault?utm_source=oss&utm_medium=github&utm_campaign=tinkerologie%2Fvault&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
 [![License](https://img.shields.io/github/license/tinkerologie/vault)](https://github.com/tinkerologie/vault/blob/main/LICENSE)
 
-Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. It protects Docker containers, libvirt VMs, ZFS datasets, folders, and plugins by backing them up to pluggable storage destinations — local disk, SFTP, SMB, NFS, WebDAV, or S3-compatible object storage. Vault ships with a REST API, an MCP server for AI assistants, WebSocket progress streaming, and an integrated web UI built with Svelte 5.
+Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers.
+It backs up Docker containers, libvirt VMs, ZFS datasets, folders, and plugins.
+It supports local disk, SFTP, SMB, NFS, WebDAV, and S3-compatible storage.
+
+Vault includes a Svelte 5 web UI, a REST API, and an MCP server.
+It sends progress updates over WebSocket.
 
 ![Vault Dashboard](docs/screenshots/01-dashboard.png)
 
@@ -16,69 +21,78 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 
 **Backup sources**
 
-- Docker containers — image, XML template, and every mapped appdata volume; per-container path exclusions
-- libvirt VMs — live snapshot or cold mode, with NVRAM preservation
-- ZFS datasets — native `zfs send`/`receive` with snapshot management
-- Folders and plugins — any path on the host, plus all installed Unraid plugins
-- Stale-item detection — flags items that disappear from the host so jobs stay clean
+- Docker container images, XML templates, and included volumes. You can exclude paths for each container.
+- libvirt VMs in live snapshot or cold mode, with NVRAM.
+- ZFS datasets with native `zfs send` and `zfs receive`.
+- Folders on the host and installed Unraid plugins.
+- Status for items that Vault cannot find on the host.
 
 **Storage destinations**
 
-- Local, SFTP, SMB, NFS, WebDAV, and S3-compatible (AWS S3, Backblaze B2, MinIO, Cloudflare R2, Wasabi, MEGA, IDrive E2)
-- Bandwidth throttling per remote destination
-- Test-connection and storage-health probes
-- Scan + import for backups produced by other Vault instances or AppData Backup
+- Local disk, SFTP, SMB, NFS, WebDAV, and S3-compatible storage.
+- Bandwidth limits for each remote destination.
+- Connection and storage health tests.
+- Import of backups from other Vault servers or AppData Backup.
 
-**Backup strategy**
+**Backup options**
 
-- Full, incremental, and differential chains
-- Simple-count retention or Long-Term Retention / LTR (`keep_latest`/`daily`/`weekly`/`monthly`/`yearly`)
-- AES-256-GCM encryption with per-passphrase key derivation
-- Content-defined deduplication (Keyed-FastCDC + per-destination dedup repo) with `vault dedup gc`/`repair` CLI helpers
-- Per-run SHA-256 verification and on-demand restore-point verify
-- Per-job notifications (success/failure) via Discord webhook
+- Full, incremental, and differential backups.
+- Simple count retention or Long-Term Retention (LTR).
+- Password-based encryption with age.
+- Content-defined deduplication with a repository for each destination. Use `vault dedup gc` and `vault dedup repair` for maintenance.
+- SHA-256 verification after a backup and on-demand verification of restore points.
+- Discord notifications for backup success or failure.
 
 **Scheduling**
 
-- Cron, hourly/daily/weekly/monthly/yearly presets, plus "first/last day of month"
-- No-progress stall watchdog per job (cancels only after ~2h of zero bytes moved); no fixed total-job time cap, so long backups that keep transferring are never killed
-- Cancellation propagated end-to-end (file I/O, traversal, engine handlers)
+- Cron schedules and presets for hourly, daily, weekly, monthly, and yearly backups.
+- First-day and last-day schedules for each month.
+- Vault cancels a backup after approximately two hours without data transfer. A backup that continues to transfer data has no fixed time limit.
 
 **Web UI**
 
-- Dashboard, Jobs, Storage, Replication, Restore, History, Disaster Recovery, Logs, Settings
-- Live WebSocket progress streaming and runner queue visibility
-- Light/dark themes with mobile-responsive layout
-- Recovery plan that explains how to rebuild from scratch
+- Dashboard, Jobs, Storage, Replication, Restore, History, Disaster Recovery, Logs, and Settings.
+- Backup progress and queue status.
+- Light and dark themes and a layout for small screens.
+- Recovery instructions for a replacement server.
 
-**Integration**
+**Integration and diagnostics**
 
-- REST API at `/api/v1`: no key for the Unraid web UI, an API key only for replication and Home Assistant
-- MCP server (streamable HTTP + stdio) for Claude Desktop, Claude Code, and other AI tooling
-- Home Assistant custom integration: [`ha-vault`](https://github.com/tinkerologie/ha-vault)
-- Hybrid SQLite snapshot (RAM working DB + persistent snapshot + USB shadow) survives reboots
-- Diagnostics bundle export (redacted) for support requests
+- REST API at `/api/v1`. Remote clients need an API key.
+- MCP server over Streamable HTTP. A stdio bridge can connect Claude Desktop and other clients.
+- Home Assistant integration ([ha-vault](https://github.com/tinkerologie/ha-vault)).
+- SQLite database recovery from a persistent snapshot or USB shadow after reboot.
+- Diagnostics download with credential values removed.
 
 ## Installation
 
 ### Unraid Community Applications
 
-Search for **Vault** in the Unraid Community Applications store and click Install.
+Search for **Vault** in Unraid Community Applications. Click **Install**.
 
 ### Manual Install
 
-Paste this URL into **Plugins > Install Plugin** in the Unraid web UI:
+1. In the Unraid web UI, open **Plugins** → **Install Plugin**.
+2. Paste this URL.
 
-```text
-https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/vault.plg
-```
+   ```text
+   https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/vault.plg
+   ```
+
+3. Click **Install**.
 
 ## Quick Start
 
-1. **Add Storage** — Go to the Storage page and configure a backup destination (local, SFTP, SMB, NFS, WebDAV, or S3)
-2. **Create a Job** — Go to the Jobs page, pick what to back up, choose a schedule, and set retention
-3. **Run Backup** — Click _Run Now_ or wait for the schedule
-4. **Monitor** — Watch live progress on the Dashboard or check the History page for results
+1. Open **Storage**.
+2. Add a storage destination.
+3. Open **Jobs**.
+4. Click **Create Job**.
+5. Select the items to back up.
+6. Set the schedule.
+7. Set the retention options.
+8. Save the job.
+9. Click **Run Now** to start the job immediately.
+10. Open **History** to see the result.
 
 ## Documentation
 

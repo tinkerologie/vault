@@ -45,3 +45,15 @@ func TestRenderStructSkipsInternalFields(t *testing.T) {
 		t.Errorf("RenderStruct should render documented field Job.Schedule with its description")
 	}
 }
+
+func TestRenderLocalUsesDescriptionWhenCatalogEntryIsMissing(t *testing.T) {
+	const key = "LocalConfig.Path"
+	description := FieldDocs[key]
+	t.Cleanup(func() { FieldDocs[key] = description })
+	delete(FieldDocs, key)
+
+	const want = "| Path | string | `path` | Absolute path on the host for the backups. |"
+	if out := RenderLocal(); !strings.Contains(out, want) {
+		t.Errorf("RenderLocal missing the fallback row: %s", out)
+	}
+}

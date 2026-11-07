@@ -16,6 +16,19 @@ To maintain code quality, protect maintainer capacity, and prevent maintainer bu
 
 ---
 
+## Documentation style
+
+Use [ASD-STE100 Simplified Technical English, Issue 9](https://www.asd-ste100.org/STE_downloads.html) for new or revised technical prose.
+
+- Use the approved dictionary meanings and parts of speech. Use the same technical term for each item.
+- Use active voice. Use the imperative for instructions.
+- Use a maximum of 20 words for each instruction and 25 words for each descriptive sentence.
+- Put one instruction in each sentence unless the actions occur at the same time.
+- Put a condition before the command if the reader must know the condition first.
+- Keep exact commands, identifiers, and interface labels. Check the prose that explains them.
+
+Review both the writing rules and the dictionary before you submit a documentation change.
+
 ## Development Workflow
 
 All contributions—whether submitted by humans or AI agents—must adhere to this step-by-step workflow:
@@ -166,12 +179,9 @@ These rules apply to every contributor, including AI coding agents. The full org
    then posts a Coding Plan on the issue. Implement from that plan. The labeler skips issues labeled
    `question`, `duplicate`, `invalid`, `wontfix`, or `no-type`, and never re-adds a type label that
    a maintainer removed.
-2. **Link the issue.** In the PR's **Related Issues** section, write `Closes #<number>` (or `Fixes`
-   or `Resolves`) when the PR completely resolves the issue; these keywords close it on merge. Use
-   `Part of #<number>` or `Related to #<number>` for partial work. The linked issue must exist; an
-   issue in another public repository (`owner/repo#123`) is fine. Only authors with write access or
-   higher (maintainers) may write `None`, for housekeeping such as CI,
-   documentation, or dependency updates; PR governance rejects `None` from everyone else.
+2. **Link the issue.** In **Related Issues**, use `Closes #<number>`, `Fixes #<number>`, or `Resolves #<number>` if the pull request completes the issue. These keywords close the issue when the pull request merges.
+   For partial work, use `Part of #<number>` or `Related to #<number>`. The issue must exist. You can link a public issue in another repository (`owner/repo#123`).
+   Only maintainers with write access or higher can use `None` for housekeeping. Examples include documentation, CI, and dependency changes.
 3. **One change at a time.** Contributors without write access can have at most 2 open, non-draft
    pull requests here. GitHub enforces this limit, and draft pull requests do not count toward it.
    Do not open PRs that edit the same files as another open PR, such as `CHANGELOG.md`,
@@ -179,15 +189,11 @@ These rules apply to every contributor, including AI coding agents. The full org
    continue.
 4. **Act on the Tinkerologie-Bot report.** When PR governance fails, Tinkerologie-Bot posts one comment
    listing every problem as a numbered item. Fix each item by editing the PR description or pushing
-   the missing change; the check re-runs and the comment updates to passed.
+   the missing change. The check runs again and updates the comment.
 5. **Rebase before review.** Rebase on `main` before marking a PR ready for review.
-6. **Resolve conflicts first.** When a PR gets the `conflicts` label, rebase on `main`,
-   resolve the conflicts (keep every `CHANGELOG.md` entry under `[Unreleased]`), re-run the tests,
-   and force-push before doing any other work.
+6. **Resolve conflicts first.** If a pull request has the `conflicts` label, rebase on `main`. Resolve the conflicts. Keep every `CHANGELOG.md` entry under `[Unreleased]`. Run the tests again. Then force-push before you continue.
 7. **Coverage.** `codecov/patch` must pass: at least 90% of added or changed lines must be
-   covered by tests. The gate is the percentage; still, add tests for the uncovered lines the
-   Codecov PR comment lists, and explain in the PR description any line you leave uncovered. Do
-   not lower coverage targets or add coverage ignore rules to make it pass.
+   covered by tests. Add tests for uncovered lines in the Codecov comment. In the pull request description, explain each line you leave uncovered. Do not lower coverage targets or add rules to ignore uncovered lines.
 8. **Stale items.** Issues and PRs with no activity for 14 days are labeled `stale` and closed 30
    days later unless there is new activity. These labels are exempt:
    - Issues: `pinned`, `security`, `confirmed`, `work-in-progress`, `priority: critical`, `priority: high`, `status: blocked`.

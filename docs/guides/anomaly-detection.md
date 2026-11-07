@@ -1,8 +1,8 @@
 # Anomaly Detection & Insights
 
-Vault watches every backup for statistical deviations from its normal behaviour and surfaces anything unusual — a backup that suddenly doubled in size, a job that started failing, or a destination that's filling up. This guide explains what it detects, how the **"Learning baseline"** period works, and how to tune it.
+Vault examines each backup for changes in size, duration, and other data. It also detects repeated failures and estimates when a storage destination will run out of space.
 
-Anomaly detection is **on by default** and requires no configuration. It runs in the background after each backup and never slows a backup down.
+Anomaly detection is on by default. Vault examines the data after each backup.
 
 ---
 
@@ -17,25 +17,25 @@ Vault runs four detectors:
 | **Reliability**         | Run outcomes over time                | A streak of consecutive failures, or a verify check that flipped from passing to failing |
 | **Capacity trajectory** | Free space on each destination        | A destination projected to run out of space soon                                         |
 
-Size and duration use **robust statistics** (median + median-absolute-deviation, with the Iglewicz–Hoaglin modified z-score) so a single odd run doesn't skew the baseline, plus simple guard rules (e.g. "more than 5× the median" always flags).
+Vault uses the median, median absolute deviation, and Iglewicz–Hoaglin modified z-score for size and duration. One unusual run has little effect on the baseline. Vault also uses fixed rules. For example, a value more than five times the median can cause an anomaly.
 
 ---
 
 ## The "Learning baseline (N/10)" period
 
-When you first create a job — or just after upgrading to a version with anomaly detection — each job shows a **`Learning baseline (N/10)`** label on the **Jobs** page.
+The **Jobs** page shows **`Learning baseline (N/10)`** for a new job. An existing job can also show this label after an upgrade.
 
 ### What it means
 
-Before Vault can tell whether a backup is _abnormally_ large or slow, it needs to learn what _normal_ looks like for that specific job. The label shows how many finished runs it has learned from so far, out of the **10** it needs.
+Vault uses data from finished runs to identify changes in backup size or duration. The label shows the number of finished runs out of ten.
 
 - **`Learning baseline (0/10)`** — brand-new job, nothing learned yet.
-- **`Learning baseline (7/10)`** — 7 finished runs recorded; 3 to go.
+- **`Learning baseline (7/10)`** — Vault has data for seven runs. Three more runs are necessary.
 - **Label disappears** — the job has 10 finished runs and **size & duration drift detection is now active**.
 
 ### How long does it take?
 
-**It is run-count based, not time-based.** Vault needs **10 finished runs** of the job. Wall-clock time therefore depends entirely on the job's schedule:
+Ten finished runs are necessary. The time to collect those runs depends on the job schedule.
 
 | Job schedule            | Approximate time to a full baseline |
 | ----------------------- | ----------------------------------- |
@@ -48,7 +48,7 @@ You can speed this up by running the job manually with **Run Now** — each manu
 
 ### What counts as a "run"?
 
-Any run that **finishes and records a duration** counts toward the 10 — that includes successful, partial, and failed runs (the baseline also tracks the failure rate). Runs that are skipped (e.g. blocked by the circuit breaker) or never start do **not** count. Vault always learns from your **10 most recent** finished runs, so the baseline naturally tracks gradual, legitimate change over time (a slowly growing dataset won't keep alerting).
+Vault counts successful, partial, and failed runs if they have a duration. Vault does not count runs that it skips or does not start. The baseline uses the ten most recent finished runs. The baseline changes as the data changes.
 
 ### Two thresholds, explained
 
@@ -59,10 +59,10 @@ Any run that **finishes and records a duration** counts toward the 10 — that i
 
 Not everything waits for the baseline:
 
-- **Reliability detection is active immediately** — consecutive failures and verify regressions are flagged from the first runs, because they don't need a size/duration baseline.
-- **Capacity trajectory** is per-destination (not per-job). It needs ~14 daily capacity samples before it projects an ETA.
+- **Reliability detection.** Vault can report consecutive failures or a change from successful to failed verification before it has a baseline.
+- **Capacity trajectory** is per-destination (not per-job). Vault uses approximately 14 daily capacity samples to estimate when the destination will run out of space.
 
-So even a brand-new job is protected against outright failures from day one; only the _drift_ (size/duration) signals wait for the 10-run baseline.
+Ten finished runs are necessary to detect changes in size and duration.
 
 ---
 
@@ -70,7 +70,7 @@ So even a brand-new job is protected against outright failures from day one; onl
 
 Each job can be **Strict**, **Balanced** (default), or **Permissive**. This controls how far a run has to deviate before it's flagged.
 
-| Sensitivity    | Behaviour                                            |
+| Sensitivity    | Behavior                                             |
 | -------------- | ---------------------------------------------------- |
 | **Strict**     | Flags small deviations — most sensitive, more alerts |
 | **Balanced**   | Moderate threshold — recommended for most users      |
@@ -93,13 +93,13 @@ Changes take effect on the next evaluation — no daemon restart needed.
 | **Notifications**   | Unraid + Discord alerts for critical anomalies (configurable)                    |
 | **MCP**             | `list_anomalies` / `get_anomaly` / `acknowledge_anomaly` tools for AI assistants |
 
-Anomaly messages are written as plain-English sentences that state what happened versus what was expected, so you don't need to read statistics to understand them:
+Each anomaly message describes the difference between the result and the expected result.
 
 - **Duration:** _This backup took 4m 23s, about 1.2× its usual 3m 40s._
 - **Size (growth):** _This backup grew to 20 GB, about 5× its usual 4 GB._
 - **Size (shrinkage):** _This backup shrank to 1.8 GB, only 45% of its usual 4 GB — this can signal missing or corrupted data._
 - **Reliability:** _This backup has failed 3 runs in a row and needs attention._
-- **Capacity:** _Storage "backups" is filling up — at the current rate of 12 GB per day it will run out of free space in about 6 days._
+- **Capacity:** _Storage "backups" uses 12 GB more each day. At this rate, it will run out of space in approximately 6 days._
 
 Notifications show the same sentence plus a short line of context (e.g. _Based on the last 10 samples_) instead of a raw JSON blob. The precise statistics (z-score, growth factor, window size) are still available in the structured `details` field via the API, MCP, and the web UI's **Raw details** expander.
 
@@ -107,9 +107,9 @@ Notifications show the same sentence plus a short line of context (e.g. _Based o
 
 ## Lifecycle: resolve, acknowledge, mark-expected
 
-- **Soft anomalies** (info / warning) **auto-resolve** when the job has a clean run again — you don't have to do anything.
-- **Critical anomalies** stay until you **acknowledge** them, so a serious issue can't scroll out of view.
-- **Mark as expected** — if a flagged change is intentional (e.g. you _deliberately_ added a large dataset and the backup is now legitimately bigger), use **Mark as expected**. Vault raises the baseline "floor" for that signal so the same level of growth won't keep re-alerting.
+- Vault closes an info or warning anomaly when the job has a run without that anomaly.
+- Vault keeps a critical anomaly open until you acknowledge it.
+- If you expect a change, select **Mark as expected**. Vault adjusts the threshold for that signal so the same change does not cause another alert.
 
 ---
 
@@ -117,7 +117,7 @@ Notifications show the same sentence plus a short line of context (e.g. _Based o
 
 By default, only **critical** anomalies notify (to avoid noise). Configure under **Settings → General → Anomaly Detection → Notify minimum severity** (`Info`, `Warning`, or `Critical`).
 
-- Notifications are **de-duplicated** — you won't be pinged repeatedly for the same ongoing anomaly.
+- Vault suppresses repeat notifications for the same open anomaly.
 - Per-job overrides: add `anomaly:critical`, `anomaly:warning`, or `anomaly:any` to a job's notify settings to force anomaly alerts for that job regardless of the global threshold.
 
 ---
@@ -131,10 +131,10 @@ To disable anomaly detection entirely, toggle **Settings → General → Anomaly
 ## FAQ
 
 **Why does my job still say "Learning baseline" after a week?**
-It needs 10 _finished_ runs, not 7 days. A weekly job takes ~10 weeks. Run it manually a few times to reach the baseline sooner.
+Ten finished runs are necessary. A weekly job takes ~10 weeks. Run it manually a few times to reach the baseline sooner.
 
 **I marked something expected but it alerted again — why?**
 "Mark as expected" raises the floor for that exact signal/fingerprint. A _different_ anomaly (e.g. a duration spike vs. the size growth you marked) is tracked separately and can still fire.
 
 **Will detection slow my backups down?**
-No. Evaluation runs asynchronously on a separate worker after the run is recorded; it never blocks the backup or the next job.
+No. Vault examines the run on a separate worker after it records the result. This does not block the backup or the next job.

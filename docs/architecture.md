@@ -17,7 +17,7 @@ CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / En
 | CLI         | `internal/cli/`         | Cobra commands: `vault daemon`, `vault replica`, `vault dedup`, `vault recover`, `vault api-key` |
 | API         | `internal/api/`         | Chi router, REST handlers, WebSocket integration                                                 |
 | MCP         | `internal/mcp/`         | Model Context Protocol tools over streamable HTTP                                                |
-| Job Intake  | `internal/jobs/`        | Shares REST/MCP Job creation, update and deletion policy; imports have distinct ownership        |
+| Job Intake  | `internal/jobs/`        | Applies the same policy to REST and MCP job changes. Imports use a separate path                 |
 | Database    | `internal/db/`          | SQLite (WAL, pure-Go driver) with hybrid snapshot + USB shadow                                   |
 | Storage     | `internal/storage/`     | Local, SFTP, SMB, NFS, WebDAV, and S3 adapters (factory-dispatched)                              |
 | Engine      | `internal/engine/`      | Per-type backup/restore handlers (container, VM, ZFS, folder, plugin)                            |
@@ -36,9 +36,9 @@ CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / En
 ### storage.Adapter
 
 The [storage contract](../internal/storage/adapter.go) owns the current interface.
-`WriteFrom` lets the retry layer re-issue a failed upload from a fresh stream;
-`ReadRange` serves the dedup layer's partial pack reads; `GetCapacity` feeds
-capacity reporting.
+`WriteFrom` lets the retry layer start a new stream for a failed upload.
+`ReadRange` reads part of a pack for deduplication.
+`GetCapacity` supplies data for capacity reports.
 
 Adapters that hold persistent resources (SFTP, SMB) implement `io.Closer` and
 are released by `storage.CloseAdapter`. Bandwidth throttling is layered on
@@ -80,17 +80,19 @@ Database opening applies the base schema and idempotent column/data migrations. 
 
 To survive Unraid's USB-backed boot (where writing every commit to flash would wear the drive), the daemon runs in _hybrid_ mode by default:
 
-1. **Working DB** — `/var/local/vault/vault.db` (tmpfs-backed; fast, never written to flash directly)
-2. **Primary snapshot** — `<discovered cache pool>/.vault/vault.db` (periodic copies; the authoritative on-disk source)
+1. **Working DB** — `/var/local/vault/vault.db` (in tmpfs. Vault does not write it directly to flash)
+2. **Primary snapshot** — `<discovered cache pool>/.vault/vault.db` (primary copy on disk)
 3. **USB shadow** — `/boot/config/plugins/vault/vault.db.backup` (refreshed after config changes via the `SetConfigChangeHook` pathway, so the flash copy stays current without per-row writes)
 
-On startup the daemon restores from the **freshest integrity-passing source** among the primary snapshot, the default cache snapshot, rotated snapshot copies, the USB-direct live DB (written when a boot ran without a mounted pool), and the USB shadow — falling back to a fresh DB only if none pass. Freshness is compared by modification time so a boot that ran in USB-direct mode can never be silently reverted by an older cache snapshot on the next hybrid boot (issue #241). An emhttp event script (`event/stopping_svcs`) stops the daemon gracefully on array stop/reboot so the final flush completes, and `event/started` ensures the daemon is running once the array is up.
+At startup, Vault selects the valid database copy with the newest modification time. It examines the primary snapshot, default cache snapshot, rotated copies, USB-direct database, and USB shadow. If no copy passes its checks, Vault creates a new database.
+
+The modification time prevents an older cache snapshot from replacing a newer USB-direct database (issue #241). On array stop or reboot, `event/stopping_svcs` stops the daemon so the final flush can complete. When the array starts, `event/started` starts the daemon if necessary.
 
 ### Vault directories on Unraid storage
 
-- **`<pool>/.vault/`** — the primary database snapshot (`vault.db`) plus timestamped copies under `rotated/`. Unraid exposes every top-level pool directory as a user share, so this same directory is also visible as **`/mnt/user/.vault`**. It is intentional persistent storage, not stray files; move it under **Settings → General → Database Location** if you prefer another location.
+- **`<pool>/.vault/`** — the primary database snapshot (`vault.db`) plus timestamped copies under `rotated/`. Unraid exposes every top-level pool directory as a user share, so this same directory is also visible as **`/mnt/user/.vault`**. Use **Settings** → **General** → **Database Location** to move this directory.
 - **`<pool>/.vault-stage/`** — temporary staging for backups and restores, emptied as each run finishes.
-- **`/mnt/addons/vault-fuse/mount-<id>/`** — read-only FUSE backup mounts. Each directory is created only when a mount starts and removed when it ends. Unraid reserves `/mnt/addons` for plugin and remote mounts; when it does not exist, Vault uses `<tmp>/vault-fuse`. `fuse_mount_base_dir` overrides the root. Releases up to v2026.09.01 used `/mnt/vault-fuse`, which Fix Common Problems flags as an invalid folder; Vault now removes that directory at startup once it is empty, and never deletes non-empty content there.
+- **`/mnt/addons/vault-fuse/mount-<id>/`** holds a read-only FUSE mount. Vault creates the directory when the mount starts and removes it when the mount ends. Unraid reserves `/mnt/addons` for plugin and remote mounts. If the directory does not exist, Vault uses `<tmp>/vault-fuse`. Use `fuse_mount_base_dir` to change the root. Releases up to v2026.09.01 used `/mnt/vault-fuse`. Fix Common Problems flags this path. Vault removes the old directory at startup if it is empty.
 
 Do not delete `.vault` or `.vault-stage` while Vault is running. Pool discovery never treats `addons` or `vault-fuse` as pools.
 
@@ -185,7 +187,7 @@ https://raw.githubusercontent.com/tinkerologie/vault/main/plugin/vault.plg
 
 The daemon runs at `/usr/local/sbin/vault` with the database at `/boot/config/plugins/vault/vault.db`.
 
-The plugin installs `Vault.page`, `Backups.page`, `include/`, `ui/`, `event/` and `README.md` under `/usr/local/emhttp/plugins/vault`. The post-install step in `plugin/vault.plg` also deletes the removed legacy PHP pages and their `assets/` directory, so upgrades don't leave them behind.
+The plugin installs `Vault.page`, `Backups.page`, `include/`, `ui/`, `event/` and `README.md` under `/usr/local/emhttp/plugins/vault`. The post-install step in `plugin/vault.plg` also deletes the removed legacy PHP pages and their `assets/` directory, during upgrades.
 
 Service management:
 
@@ -231,12 +233,7 @@ See [ansible/README.md](../ansible/README.md) for the full deployment workflow.
 
 ## Known Limitations
 
-- **Dedup GC is delete-only.** Garbage collection removes packs whose every chunk is
-  unreferenced. A pack with even one live chunk is kept; its dead bytes are reported as
-  **Reclaimable** ("rewritable bytes") on the Storage card and persisted per GC run in
-  `dedup_gc_runs`, but they are not yet physically reclaimed. Compaction/repacking is
-  tracked in #103. This matches early borg/restic behaviour and is a deliberate v1 choice —
-  small (24 MiB) packs bound the stranded space.
+- **Garbage collection.** Vault deletes packs without live chunks. If compaction is on, Vault moves live chunks from eligible packs to new packs before it deletes the old packs. The Storage card shows **Reclaimable** space. The database records the results in `dedup_gc_runs`.
 
 ## Version
 
@@ -244,4 +241,12 @@ Vault uses date-based versioning in the `VERSION` file with the format `YYYY.MM.
 
 ## Top-navigation quick link (`Backups.page`)
 
-`plugin/pages/Backups.page` is an optional top-nav entry (`Menu="Tasks"`, `Type="xmenu"` — the same extension point Community Applications uses) gated by `NAV_LINK` in `vault.cfg` via its `Cond` header, toggled from the Vault settings page through `control.php`'s `navlink` action. It embeds the SPA's proxy entrypoint (`include/app.php`) in an iframe with `?embed=1`, which selects the embedded presentation: a compact link row in place of the sidebar, header and bottom bar, with no scroll area of its own. The Logs console takes its natural height there too, bounded by its render window: its follow, jump and anchoring logic reads the visible part of the frame instead of its own scroll position, and asks the host to scroll the page (`web/src/lib/consoleport.js`). `include/embed-host.js` sizes the frame to the SPA's content over a same-origin `postMessage` channel that validates origin, source and shape, and reports the visible part of the frame so dialogs and toasts stay on screen. A framed page that isn't same-origin, or a top-level `?embed=1`, stays standalone. `app.php` maps Unraid's `[display] theme` from `dynamix.cfg` (`black`/`gray` dark, `white`/`azure` light, anything else no hint) to a default mode that's never persisted, so a stored choice in Vault, including System, always wins. Because `app.php` injects Unraid's CSRF token once per render and the SPA has no in-app refresh, the frame reloads itself when the tab regains visibility after >10 minutes hidden so write actions keep working across token rotations. In proxy mode the SPA polls; WebSocket-only live events do not stream here (matching the Utilities page).
+`plugin/pages/Backups.page` adds an optional link to the Unraid navigation. It uses `Menu="Tasks"` and `Type="xmenu"`. Its `Cond` header reads `NAV_LINK` in `vault.cfg`. The Vault settings page changes that setting through the `navlink` action in `control.php`.
+
+The page loads `include/app.php` in an iframe with `?embed=1`. In this mode, a row of links replaces the sidebar, header, and bottom bar. The frame does not have its own scroll area. A frame from a different origin or a top-level page with `?embed=1` uses the standalone view.
+
+The Logs console uses the height of its render window. For follow, jump, and anchoring, it reads the visible part of the frame. It requests page scrolls through `web/src/lib/consoleport.js`. The `include/embed-host.js` script uses same-origin `postMessage` messages to set the frame height. It checks the origin, source, and format of each message. It reports the visible part of the frame so dialogs and messages stay on screen.
+
+The `app.php` script reads `[display] theme` in `dynamix.cfg`. The values `black` and `gray` select dark mode. The values `white` and `azure` select light mode. Other values give no default. A saved Vault choice, including System, takes precedence.
+
+The `app.php` script gives the SPA a CSRF token each time it renders. If the tab was hidden for more than 10 minutes, the frame reloads when the tab becomes visible. This lets the SPA get a new token for write requests. In proxy mode, the SPA polls for updates, as it does on the Utilities page.

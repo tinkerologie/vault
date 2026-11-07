@@ -1,43 +1,44 @@
 # Vault
 
-Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. It protects Docker containers, libvirt VMs, ZFS datasets, folders, and plugins by backing them up to pluggable storage destinations — local disk, SFTP, SMB, NFS, WebDAV, or S3-compatible object storage. Vault ships with a REST API, an MCP server for AI assistants, WebSocket progress streaming, and an integrated web UI built with Svelte 5.
+Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers.
+It can back up Docker containers, libvirt virtual machines (VMs), ZFS datasets, folders, and Unraid plugins.
+Vault supports local disk, SFTP, SMB, NFS, WebDAV, and S3-compatible storage.
 
 ![Vault Dashboard](screenshots/01-dashboard.png)
 
-**[Get started →](getting-started.md)**
+**[Get started](getting-started.md)**
 
 ## What you can do
 
-- **Back up more than containers** — Docker containers, libvirt VMs, ZFS datasets, folders, and installed Unraid plugins.
-- **Send backups anywhere** — local disk, SFTP, SMB, NFS, WebDAV, or S3-compatible object storage, with per-destination bandwidth throttling.
-- **Choose a strategy** — full, incremental, and differential chains with simple-count or Long-Term Retention.
-- **Stay safe** — backups encrypted with your backup password (age encryption — a modern, audited standard), content-defined deduplication, and per-run SHA-256 verification.
-- **Monitor in real time** — live WebSocket progress streaming across Dashboard, Jobs, Storage, Replication, Restore, History, Disaster Recovery, Logs, and Settings pages.
+- Set a bandwidth limit for each storage destination.
+- Use full, incremental, or differential backups.
+- Keep a fixed number of restore points or use Long-Term Retention.
+- Use a backup password to encrypt backups with age.
+- Use content-defined deduplication to reduce storage use.
+- Use SHA-256 verification to examine backup integrity.
+- See backup and restore progress in the web UI. Vault sends updates over WebSocket.
 
-See [How Backup Works](how-backup-works.md) for the concepts behind these features.
+See [How Backup Works](how-backup-works.md) for information about these functions.
 
-## Finding your way
+## Guides
 
-- **New to Vault?** [Getting Started](getting-started.md) walks you from install to your first backup in about ten minutes.
-- **Setting things up?** The [Guides](guides/backup-jobs.md) are step-by-step recipes for jobs, storage, anomaly detection, and disaster recovery.
-- **Curious how it works?** [How Backup Works](how-backup-works.md) explains full/incremental chains, retention, encryption, and deduplication in plain language.
-- **Automating?** See the [REST API](api.md) and [MCP server](mcp.md).
+- [Getting Started](getting-started.md) gives installation instructions and steps for your first backup.
+- [Backup Jobs](guides/backup-jobs.md) gives instructions for backup jobs.
+- [Storage Destinations](guides/storage-destinations.md) gives instructions for each type of storage.
+- [Anomaly Detection](guides/anomaly-detection.md) explains how Vault identifies possible problems.
+- [Disaster Recovery](guides/disaster-recovery.md) gives instructions to recover your settings and data.
 
 ## Integrations
 
-- **Home Assistant** — monitor jobs and trigger backups from your dashboard with the ready-to-use custom integration [`ha-vault`](https://github.com/tinkerologie/ha-vault).
-- **AI assistants (MCP)** — drive Vault from Claude and other MCP clients via the built-in [MCP server](mcp.md).
-- **Scripting & automation** — the full [REST API](api.md) exposes jobs, storage, runs, and restore points.
+- Use [ha-vault](https://github.com/tinkerologie/ha-vault) to monitor and start backups from Home Assistant.
+- Use the [MCP server](mcp.md) to connect an MCP client such as Claude.
+- Use the [REST API](api.md) to access jobs, storage destinations, runs, and restore points.
 
 ## Support Vault
 
-Vault is free and open source, built and maintained in my own time. If it protects
-something you care about, [sponsoring on GitHub](https://github.com/sponsors/ruaan-deysel)
-helps keep it maintained — new features, Unraid compatibility as it evolves, and
-support for the people using it.
-
-Not in a position to sponsor? Starring the [repository](https://github.com/tinkerologie/vault),
-reporting bugs, and sharing Vault with other Unraid users all help just as much.
+Vault is free and open source.
+[GitHub sponsorship](https://github.com/sponsors/ruaan-deysel) supports maintenance, Unraid compatibility, and new functions.
+You can also report problems, share Vault with other users, or star the [repository](https://github.com/tinkerologie/vault).
 
 ## Explore the UI
 

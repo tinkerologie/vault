@@ -23,7 +23,7 @@ _Avoid_: target, repository when referring to the configured location
 ## Execution and recovery data
 
 **Job Run**:
-A recorded execution associated with a Job; its kind distinguishes a Backup Run from a Restore Run.
+The record of an operation for a Job. The type identifies a Backup Run or a Restore Run.
 _Avoid_: job, backup when referring to either kind
 
 **Backup Run**:
@@ -85,7 +85,7 @@ Reclamation of stored deduplicated data that retained backups no longer referenc
 _Avoid_: retention policy
 
 **Verification**:
-A check of backup integrity or readability; it does not by itself prove that a restored application works.
+A check of backup integrity or readability. A separate test is necessary to make sure that a restored application operates correctly.
 _Avoid_: restore test, application health check
 
 **Protected Item**:
@@ -97,7 +97,7 @@ An item selected by a Job without recorded protection in a retained Restore Poin
 _Avoid_: protected item
 
 **Unprotected Item**:
-A discovered item without recorded protection; recovery summaries include Pending Items, while the Dashboard uses this label for items outside both the protected and pending groups.
+A discovered item with no record of protection. The recovery summary includes Pending Items. The Dashboard uses this label only for items outside the protected and pending groups.
 _Avoid_: assuming every view reports the same count
 
 **Anomaly**:

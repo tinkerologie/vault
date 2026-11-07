@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Canonical domain glossary and retrospective architecture decisions, with source-linked implementation guidance.
 
+### Changed
+
+- Revise the user guides and reference prose for ASD-STE100 Issue 9.
+
 ## [v2026.11.00] - 2026-11-07
 
 ### Added

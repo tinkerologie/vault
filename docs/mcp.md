@@ -4,25 +4,15 @@ Vault exposes a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP)
 
 ## Transports
 
-| Transport       | Endpoint                         | Use Case                                    |
-| --------------- | -------------------------------- | ------------------------------------------- |
-| Streamable HTTP | `http://<host>:24085/api/v1/mcp` | All clients, via a stdio bridge or a tunnel |
+| Transport       | Endpoint                         | Use Case                                     |
+| --------------- | -------------------------------- | -------------------------------------------- |
+| Streamable HTTP | `http://<host>:24085/api/v1/mcp` | All clients through a stdio bridge or tunnel |
 
-> The former `vault mcp --db <path>` stdio transport has been removed. It ran as
-> a second process writing directly to the daemon's database from outside it, so
-> jobs it created were never handed to the scheduler and silently never ran, and
-> its changes bypassed the flash-storage flush and the live UI updates. Local
-> clients should reach the HTTP endpoint through the `mcp-remote` stdio bridge
-> described below, which exposes the same tools with those protections intact.
+> Vault no longer supports `vault mcp --db <path>`. This command wrote directly to the database. It did not notify the scheduler or the UI and did not flush changes to flash storage. Use the `mcp-remote` stdio bridge to connect a local client to the HTTP endpoint.
 
 <!-- Separator: keeps these two callouts as distinct blockquotes (MD028). -->
 
-> **You can't paste the `http://…` endpoint straight into Claude Desktop.** Its
-> "Add custom connector" flow only accepts **HTTPS** URLs, and connectors are
-> reached **from Anthropic's cloud** — so a LAN address (`192.168.x.x`,
-> `tower.local`) is unreachable from Anthropic's servers and a self-signed
-> certificate is rejected. Native HTTPS alone (see below) does not make a LAN URL
-> work. Use one of the two paths in the Claude Desktop section.
+> For a Claude Desktop custom connector, use an HTTPS endpoint that Anthropic's servers can connect to. A LAN address is not available from those servers. A self-signed certificate is not valid for this connection. See the two methods under **Claude Desktop**.
 
 ## Configuration
 
@@ -32,14 +22,12 @@ Pick the path that matches how you reach your server.
 
 #### LAN-only (recommended): `mcp-remote` stdio bridge
 
-Claude Desktop launches a local [`mcp-remote`](https://www.npmjs.com/package/mcp-remote)
-process that bridges to Vault's HTTP endpoint over your LAN. Vault must be
-configured to listen on a LAN-reachable address (Settings → Vault on the Unraid
-webgui — the default bind is `127.0.0.1`, which is not reachable from another
-machine). Traffic, including the API key header, travels unencrypted over HTTP,
-so only use this on a trusted LAN. No TLS or public exposure is required; you
-just need Node.js installed on the same machine as Claude Desktop. A LAN bind also turns on
-mDNS discovery; see [Network discovery](getting-started.md#network-discovery-mdns).
+Claude Desktop starts [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) on your device.
+Install Node.js on the device that runs Claude Desktop.
+Set Vault to listen on a LAN address under **Settings** → **Vault** in Unraid.
+The default address (`127.0.0.1`) permits only local connections.
+HTTP sends the API key without encryption. Use HTTP only on a trusted LAN.
+A LAN address also enables mDNS. See [Network discovery](getting-started.md#network-discovery-mdns).
 
 ```json
 {
@@ -57,7 +45,7 @@ mDNS discovery; see [Network discovery](getting-started.md#network-discovery-mdn
 }
 ```
 
-A connection from another machine needs an API key: Vault refuses it until one exists
+For a connection from another machine, use an API key. Vault refuses the connection until an API key exists
 (Settings → Security → API Access in the Unraid web UI). Pass it as a header. Note there is
 no space after the colon — `mcp-remote` mishandles spaces in header values:
 
@@ -81,14 +69,9 @@ no space after the colon — `mcp-remote` mishandles spaces in header values:
 
 #### Custom Connector: public HTTPS endpoint
 
-To add Vault as a native Custom Connector, the endpoint must be reachable from
-Anthropic's cloud over HTTPS with a **publicly-trusted** certificate. Vault
-serves HTTPS natively when the daemon is started with `--tls-cert`/`--tls-key`,
-but a self-signed cert won't be accepted and a private IP won't be reachable.
-Put Vault behind a tunnel or reverse proxy that terminates trusted TLS — e.g.
-Cloudflare Tunnel, Tailscale Funnel, or nginx with a Let's Encrypt
-certificate — then add the resulting public `https://…/api/v1/mcp` URL under
-Settings → Connectors in Claude Desktop.
+For a custom connector, use an HTTPS endpoint that Anthropic's servers can connect to. The endpoint must use a publicly trusted certificate. Vault can serve HTTPS with `--tls-cert` and `--tls-key`.
+
+You can use a tunnel or a reverse proxy with a publicly trusted certificate. In Claude Desktop, add the public `https://…/api/v1/mcp` URL under **Settings** → **Connectors**.
 
 ### Claude Code
 
@@ -99,7 +82,7 @@ Add to your project's `.mcp.json`:
   "mcpServers": {
     "vault": {
       "type": "http",
-      "url": "http://<unraid-host>:24085/mcp"
+      "url": "http://127.0.0.1:24085/api/v1/mcp"
     }
   }
 }
@@ -109,8 +92,8 @@ The daemon binds to loopback by default, so reach it over an SSH tunnel
 (`ssh -L 24085:127.0.0.1:24085 root@<server-ip>`, or
 `ssh -L 24085:<server-ip>:24085 root@<server-ip>` if Vault is bound to the
 server's IP, where nothing listens on loopback) and point the URL at
-`http://127.0.0.1:24085/mcp`. For a client that only speaks stdio, bridge it
-with `npx mcp-remote http://127.0.0.1:24085/mcp` rather than running a second
+`http://127.0.0.1:24085/api/v1/mcp`. For a client that only speaks stdio, bridge it
+with `npx mcp-remote http://127.0.0.1:24085/api/v1/mcp` rather than running a second
 process against the database directly.
 
 ## Available Tools
@@ -119,15 +102,15 @@ The MCP surface is intentionally curated rather than a 1:1 mirror of every REST 
 
 ### Jobs
 
-| Tool              | Description                 |
-| ----------------- | --------------------------- |
-| `list_jobs`       | List all backup jobs        |
-| `get_job`         | Get a job and its items     |
-| `create_job`      | Create a new backup job     |
-| `update_job`      | Update an existing job      |
-| `delete_job`      | Delete a job                |
-| `run_job`         | Trigger an immediate backup |
-| `get_job_history` | Job run history             |
+| Tool              | Description                |
+| ----------------- | -------------------------- |
+| `list_jobs`       | List all backup jobs       |
+| `get_job`         | Get a job and its items    |
+| `create_job`      | Create a new backup job    |
+| `update_job`      | Update an existing job     |
+| `delete_job`      | Delete a job               |
+| `run_job`         | Start a backup immediately |
+| `get_job_history` | Job run history            |
 
 ### Storage
 
@@ -167,11 +150,13 @@ The MCP surface is intentionally curated rather than a 1:1 mirror of every REST 
 | `list_restore_points` | List restore points for a job |
 | `restore_item`        | Restore a backup item         |
 
-`restore_item` returns once the restore is past its approval checks, and the restore then carries on in the background. A container restore that needs approval (host-level access from an imported or replicated backup, or a deduplicated backup's image digest that is missing or can't be pulled) comes back straight away as a tool error and changes nothing. MCP can't approve it: approve it in the Vault UI's Restore wizard under **Container approvals**. A restore that fails before those checks, for example because the job or storage can't be found, also comes back as an error.
+`restore_item` returns after the restore passes the approval checks. The restore continues in the background.
 
-`restore_item` never runs alongside a backup, another restore, deduplicated-storage garbage collection or an orphan delete. While one of these is running, the call is refused straight away with "a backup, restore or maintenance task is running; try again when it finishes". While Vault is shutting down, it's refused with "the Vault daemon is shutting down; try again after it restarts". The call isn't queued, because a queued call could stay open for hours behind a long backup. Retry once the other task has finished. Once started, the MCP restore holds off backups and other restores until it ends, the same way a restore started from the UI does.
+If approval is necessary for host access or a replacement image, the tool returns an error before it changes data. To give approval, use **Container approvals** in the Restore wizard. An error before the approval checks also returns to the client.
 
-Once it has started, an MCP restore isn't a tracked run: it doesn't appear in `get_runner_status` or in run history, and it can't be cancelled. Its outcome reaches `get_activity_log` (as "Restore completed" or "Restore failed") only when notifications are enabled in Settings; otherwise it's only in the Vault daemon log. To restore with progress, history and cancellation, use the Restore wizard or `POST /jobs/{id}/restore`.
+Vault refuses the tool call while a backup, restore, garbage collection, or orphan deletion is active. Vault also refuses it while the daemon shuts down. Vault does not queue the request. Retry after the other operation completes or the daemon restarts. After the restore starts, Vault waits for it to finish before it starts another backup or restore.
+
+An MCP restore does not appear in `get_runner_status` or in run history. You cannot cancel it. The daemon log records the result. If you enable notifications, `get_activity_log` also shows "Restore completed" or "Restore failed". To use progress, history, and cancellation, use the Restore wizard or `POST /jobs/{id}/restore`.
 
 For a deduplicated container restore, the call can take as long as pulling the backed-up image. For a classic container restore from an imported or replicated backup, it can take as long as downloading the backup.
 
@@ -185,7 +170,7 @@ For a deduplicated container restore, the call can take as long as pulling the b
 
 ## REST-Only Endpoints
 
-The following operations are available via REST API only and are not exposed through MCP:
+Use the REST API for these operations.
 
 - Settings management and encryption configuration
 - Storage scan and import workflows

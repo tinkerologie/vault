@@ -2,110 +2,119 @@
 
 Base URL: `http://<host>:24085/api/v1`
 
-The Vault daemon exposes a REST API for managing backups, storage destinations, and system settings. WebSocket events are available for real-time progress streaming.
+Use the Vault REST API to manage backups, storage destinations, and settings. Use WebSocket events to receive progress updates.
 
 ## Transport
 
-The API serves plain HTTP unless the daemon is started with both `--tls-cert` and `--tls-key`; setting only one stops the daemon from starting. On a non-loopback address, plain HTTP exposes API keys and data to anyone who can read that network, and the daemon logs a warning at startup. Most home setups (replication between servers, Home Assistant on a LAN) run this way, so it stays supported. Use it only on a network you trust.
+To serve HTTPS, start the daemon with both `--tls-cert` and `--tls-key`. If you set only one option, the daemon does not start. If you set neither option, the daemon serves HTTP.
+
+On a non-loopback address, anyone who can read HTTP traffic can read the API key and data. The daemon logs a warning at startup. Use HTTP only on a network you trust.
 
 ## Authentication
 
-**Using Vault from the Unraid web UI never needs a key or password**, on any bind address. Log in to Unraid and open Vault; the plugin proxy reaches the daemon from the server itself.
+Open Vault from the Unraid web UI to use the plugin proxy. The proxy connects from the Vault server without a Vault API key.
 
-**An API key is only needed for** replication between two Vault servers, and for [Home Assistant](https://github.com/tinkerologie/ha-vault) connecting when Vault is bound to the server's LAN IP. Those clients send `X-API-Key: <your-api-key>`.
+For a remote connection, send `X-API-Key: <your-api-key>`. This applies to replication servers and [Home Assistant](https://github.com/tinkerologie/ha-vault).
 
-Under that, the API denies by default, with every route including `/health` behind these rules:
+The access rules apply to every API route, including `/health`.
 
-| Caller                                                                    | Access                                                                                        |
-| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| The Vault host: the Unraid plugin proxy, the CLI, `curl` or an SSH tunnel | No key needed                                                                                 |
-| Anyone else, including an MCP bridge or script on another machine         | Must send the key; refused with `401` until a key exists                                      |
-| A web page on another origin, on any method and from any address          | Refused with `403` unless its origin is on the allowlist; a listed origin still needs the key |
+| Caller                                                                    | Access                                                                                          |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| The Vault host: the Unraid plugin proxy, the CLI, `curl` or an SSH tunnel | No key needed                                                                                   |
+| Anyone else, including an MCP bridge or script on another machine         | Send the API key. Vault returns `401` until a key exists                                        |
+| A web page on another origin, on any method and from any address          | Vault returns `403` for origins outside the allowlist. Send the API key from a permitted origin |
 
-A request only counts as coming from the Vault host when its source address is one of the host's own and its `Host` header is an IP address, `localhost`, or the machine's hostname. A domain pointed at `127.0.0.1` gets no local trust, which is what stops DNS rebinding.
+A local request must come from an address on the Vault host. Its `Host` header must contain an IP address, `localhost`, or the Vault host name. A domain that points to `127.0.0.1` does not get local access. This prevents DNS rebinding.
 
-**Creating a key:** in the Unraid web UI, open Vault, go to **Settings → Security → API Access**, generate the key and copy it into the other Vault server or Home Assistant. A headless server or Docker replica has no such page, so use the CLI there:
+To make a key, open **Settings** → **Security** → **API Access** in Vault through the Unraid web UI. Generate the key. Copy the key to the client. On a headless server or Docker replica, use the CLI.
 
 ```bash
 vault api-key generate                           # on the host; prints only the key
 docker exec vault-replica vault api-key generate # a Docker replica
 ```
 
-`vault api-key` also has `show`, `rotate`, `revoke` and `status`. The commands call the running daemon on this host, using the address in `vault.cfg` or `--addr ip:port`; if it serves TLS, add `--tls-cert <file>` with the certificate it was started with.
+`vault api-key` also has `show`, `rotate`, `revoke`, and `status` commands. These commands connect to the daemon on this host. They use the address in `vault.cfg` unless you set `--addr ip:port`. If the daemon uses TLS, specify its certificate with `--tls-cert <file>`.
 
 **Local-only routes:** these answer `403` to anything but the Vault host, even with a valid key: `/settings/api-key/key`, `/settings/api-key/generate`, `/settings/api-key/rotate`, `DELETE /settings/api-key`, `/settings/encryption/passphrase` and `/settings/server-key`.
 
 **Failed attempts:** key checks are rate limited per address and in total, and answer `429` past the limit. A client using the correct key is not affected once it has authenticated.
 
-**Browser origins:** the cross-origin allowlist is empty by default. To let a page on another origin call the API, list its exact origin, either with `--allowed-origin https://ha.example:8123` (repeatable) on `vault daemon` or `vault replica`, or as a comma-separated `ALLOWED_ORIGINS` in the `vault.cfg` beside the database, then restart. Wildcards aren't accepted. The list also controls CORS, Private Network Access preflights and WebSocket origins.
+**Browser origins.** The cross-origin allowlist is empty by default. To permit a page on another origin, add the exact origin. Repeat `--allowed-origin https://ha.example:8123` on `vault daemon` or `vault replica` for each origin. You can also set a comma-separated `ALLOWED_ORIGINS` in the `vault.cfg` next to the database. Restart the daemon after the change. Vault rejects wildcards. The list also controls CORS, Private Network Access preflights, and WebSocket origins.
 
-**Opening the daemon's port from another machine:** as with a Docker replica's own UI, this asks for the API key and keeps it for that browser tab. Live progress, anomalies and mounts then use polling, because a browser can't send the key on a WebSocket connection. Same-origin pages on the Vault host don't need a key, including through an SSH tunnel, which must target the address Vault is bound to: `ssh -L 24085:<server-ip>:24085 root@<server-ip>` when bound to the server's IP, or `ssh -L 24085:127.0.0.1:24085 root@<server-ip>` when bound to loopback. Then open `http://127.0.0.1:24085`. Generating, showing, rotating and revoking the key need the Vault host: use the Unraid web UI, an SSH tunnel, or the CLI.
+**Remote browser.** When you open the daemon port from another machine, enter the API key. The browser keeps it for that tab. The UI uses polling for progress, anomalies, and mounts because the browser cannot send the key over WebSocket.
+
+A same-origin page on the Vault host can connect without an API key. An SSH tunnel can give the page local access. Use the command for the address on which Vault listens.
+
+- LAN address: `ssh -L 24085:<server-ip>:24085 root@<server-ip>`
+- Loopback address: `ssh -L 24085:127.0.0.1:24085 root@<server-ip>`
+
+Then open `http://127.0.0.1:24085`. Use the Unraid web UI, an SSH tunnel, or the local CLI to manage the API key.
 
 ## Core
 
-| Method | Endpoint             | Description                                                                                                                                                    |
-| ------ | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/health`            | Status, version, mode and `startup` diagnostics; needs local access or the key. For anonymous liveness use `GET /ping` at the server root, not under `/api/v1` |
-| GET    | `/health/summary`    | Dashboard health metrics across every job, including `recent_partial`, `recent_skipped`, `recent_cancelled` and `stale_jobs`                                   |
-| GET    | `/ws`                | WebSocket event stream                                                                                                                                         |
-| GET    | `/runner/status`     | Current backup or restore state, queued jobs, and [progress](#progress)                                                                                        |
-| GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal)                                                                                        |
-| GET    | `/release/latest`    | Latest GitHub release metadata (used by the About card update badge)                                                                                           |
+| Method | Endpoint             | Description                                                                                                                                                   |
+| ------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/health`            | Get status, version, mode, and `startup` diagnostics. Use local access or send the API key. For an anonymous health check, use `GET /ping` at the server root |
+| GET    | `/health/summary`    | Dashboard health metrics across every job, including `recent_partial`, `recent_skipped`, `recent_cancelled` and `stale_jobs`                                  |
+| GET    | `/ws`                | WebSocket event stream                                                                                                                                        |
+| GET    | `/runner/status`     | Current backup or restore state, queued jobs, and [progress](#progress)                                                                                       |
+| GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal)                                                                                       |
+| GET    | `/release/latest`    | Latest GitHub release metadata (used by the About card update badge)                                                                                          |
 
 ## Jobs
 
 The job payload's `schedule`, `verify_schedule` and `full_backup_schedule` fields accept standard 5-field cron expressions (`minute hour day-of-month month day-of-week`). An empty `schedule` means manual-only for backups — the scheduler skips regular runs entirely. Similarly, an empty `verify_schedule` or `full_backup_schedule` disables that secondary schedule. Arbitrary expressions are accepted, including steps, ranges and lists, along with the `@daily`-style descriptors and Vault's `L` day-of-month token (last day of the month). An expression the scheduler cannot parse is rejected at create/update time rather than stored and silently never run.
 
-`full_backup_schedule` forces a **full** backup on its own cadence, independently of `schedule`, so an `incremental` or `differential` job carries its periodic full without a duplicate job. It is ignored — and cleared on save — when `backup_type_chain` is `full`, because every run is already a full.
+`full_backup_schedule` sets a separate schedule for full backups on an `incremental` or `differential` job. If `backup_type_chain` is `full`, Vault clears this field when you save. All runs for a full job are full backups.
 
 The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `differential`. Incremental and differential jobs automatically run as a **full** backup on their first run (when the job has no previous restore point to attach to); later runs capture only changes.
 
-| Method | Endpoint                                           | Description                                                                           |
-| ------ | -------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| GET    | `/jobs`                                            | List jobs                                                                             |
-| POST   | `/jobs`                                            | Create job (response echoes the persisted items)                                      |
-| GET    | `/jobs/next-runs`                                  | Next scheduled run for every job                                                      |
-| GET    | `/jobs/{id}`                                       | Get a job and its items                                                               |
-| PUT    | `/jobs/{id}`                                       | Update a job (response echoes the persisted items)                                    |
-| DELETE | `/jobs/{id}`                                       | Delete a job                                                                          |
-| GET    | `/jobs/{id}/history`                               | Job run history (returns `[]` when empty)                                             |
-| GET    | `/jobs/{id}/restore-points`                        | Restore points with chain-health annotations (returns `[]` when empty)                |
-| GET    | `/jobs/{id}/retention-preview`                     | Preview which restore points the configured retention policy would prune              |
-| DELETE | `/jobs/{id}/restore-points/{rpid}`                 | Delete a specific restore point and its files                                         |
-| GET    | `/jobs/{id}/restore-points/{rpid}/contents?item=…` | List files inside a restore point (works for classic and dedup restore points)        |
-| POST   | `/jobs/{id}/restore-points/{rpid}/verify`          | Trigger an on-demand SHA-256 verification of a restore point                          |
-| GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                            |
-| GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                  |
-| POST   | `/jobs/{id}/run`                                   | Trigger an immediate backup                                                           |
-| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup job                                                           |
-| POST   | `/jobs/{id}/restore`                               | Trigger a restore; `destination` is an absolute path, or a dataset name for ZFS items |
-| GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                        |
+| Method | Endpoint                                           | Description                                                                               |
+| ------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| GET    | `/jobs`                                            | List jobs                                                                                 |
+| POST   | `/jobs`                                            | Create job (response echoes the persisted items)                                          |
+| GET    | `/jobs/next-runs`                                  | Next scheduled run for every job                                                          |
+| GET    | `/jobs/{id}`                                       | Get a job and its items                                                                   |
+| PUT    | `/jobs/{id}`                                       | Update a job (response echoes the persisted items)                                        |
+| DELETE | `/jobs/{id}`                                       | Delete a job                                                                              |
+| GET    | `/jobs/{id}/history`                               | Job run history (returns `[]` when empty)                                                 |
+| GET    | `/jobs/{id}/restore-points`                        | Restore points with chain-health annotations (returns `[]` when empty)                    |
+| GET    | `/jobs/{id}/retention-preview`                     | Preview which restore points the configured retention policy would prune                  |
+| DELETE | `/jobs/{id}/restore-points/{rpid}`                 | Delete a specific restore point and its files                                             |
+| GET    | `/jobs/{id}/restore-points/{rpid}/contents?item=…` | List files inside a restore point (works for classic and dedup restore points)            |
+| POST   | `/jobs/{id}/restore-points/{rpid}/verify`          | Start SHA-256 verification of a restore point                                             |
+| GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                                |
+| GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                      |
+| POST   | `/jobs/{id}/run`                                   | Start a backup immediately                                                                |
+| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup job                                                               |
+| POST   | `/jobs/{id}/restore`                               | Start a restore. Set `destination` to an absolute path or, for a ZFS item, a dataset name |
+| GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                            |
 
 ## Storage
 
-| Method | Endpoint                       | Description                                                                                                        |
-| ------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| GET    | `/storage`                     | List storage destinations (credentials redacted in the response)                                                   |
-| POST   | `/storage`                     | Create storage destination (config validated; response is redacted)                                                |
-| GET    | `/storage/{id}`                | Get storage destination (redacted)                                                                                 |
-| PUT    | `/storage/{id}`                | Partial-merge update; rejects mutation of immutable fields (`type`, `dedup_enabled`)                               |
-| DELETE | `/storage/{id}`                | Delete storage destination; `?force=true` drops dependent-job guard; `?deleteFiles=true` also removes backup files |
-| POST   | `/storage/{id}/test`           | Test storage connection                                                                                            |
-| POST   | `/storage/{id}/health-check`   | Run the storage health probe (used by the Dashboard health widget)                                                 |
-| POST   | `/storage/{id}/capacity-check` | Refresh used / total / free capacity (broadcasts `storage_capacity_updated` over WS)                               |
-| POST   | `/storage/{id}/breaker/close`  | Manually close the destination circuit breaker — clears sticky failure state                                       |
-| POST   | `/storage/{id}/scan-orphans`   | Scan storage for orphaned files (no matching restore point)                                                        |
-| POST   | `/storage/{id}/delete-orphans` | Delete files surfaced by `scan-orphans`; each path reports an error while a backup, import or sync is running      |
-| GET    | `/storage/{id}/dedup-stats`    | Dedup repo statistics (chunks, packs, logical/physical bytes, dedup ratio)                                         |
-| POST   | `/storage/{id}/gc`             | Run mark-and-sweep GC on the destination's dedup repo                                                              |
-| POST   | `/storage/{id}/scan`           | Scan storage for importable backups. Send `passphrase` in the JSON body; in the query string it returns 400        |
-| POST   | `/storage/{id}/import`         | Import backups discovered during scan (preserves dedup manifest IDs)                                               |
-| GET    | `/storage/{id}/db-backups`     | List Vault database backups found under `_vault/` on the destination (newest first)                                |
-| POST   | `/storage/{id}/restore-db`     | Restore the Vault database from a `_vault/` backup — see body fields below                                         |
-| POST   | `/storage/dedup-keys/rewrap`   | After a recovery, re-seal dedup destinations with this server's key using the backup passphrase — see below        |
-| GET    | `/storage/{id}/jobs`           | Returns `{ jobs: [{id, name}], job_count: N }` — dependent-job list                                                |
-| GET    | `/storage/{id}/list`           | List files under a storage path                                                                                    |
-| GET    | `/storage/{id}/files`          | Download a file from storage                                                                                       |
+| Method | Endpoint                       | Description                                                                                                                         |
+| ------ | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/storage`                     | List storage destinations (credentials redacted in the response)                                                                    |
+| POST   | `/storage`                     | Add a storage destination. Vault validates the configuration and removes secrets from the response                                  |
+| GET    | `/storage/{id}`                | Get storage destination (redacted)                                                                                                  |
+| PUT    | `/storage/{id}`                | Update specified fields. Vault rejects changes to `type` and `dedup_enabled`                                                        |
+| DELETE | `/storage/{id}`                | Delete a destination. Set `?force=true` to permit deletion with dependent jobs. Set `?deleteFiles=true` to also delete backup files |
+| POST   | `/storage/{id}/test`           | Test storage connection                                                                                                             |
+| POST   | `/storage/{id}/health-check`   | Run the storage health probe (used by the Dashboard health widget)                                                                  |
+| POST   | `/storage/{id}/capacity-check` | Refresh used / total / free capacity (broadcasts `storage_capacity_updated` over WS)                                                |
+| POST   | `/storage/{id}/breaker/close`  | Manually close the destination circuit breaker — clears sticky failure state                                                        |
+| POST   | `/storage/{id}/scan-orphans`   | Scan storage for orphaned files (no matching restore point)                                                                         |
+| POST   | `/storage/{id}/delete-orphans` | Delete files that `scan-orphans` found. Vault reports an error for each path during a backup, import, or sync                       |
+| GET    | `/storage/{id}/dedup-stats`    | Dedup repo statistics (chunks, packs, logical/physical bytes, dedup ratio)                                                          |
+| POST   | `/storage/{id}/gc`             | Run mark-and-sweep GC on the destination's dedup repo                                                                               |
+| POST   | `/storage/{id}/scan`           | Scan storage for importable backups. Send `passphrase` in the JSON body. Vault returns `400` if the query string contains it        |
+| POST   | `/storage/{id}/import`         | Import backups discovered during scan (preserves dedup manifest IDs)                                                                |
+| GET    | `/storage/{id}/db-backups`     | List Vault database backups found under `_vault/` on the destination (newest first)                                                 |
+| POST   | `/storage/{id}/restore-db`     | Restore the Vault database from a `_vault/` backup — see body fields below                                                          |
+| POST   | `/storage/dedup-keys/rewrap`   | After a recovery, re-seal dedup destinations with this server's key using the backup passphrase — see below                         |
+| GET    | `/storage/{id}/jobs`           | Returns `{ jobs: [{id, name}], job_count: N }` — dependent-job list                                                                 |
+| GET    | `/storage/{id}/list`           | List files under a storage path                                                                                                     |
+| GET    | `/storage/{id}/files`          | Download a file from storage                                                                                                        |
 
 ## Settings
 
@@ -132,33 +141,33 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 
 ## Discovery
 
-| Method | Endpoint              | Description                                                                                                                                   |
-| ------ | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/browse?path=…`      | Browse filesystem paths (safepath-gated; allowed under `/mnt` etc.)                                                                           |
-| GET    | `/path-exists?path=…` | Safepath-gated `os.Stat` (used by the Folder picker for staleness)                                                                            |
-| GET    | `/containers`         | Discover Docker containers                                                                                                                    |
-| GET    | `/vms`                | Discover libvirt VMs; each item's `settings` includes `disk_format` (`qcow2`/`raw`/`mixed`/`unknown`) and `supports_incremental` (qcow2-only) |
-| GET    | `/folders`            | Discover folder presets (engine-known paths)                                                                                                  |
-| GET    | `/plugins`            | Discover installed Unraid plugins                                                                                                             |
-| GET    | `/zfs`                | Discover ZFS datasets                                                                                                                         |
-| GET    | `/presets/exclusions` | Per-container exclusion presets (`paths`), plus advisory `notes`/`warnings` for some apps (e.g. Immich DB)                                    |
+| Method | Endpoint              | Description                                                                                                                                 |
+| ------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/browse?path=…`      | Browse filesystem paths. Vault permits only paths that pass the safepath check, such as paths under `/mnt`                                  |
+| GET    | `/path-exists?path=…` | Safepath-gated `os.Stat` (used by the Folder picker for staleness)                                                                          |
+| GET    | `/containers`         | Discover Docker containers                                                                                                                  |
+| GET    | `/vms`                | Find libvirt VMs. Each item has `disk_format` (`qcow2`, `raw`, `mixed`, or `unknown`) and `supports_incremental` (qcow2 only) in `settings` |
+| GET    | `/folders`            | Discover folder presets (engine-known paths)                                                                                                |
+| GET    | `/plugins`            | Discover installed Unraid plugins                                                                                                           |
+| GET    | `/zfs`                | Discover ZFS datasets                                                                                                                       |
+| GET    | `/presets/exclusions` | Per-container exclusion presets (`paths`), plus advisory `notes`/`warnings` for some apps (e.g. Immich DB)                                  |
 
 ## Activity Logs
 
-| Method | Endpoint                                | Description                                                                                                                                                                                                               |
-| ------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/activity?limit=N`                     | Activity log entries (`limit` is clamped to ≤ 1000 to prevent OOM); `run_gone` marks an entry whose run log no longer exists                                                                                              |
-| DELETE | `/activity`                             | Purge all activity log entries (irreversible)                                                                                                                                                                             |
-| GET    | `/runs/{runId}`                         | One backup/restore run with its status and item counters, however old. Replication reads it for a run outside the newest page of a job's history. Unknown run → 404; invalid run id → 400                                 |
-| GET    | `/runs/{runId}/logs?after=<id>&limit=N` | Streaming log entries for one backup/restore run, oldest-first. `?after=<id>` tails only newer lines; `?limit=N` clamped to [1, 1000]. Unknown run → 404; invalid run id or negative `after` / non-positive `limit` → 400 |
+| Method | Endpoint                                | Description                                                                                                                                                                                                                           |
+| ------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/activity?limit=N`                     | Get activity log entries. The maximum `limit` is 1000. `run_gone` shows that the run log no longer exists                                                                                                                             |
+| DELETE | `/activity`                             | Purge all activity log entries (irreversible)                                                                                                                                                                                         |
+| GET    | `/runs/{runId}`                         | One backup/restore run with its status and item counters, however old. Replication reads it for a run outside the newest page of a job's history. Vault returns `404` for an unknown run and `400` for an invalid run ID              |
+| GET    | `/runs/{runId}/logs?after=<id>&limit=N` | Get a run log, from oldest to newest. Use `?after=<id>` for newer lines. Vault limits `?limit=N` to 1 through 1000. Vault returns `404` for an unknown run. An invalid run ID, negative `after`, or nonpositive `limit` returns `400` |
 
-Run log durations keep sub-second precision: messages show `<1s`, `2.4s`, or `1m5s`, and the structured `data` carries `duration_ms` beside the existing `duration_seconds`. A transfer rate is only reported for operations that take at least one second. A rate also needs a positive `size_bytes`. A run of at least one second that moved data sets `data.throughput_bytes_per_sec`. A shorter run that moved data says `throughput not calculated: duration below 1.0s` and sets `data.throughput_not_calculated`. A zero-byte run omits both fields. The web UI and Discord notifications apply the same one-second rule.
+Run log durations keep sub-second precision: messages show `<1s`, `2.4s`, or `1m5s`, and the structured `data` carries `duration_ms` beside the existing `duration_seconds`. A transfer rate is only reported for operations that take at least one second. Vault shows a rate only if `size_bytes` is positive. A run of at least one second that moved data sets `data.throughput_bytes_per_sec`. A shorter run that moved data says `throughput not calculated: duration below 1.0s` and sets `data.throughput_not_calculated`. A zero-byte run omits both fields. The web UI and Discord notifications apply the same one-second rule.
 
 Each backup and restore run log also records:
 
 - **Run details**: one line with the job name and ID, run ID, destination name and storage type, item count, and (restores) the restore point ID.
-- **Phase lines**: one line per stage per item, for example `Phase upload completed for appdata in 4m12s`, with `data.phase`, `data.item_name`, `data.duration_ms`, and byte fields where measured. Backup stages are `stage`, `upload`, `dedup store`, and `verify`; restore stages are `download` and `extract` (classic) or `open repository` and `restore` (deduplicated). A failed stage logs `Phase <name> failed for <item> after <duration>` at error level, which shows where the operation stopped.
-- **Retries**: each recovered storage failure (a retried request, a resumed stream, or a restarted download part) is a warning line naming the operation, the object's file name, and the attempt, for example `Transient storage error on ReadRange data.tar.zst (attempt 2/5), retrying: connection reset`. Error text is redacted: credentials are masked and URLs are cut to scheme and host. After 20 such lines a single "further storage retry events suppressed" notice is written; the totals are still counted.
+- **Phase lines**: one line per stage per item, for example `Phase upload completed for appdata in 4m12s`, with `data.phase`, `data.item_name`, `data.duration_ms`, and byte fields where measured. Backup stages are `stage`, `upload`, `dedup store`, and `verify`. Classic restore stages are `download` and `extract`. Deduplicated restore stages are `open repository` and `restore`. A failed stage logs `Phase <name> failed for <item> after <duration>` at error level, which shows where the operation stopped.
+- **Retries**: each recovered storage failure (a retried request, a resumed stream, or a restarted download part) is a warning line naming the operation, the object's file name, and the attempt, for example `Transient storage error on ReadRange data.tar.zst (attempt 2/5), retrying: connection reset`. Error text is redacted: credentials are masked and URLs are cut to scheme and host. After 20 warning lines, Vault logs "further storage retry events suppressed" once. It continues to count all retries.
 - **Measured bytes**, each under its own field: `stored_bytes` (what landed on the destination), `bytes_uploaded` (including retried attempts), `logical_bytes` and `duplicate_chunks` (deduplicated backups), `bytes_read` (read back from storage), `files_restored`, `retries`, and `resumes`. Verification lines include the bytes read and the time taken.
 - **Summary totals**: `read=`, `retries=`, and `transient_errors=` are appended to the final line when storage was read or retried. Restore summaries also name the job and destination.
 
@@ -170,45 +179,77 @@ A restore of selected files reports the size it actually wrote (`size_source: "r
 | ------ | ---------- | ------------------------------------------------ |
 | DELETE | `/history` | Purge all job run history records (irreversible) |
 
-> Per-job history is available at `GET /jobs/{id}/history`. There is no global `GET /history` endpoint; query individual jobs and merge client-side.
+> Per-job history is available at `GET /jobs/{id}/history`. To get history for all jobs, send a request for each job. Combine the results in your client.
 
-Storage responses mask secrets the same way. On update, a masked secret keeps the stored value, but changing where a destination connects requires entering the secret again, so a stored secret only goes to the server it was entered for: `host` and `port` (SFTP, SMB), `host_key` and `known_hosts_file` (SFTP), the scheme, host and port of `url` and `insecure_skip_verify` (WebDAV), and `endpoint`, `bucket` and `region` (S3). `POST /storage/test` takes an optional `id` to test an edit with the stored secrets under the same rule; without `id`, a masked secret is rejected.
+Vault masks secrets in storage responses. Send the masked value to keep the stored secret on update. If you change a connection field in this list, enter the secret again.
+
+| Storage type | Connection fields                                               |
+| ------------ | --------------------------------------------------------------- |
+| SFTP         | `host`, `port`, `host_key`, `known_hosts_file`                  |
+| SMB          | `host`, `port`                                                  |
+| WebDAV       | The scheme, host, and port of `url`, and `insecure_skip_verify` |
+| S3           | `endpoint`, `bucket`, `region`                                  |
+
+`POST /storage/test` accepts an optional `id` to test an edit. It uses the same rule for stored secrets. Without `id`, Vault rejects a masked secret.
 
 ## Replication
 
 A replication source's `schedule` field takes the same cron expressions as a job's (see [Jobs](#jobs)); an empty string means the source is only synced on demand.
 
-On a `vault replica`, a source can be created, edited, tested and synced, because receiving backups is what a replica is for, but not deleted (`403`). Replicas also refuse storage GC, orphan deletion, import, closing a breaker, force-deleting a destination, deleting a destination's backup files, history and activity purges, and anomaly acknowledgement.
+On a `vault replica`, you can create, edit, test, and sync a source. The replica returns `403` if you try to delete a source. The replica also refuses these operations:
 
-Replication is pull-based: a sync imports only the remote jobs whose `source_id` is `0`, i.e. jobs created on that server. Jobs the remote server itself replicated from elsewhere are skipped, so two servers can each configure the other as a source without bouncing jobs back and forth. Multi-hop relays (A → B → C) are not forwarded; configure each origin server as a direct source.
+- Storage garbage collection and orphan deletion
+- Import
+- Circuit breaker closure
+- Forced storage destination deletion and backup file deletion
+- History and activity purges
+- Anomaly acknowledgement
 
-Each restore point a sync copies is recorded with a finished backup run of the replicated job, dated when the remote server took the backup, so it shows in History and in the job's restore points. Replicated jobs have no items yet, so a restore request names the item with `item_name` and `item_type`. The run is `partial` when the remote server's run was not a clean success, for example when it had failed items or files it could not read, and `success` otherwise. If the remote server cannot list its run history, only failed items recorded on the restore point count. An incremental or differential restore point is linked to the local copy of the backup it builds on, so it restores with that backup's files. If that backup was not copied, the dependent point is not recorded. A restore point that cannot be downloaded or recorded makes the sync `partial`, or `failed` when nothing was recorded, and `last_sync_success_at` advances only on `success`. A later sync retries it. A source with no `storage_dest_id` syncs to the first storage destination, and the first sync saves that choice on the source. Each sync also binds any of the source's replicated jobs that have no destination to the one it writes to. Deduplicated backups can't be replicated yet: their data is in the remote server's shared `_vault/packs` store, which a sync doesn't copy. A restore point whose items are stored as dedup manifests fails the sync with that reason, and none of its files are downloaded. Classic backups on a deduplicated destination, such as VM and ZFS backups, replicate normally. A file download is abandoned when one read waits 2 minutes for data from the remote server, or the response headers take that long. Time spent writing to local storage doesn't count, and there is no limit on the total time. When the remote server refuses a request, the error shows the HTTP status and the server's short JSON `error` message, at most 200 characters with control characters removed. The rest of the response is never shown.
+A sync copies only jobs with `source_id` set to `0` on the remote server. These jobs originated on that server. Vault skips jobs that the remote server copied from another source. To receive those jobs, add their origin server as a source.
 
-| Method | Endpoint                 | Description                     |
-| ------ | ------------------------ | ------------------------------- |
-| GET    | `/replication`           | List replication sources        |
-| POST   | `/replication`           | Create replication source       |
-| POST   | `/replication/test-url`  | Test a replication URL          |
-| GET    | `/replication/{id}`      | Get replication source          |
-| PUT    | `/replication/{id}`      | Update replication source       |
-| DELETE | `/replication/{id}`      | Delete replication source       |
-| POST   | `/replication/{id}/test` | Test replication connection     |
-| POST   | `/replication/{id}/sync` | Trigger replication immediately |
-| GET    | `/replication/{id}/jobs` | List replicated jobs            |
+For each copied restore point, Vault records a completed backup run with the original backup date. The run appears in History, and the point appears in the job's restore points. A replicated job has no configured items. Give `item_name` and `item_type` in a restore request.
+
+Vault records `partial` if the remote backup was unsuccessful or incomplete. Otherwise it records `success`. If the remote server cannot list run history, Vault uses only the failures on the restore point.
+
+Vault links an incremental or differential point to the local copy of the backup that it depends on. If Vault did not copy that backup, Vault does not record the dependent point.
+
+If Vault cannot download or record a point, the sync ends as `partial`. If Vault records nothing, the sync ends as `failed`. Vault updates `last_sync_success_at` only on `success`. A later sync retries the failed copy.
+
+If the source has no `storage_dest_id`, Vault selects the first storage destination. The first sync saves that choice. Each sync assigns that destination to replicated jobs from this source that have no destination.
+
+A sync does not copy the remote `_vault/packs` store. If a restore point uses deduplication manifests, Vault reports an error and does not download its files. Vault can copy classic backups, such as VM and ZFS backups, from a deduplicated destination.
+
+Vault stops a download if response headers or an individual read take two minutes. Time spent writing to local storage does not count. Vault has no limit on the total download time.
+
+If the server refuses a request, Vault shows the HTTP status and the JSON `error` message. Vault removes control characters and limits the message to 200 characters.
+
+| Method | Endpoint                 | Description                   |
+| ------ | ------------------------ | ----------------------------- |
+| GET    | `/replication`           | List replication sources      |
+| POST   | `/replication`           | Create replication source     |
+| POST   | `/replication/test-url`  | Test a replication URL        |
+| GET    | `/replication/{id}`      | Get replication source        |
+| PUT    | `/replication/{id}`      | Update replication source     |
+| DELETE | `/replication/{id}`      | Delete replication source     |
+| POST   | `/replication/{id}/test` | Test replication connection   |
+| POST   | `/replication/{id}/sync` | Start replication immediately |
+| GET    | `/replication/{id}/jobs` | List replicated jobs          |
 
 Responses never contain a source's API key: `config` shows `••••••••` instead, and `credentials_locked` is `true` when this server's `vault.key` cannot open it. On update, omitted fields keep their stored values, an omitted, blank or masked `api_key` keeps the stored key, and a new value replaces it. Changing `url` requires sending the key again, so a stored key only goes to the server it was entered for. `warning` is set when the source uses plain HTTP to another machine. Plain HTTP stays allowed, so use it only on a network you trust.
 
 ## Recovery
 
-| Method | Endpoint               | Description                                                                                                  |
-| ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------ |
-| GET    | `/recovery/plan`       | Recovery plan with per-step item status; step downgrades to `warning` if any item is missing a restore point |
-| GET    | `/recovery/path-audit` | List job/item paths that don't exist on this server (used by the Recover Vault wizard's path check)          |
-| POST   | `/recovery/path-remap` | Rewrite audited paths to new locations (e.g. after a share or disk was renamed)                              |
+| Method | Endpoint               | Description                                                                                                      |
+| ------ | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| GET    | `/recovery/plan`       | Get the recovery plan and item status for each step. A step has status `warning` if an item has no restore point |
+| GET    | `/recovery/path-audit` | Find job and item paths that do not exist on this server. The Recover Vault wizard uses this operation           |
+| POST   | `/recovery/path-remap` | Rewrite audited paths to new locations (e.g. after a share or disk was renamed)                                  |
 
 ### Restore approvals (`/jobs/{id}/restore`)
 
-Two optional booleans in the restore body approve what a container restore otherwise refuses. Both default to `false` and apply to every item in the request. The MCP `restore_item` tool has no equivalent, so an agent cannot approve its own restore. It waits until the restore is past these checks, so a restore that needs approval comes back as a tool error that says to approve it in the Vault UI under Restore → Container approvals, rather than as "restore started":
+Two optional Boolean fields give approval for a container restore. Both default to `false` and apply to all items in the request.
+
+The MCP `restore_item` tool has no approval fields. The tool waits for the approval checks before it reports that the restore started. If approval is necessary, the tool returns an error. To give approval, open **Restore** → **Container approvals** in Vault.
 
 - `allow_host_privileges` — restore host-level settings (privileged mode, host network, IPC or PID, added capabilities, devices, host paths outside `/mnt`) from a backup this server did not make: imported or replicated.
 - `allow_unpinned_image` — for a deduplicated container backup whose recorded image digest is missing or cannot be pulled, use the image the tag points to now.
@@ -218,7 +259,7 @@ Two optional booleans in the restore body approve what a container restore other
 `POST /storage/{id}/restore-db` takes a JSON body:
 
 - `storage_path` — path of the database backup on the destination, e.g. `_vault/vault.db.latest.age` (encrypted) or a timestamped copy like `_vault/vault.db.2026-07-01T02-00-00.age`. Unencrypted backups use the `.db` extension.
-- `passphrase` — the backup password; required when the backup is encrypted.
+- `passphrase` — the backup password. Specify the password for an encrypted backup.
 - `verify_only` — when `true`, validates the backup (and passphrase) without replacing the current database.
 
 List the available backups first with `GET /storage/{id}/db-backups`.
@@ -229,18 +270,16 @@ The response's `locked_credentials` counts restored storage destinations and rep
 
 ### Unlocking dedup destinations (`dedup-keys/rewrap`)
 
-Deduplicated destinations are sealed with the server's `vault.key`. After a
-recovery onto a server with a different key, `POST /storage/dedup-keys/rewrap`
-with `{"passphrase": "…"}` opens each one through its backup-password escrow
-(written by every dedup backup that ran with a backup password set) and
-re-seals it with this server's key. The previous `_vault/repo.json` is kept as
-`_vault/repo.json.<time>.bak` only until the new header has been verified, and
-then removed because it still opens with the old key. An empty passphrase changes nothing and only
-reports status. The response is
-`{"destinations": [{"storage_id", "name", "status", "error"}]}`, where
-`status` is `ok`, `rewrapped`, `not_initialised`, `locked_needs_passphrase`,
-`locked_no_escrow`, `locked_wrong_passphrase` or `error`. Blocked on
-replicas.
+Vault protects deduplicated destinations with the server's `vault.key`. After recovery to a server with a different key, send `{"passphrase": "…"}` to `POST /storage/dedup-keys/rewrap`.
+
+The API opens each destination through its backup-password escrow and encrypts the key again with this server's key. Each deduplicated backup that runs with a backup password writes this escrow.
+
+Vault keeps the previous `_vault/repo.json` as `_vault/repo.json.<time>.bak` until it validates the new header. Then Vault removes that copy because the old key can still open it.
+
+An empty passphrase returns status without changes. The response is
+`{"destinations": [{"storage_id", "name", "status", "error"}]}`. The status can be
+`ok`, `rewrapped`, `not_initialised`, `locked_needs_passphrase`,
+`locked_no_escrow`, `locked_wrong_passphrase`, or `error`. Replicas refuse this operation.
 
 While a destination is still sealed with another key, browsing its restore
 points (`GET /jobs/{id}/restore-points/{rpid}/contents`) returns
@@ -269,18 +308,22 @@ Connect to `/api/v1/ws` for real-time event streaming. Events include:
 
 `GET /runner/status` and every `backup_progress` / `restore_progress` event describe the current item's work in its current phase:
 
-| Field                                       | Meaning                                                                                                     |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `phase`                                     | `scanning`, `preparing`, `processing`, `transferring`, `verifying`, or `finalizing`                         |
-| `phase_started_at`                          | When the phase began (RFC 3339)                                                                             |
-| `bytes_done` / `bytes_total`                | Bytes processed in this phase. A total of `0` means unknown                                                 |
-| `files_done` / `files_total`                | Files processed in this phase. A total of `0` means unknown                                                 |
-| `progress_determinate`                      | `true` when a total is known; `percent` (`current_item_percent` in the status) is then the phase percentage |
-| `rate_bytes_per_sec` / `rate_files_per_sec` | Smoothed rate, sampled at most once a second                                                                |
-| `eta_seconds`                               | Estimated seconds left in the phase; `0` until 30 s of the phase and 1% of its work have elapsed            |
-| `last_progress_at`                          | When work last moved; a stale value suggests the operation is stalled                                       |
+| Field                                       | Meaning                                                                                                                     |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `phase`                                     | `scanning`, `preparing`, `processing`, `transferring`, `verifying`, or `finalizing`                                         |
+| `phase_started_at`                          | When the phase began (RFC 3339)                                                                                             |
+| `bytes_done` / `bytes_total`                | Bytes processed in this phase. A total of `0` means unknown                                                                 |
+| `files_done` / `files_total`                | Files processed in this phase. A total of `0` means unknown                                                                 |
+| `progress_determinate`                      | If Vault knows the total, this value is `true`. `percent` (`current_item_percent` in the status) gives the phase percentage |
+| `rate_bytes_per_sec` / `rate_files_per_sec` | Smoothed rate, sampled at most once a second                                                                                |
+| `eta_seconds`                               | Estimated seconds to finish the phase. The value is `0` until at least 30 seconds and 1 percent of the work have elapsed    |
+| `last_progress_at`                          | Time of the last change in progress. An old value can show that the operation has stopped                                   |
 
-Counters never move backward: a retried upload holds its previous high-water mark. Work beyond the expected total raises the total, and a phase reads at most 99% until the next phase starts. When no total is known (for example while scanning), `progress_determinate` is `false` and clients should show the phase and counters without a percentage. Zero and `false` values are omitted from the JSON, so an absent `progress_determinate` means `false` and an absent counter means `0`; all of the fields are absent when the daemon has no structured progress for the item.
+Counters do not decrease. If Vault retries an upload, it keeps the previous maximum until it makes more progress. If work exceeds the expected total, Vault increases the total. A phase shows at most 99% until the next phase starts.
+
+If Vault does not know the total, `progress_determinate` is `false`. Show the phase and counters without a percentage.
+
+The JSON omits zero and `false` values. Read an absent counter as `0` and an absent `progress_determinate` as `false`. If Vault has no structured progress for the item, it omits all progress fields.
 
 The WebSocket follows the same access rules as the rest of the API: same-origin or an [allowlisted origin](#authentication), plus local access or the `X-API-Key` header.
 
