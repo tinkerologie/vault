@@ -52,7 +52,7 @@ var AppSettings = []SettingDoc{
 	{"staging_dir_override", "string", "", "Directory for temporary archives before upload. An empty value uses the default directory.", GroupGeneral},
 	{"appdata_path", "string", "/mnt/user/appdata", "Path to the Unraid appdata share that contains the Docker container configurations.", GroupGeneral},
 	{"storage_verbose_logging", "bool", "false", "If true, storage adapters log each storage operation.", GroupGeneral},
-	{"replication_enabled", "string", "", "Set to true to enable replication scheduling. An empty value or false disables replication scheduling.", GroupGeneral},
+	{"replication_enabled", "string", "", "Set to true to enable replication scheduling. Set to false to disable it. If the value is empty, Vault enables scheduling when a replication source exists.", GroupGeneral},
 	{"fuse_mount_base_dir", "string", "", "Directory for read-only FUSE backup mounts. An empty value uses /mnt/addons/vault-fuse. If /mnt/addons does not exist, Vault uses a temporary directory.", GroupGeneral},
 	{"fuse_mount_idle_minutes", "int", "30", "Time in minutes before Vault unmounts an inactive FUSE backup mount.", GroupGeneral},
 	{"memory_limit_mb", "int", "0", "Soft memory limit for the daemon, in MiB. Set to 0 to disable the limit. Other permitted values are 512 to 1048576. Set the limit to a value more than the memory necessary for the backup. Each S3 upload stream can use five times its part size. If memory use is more than the limit, the Go garbage collector runs more frequently. The GOMEMLIMIT environment variable overrides this setting.", GroupGeneral},
@@ -70,7 +70,7 @@ var AppSettings = []SettingDoc{
 	{"retry_delays_default", "json", "[900,3600,14400]", "Delay before each retry (JSON array in seconds). Vault uses these values if the job has no retry delays.", GroupBackup},
 	{"breaker_fail_threshold", "int", "3", "Number of consecutive storage failures that open the circuit breaker for a destination.", GroupBackup},
 	{"breaker_close_successes", "int", "2", "Number of consecutive successful operations necessary to close the circuit breaker.", GroupBackup},
-	{"dedup_compaction_min_dead_ratio", "float", "0.5", "Minimum fraction of unreferenced blocks in a deduplication repository before compaction starts.", GroupBackup},
+	{"dedup_compaction_min_dead_ratio", "float", "0.5", "Minimum fraction of unreferenced bytes in a pack for Vault to compact it.", GroupBackup},
 	{"global_exclude_paths", "json", "[]", "Paths to exclude from all folder and container backups (JSON array). Vault adds these paths to the exclusions for each item.", GroupBackup},
 	{"label_exclusions_enabled", "bool", "true", "If true, Vault uses the comma-separated paths in a container's vault.exclude label as backup exclusions for that container.", GroupBackup},
 
@@ -196,7 +196,7 @@ var FieldDocs = map[string]string{ // #nosec G101 -- values are human-readable d
 	"StorageDestination.ConsecutiveFailures":    "Count of consecutive health-check/storage failures, feeding the circuit breaker.",
 	"StorageDestination.BreakerState":           "Circuit-breaker state (closed, open, half-open).",
 	"StorageDestination.BreakerOpenedAt":        "Timestamp when the circuit breaker last opened.",
-	"StorageDestination.BackupDatabaseEnabled":  "If true, Vault backs up its database to this destination.",
+	"StorageDestination.BackupDatabaseEnabled":  "If true, Vault sends a database backup here after jobs that use other destinations. Vault always sends a database backup to the destination for the job.",
 	"StorageDestination.StageBesideDestination": "If true, classic backups put temporary archives next to this local destination.",
 	"StorageDestination.CapacityTotalBytes":     "Total capacity of the destination in bytes, if probed.",
 	"StorageDestination.CapacityUsedBytes":      "Used capacity of the destination in bytes, if probed.",
@@ -215,7 +215,7 @@ var FieldDocs = map[string]string{ // #nosec G101 -- values are human-readable d
 	"SFTPConfig.Password":       "Password for SFTP authentication. Leave empty when using a key file.",
 	"SFTPConfig.KeyFile":        "Path to the private key file for key-based authentication.",
 	"SFTPConfig.BasePath":       "Directory on the server for the backups.",
-	"SFTPConfig.Path":           "Old name for BasePath. Use BasePath for new configurations.",
+	"SFTPConfig.Path":           "Old name for `base_path`. Use `base_path` for new configurations.",
 	"SFTPConfig.HostKey":        "SHA-256 fingerprint of the server host key. If this field and known_hosts_file are empty, Vault records the first key it receives. Vault refuses a different key on later connections.",
 	"SFTPConfig.KnownHostsFile": "Path to the OpenSSH known_hosts file. Vault uses this file to authenticate the server host key.",
 
@@ -226,7 +226,7 @@ var FieldDocs = map[string]string{ // #nosec G101 -- values are human-readable d
 	"SMBConfig.Password": "Password for SMB authentication.",
 	"SMBConfig.Share":    "Name of the SMB share.",
 	"SMBConfig.BasePath": "Directory in the share for the backups.",
-	"SMBConfig.Path":     "Old name for BasePath. Use BasePath for new configurations.",
+	"SMBConfig.Path":     "Old name for `base_path`. Use `base_path` for new configurations.",
 
 	// storage.NFSConfig
 	"NFSConfig.Host":     "Host name or IP address of the NFS server.",

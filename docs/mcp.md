@@ -82,7 +82,7 @@ Add to your project's `.mcp.json`:
   "mcpServers": {
     "vault": {
       "type": "http",
-      "url": "http://<unraid-host>:24085/mcp"
+      "url": "http://127.0.0.1:24085/api/v1/mcp"
     }
   }
 }
@@ -92,8 +92,8 @@ The daemon binds to loopback by default, so reach it over an SSH tunnel
 (`ssh -L 24085:127.0.0.1:24085 root@<server-ip>`, or
 `ssh -L 24085:<server-ip>:24085 root@<server-ip>` if Vault is bound to the
 server's IP, where nothing listens on loopback) and point the URL at
-`http://127.0.0.1:24085/mcp`. For a client that only speaks stdio, bridge it
-with `npx mcp-remote http://127.0.0.1:24085/mcp` rather than running a second
+`http://127.0.0.1:24085/api/v1/mcp`. For a client that only speaks stdio, bridge it
+with `npx mcp-remote http://127.0.0.1:24085/api/v1/mcp` rather than running a second
 process against the database directly.
 
 ## Available Tools
