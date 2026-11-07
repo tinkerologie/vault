@@ -21,6 +21,9 @@ type Heartbeat struct {
 	mu        sync.Mutex
 	lastWarn  time.Time
 	warnEvery time.Duration
+
+	// Tests may replace writeFile before Start, never while a writer is running.
+	writeFile func(string, []byte, os.FileMode) error
 }
 
 // NewHeartbeat constructs a Heartbeat. The default warn-suppression window
@@ -34,14 +37,18 @@ func NewHeartbeat(path, version string, interval time.Duration) *Heartbeat {
 		version:   version,
 		interval:  interval,
 		warnEvery: time.Hour,
+		writeFile: os.WriteFile,
 	}
 }
 
-// Start begins writing the heartbeat file. The goroutine exits when ctx
-// is cancelled. Write failures are rate-limited to one log line per
-// warnEvery so a chronically failing path does not spam syslog.
-func (h *Heartbeat) Start(ctx context.Context) {
+// Start writes immediately, including for an already-cancelled context, then
+// writes on each interval until ctx is cancelled. Cancellation does not interrupt
+// an in-flight write. The returned channel closes after this writer has exited
+// and stopped its ticker. Write failures are rate-limited to one log per warnEvery.
+func (h *Heartbeat) Start(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		// Immediate first write so external monitors see liveness right
 		// away, not after one interval.
 		h.write()
@@ -56,6 +63,7 @@ func (h *Heartbeat) Start(ctx context.Context) {
 			}
 		}
 	}()
+	return done
 }
 
 func (h *Heartbeat) write() {
@@ -65,7 +73,7 @@ func (h *Heartbeat) write() {
 	}
 	payload := fmt.Sprintf("%s v%s\n",
 		time.Now().UTC().Format(time.RFC3339), h.version)
-	if err := os.WriteFile(h.path, []byte(payload), 0o640); err != nil {
+	if err := h.writeFile(h.path, []byte(payload), 0o640); err != nil {
 		h.warn("write", err)
 		return
 	}

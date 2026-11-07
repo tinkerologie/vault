@@ -53,7 +53,16 @@ var (
 	daemonUSBBackupPath   = "/boot/config/plugins/vault/vault.db.backup"
 	poolDetectionSleep    = time.Sleep
 	shutdownNotifyContext = signal.NotifyContext
-	bootKindMountInfo     = "/proc/self/mountinfo"
+	daemonStartHeartbeat  = func(ctx context.Context, path, version string) func() {
+		heartbeatCtx, cancel := context.WithCancel(ctx)
+		hb := runner.NewHeartbeat(path, version, 30*time.Second)
+		done := hb.Start(heartbeatCtx)
+		return func() {
+			cancel()
+			<-done
+		}
+	}
+	bootKindMountInfo = "/proc/self/mountinfo"
 )
 
 var daemonCmd = &cobra.Command{
@@ -641,13 +650,12 @@ var daemonCmd = &cobra.Command{
 		} else {
 			hbDir = filepath.Dir(dbPath)
 		}
-		hb := runner.NewHeartbeat(filepath.Join(hbDir, "heartbeat"), version, 30*time.Second)
-
 		// Listen for OS signals for graceful shutdown.
 		ctx, stop := shutdownNotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
-		hb.Start(ctx)
+		stopHeartbeat := daemonStartHeartbeat(ctx, filepath.Join(hbDir, "heartbeat"), version)
+		defer stopHeartbeat()
 
 		// Adaptive upload throttle controller (issue #237). Idles until the
 		// auto_throttle_enabled setting is turned on; settings are re-read
