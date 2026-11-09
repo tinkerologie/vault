@@ -711,6 +711,11 @@ html.vault-embedded .sticky.bottom-4 { bottom: calc(var(--vault-visible-bottom) 
   outline-offset: 2px;
 }
 
+/* Route headings receive focus for screen-reader announcements. */
+#main-content h1[tabindex="-1"]:focus {
+  outline: none;
+}
+
 /* Button system */
 .btn {
   @apply px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed;

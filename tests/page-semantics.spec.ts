@@ -227,6 +227,24 @@ test.describe('Page semantics (#529)', () => {
       }
     });
 
+    test('route headings keep announcement focus without showing a control outline', async ({ page }) => {
+      await page.goto('/#/history');
+      await expect(h1(page, 'Backup & Restore History')).toBeVisible();
+
+      // A route change can arrive without a pointer event, for example from
+      // the Unraid host navigation around the embedded app.
+      for (const { hash, heading } of ROUTES.slice(0, 2)) {
+        await page.evaluate((next) => { location.hash = next; }, hash);
+        await expect(h1(page, heading)).toBeFocused();
+        await expect(h1(page, heading)).toHaveCSS('outline-style', 'none');
+      }
+
+      await page.keyboard.press('Tab');
+      const newJob = page.getByRole('button', { name: 'New Job', exact: true });
+      await expect(newJob).toBeFocused();
+      await expect(newJob).toHaveCSS('outline-style', 'solid');
+    });
+
     test('mouse and keyboard activation both focus the heading, on the page scrolled to the top', async ({ page }) => {
       await page.setViewportSize({ width: 1280, height: 400 });
       await page.goto('/#/settings');
