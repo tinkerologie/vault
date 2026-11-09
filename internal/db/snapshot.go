@@ -41,6 +41,11 @@ type SnapshotManager struct {
 	// into a single background flush. flushDebounce is the coalescing window.
 	flushPending  atomic.Bool
 	flushDebounce time.Duration
+	flushMu       sync.Mutex
+	flushStop     chan struct{}
+	flushWorkers  sync.WaitGroup
+	closeOnce     sync.Once
+	closeErr      error
 
 	// writeMu serialises backupWorkingDBToPath: the debounced flush, the
 	// periodic ticker, and post-backup finalization can overlap, and two
@@ -83,6 +88,7 @@ func NewSnapshotManager(database *DB, snapshotPath, defaultPath string) *Snapsho
 		defaultSnapshotPath: defaultPath,
 		usbMinInterval:      1 * time.Hour,
 		flushDebounce:       2 * time.Second,
+		flushStop:           make(chan struct{}),
 	}
 }
 
@@ -717,24 +723,45 @@ func (sm *SnapshotManager) FlushToUSB() error {
 // unresponsive (issue #143). Durability is still guaranteed on shutdown by the
 // synchronous FlushToUSB in the pre-shutdown hook and Close.
 func (sm *SnapshotManager) ScheduleFlush() {
+	sm.flushMu.Lock()
+	defer sm.flushMu.Unlock()
+	select {
+	case <-sm.flushStop:
+		return
+	default:
+	}
 	if !sm.flushPending.CompareAndSwap(false, true) {
 		return // a flush is already queued; it will capture this change too
 	}
 	debounce := sm.flushDebounce
-	go func() {
-		time.Sleep(debounce)
+	sm.flushWorkers.Go(func() {
+		timer := time.NewTimer(debounce)
+		defer timer.Stop()
+		select {
+		case <-sm.flushStop:
+			sm.flushPending.Store(false)
+			return
+		case <-timer.C:
+		}
 		// Clear before flushing so a change committed during the flush schedules
 		// a fresh flush rather than being dropped.
 		sm.flushPending.Store(false)
 		if err := sm.FlushToUSB(); err != nil {
 			log.Printf("Warning: debounced config flush failed: %v", err)
 		}
-	}()
+	})
 }
 
-// Close performs a final snapshot save as a flush, including a USB backup.
+// Close cancels queued flushes, joins in-flight writes and persists the final DB.
 func (sm *SnapshotManager) Close() error {
-	return sm.FlushToUSB()
+	sm.closeOnce.Do(func() {
+		sm.flushMu.Lock()
+		close(sm.flushStop)
+		sm.flushMu.Unlock()
+		sm.flushWorkers.Wait()
+		sm.closeErr = sm.FlushToUSB()
+	})
+	return sm.closeErr
 }
 
 // SaveSnapshotAndUSBBackup saves the primary snapshot and, if enough time has

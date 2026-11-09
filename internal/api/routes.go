@@ -202,8 +202,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			// write timeout (#449): extend this route's write deadline, and
 			// bound the handler just inside it so a timeout still gets a reply.
 			r.With(ExtendWriteDeadline(handlers.RestorePointContentsWriteTimeout)).Get("/{id}/restore-points/{rpid}/contents",
-				http.TimeoutHandler(http.HandlerFunc(jobH.RestorePointContents),
-					handlers.RestorePointContentsHandlerTimeout, handlers.RestorePointContentsTimeoutBody).ServeHTTP)
+				s.trackTimedRead(jobH.RestorePointContents, handlers.RestorePointContentsHandlerTimeout, handlers.RestorePointContentsTimeoutBody))
 			r.Post("/{id}/restore-points/{rpid}/preflight", jobH.RestorePointPreflight)
 			r.Post("/{id}/restore-points/{rpid}/verify", jobH.VerifyRestorePoint)
 			r.Get("/{id}/restore-points/{rpid}/verify-runs", jobH.ListRestorePointVerifyRuns)
@@ -348,12 +347,13 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		// MCP is only available in daemon mode.
 		if !s.config.ReadOnly {
-			mcpSrv := mcpserver.New(s.db, s.runner, intake, mcpserver.Config{
+			s.mcp = mcpserver.New(s.db, s.runner, intake, mcpserver.Config{
 				Version:  s.config.Version,
 				ReadOnly: s.config.ReadOnly,
 			})
-			r.Handle("/mcp", mcpSrv.HTTPHandler())
-			r.Handle("/mcp/*", mcpSrv.HTTPHandler())
+			mcpHandler := s.mcp.HTTPHandler()
+			r.Handle("/mcp", mcpHandler)
+			r.Handle("/mcp/*", mcpHandler)
 		}
 	})
 

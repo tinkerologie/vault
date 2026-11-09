@@ -196,3 +196,15 @@ func TestReplicationTestURL_InvalidURL(t *testing.T) {
 		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestStorageGCRejectsRequestsWhileDraining(t *testing.T) {
+	h, destID := newDedupStorageHandler(t, true)
+	if err := h.runner.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.RunDedupGC(rec, reqWithID(http.MethodPost, "/api/v1/storage/x/gc", strconv.FormatInt(destID, 10), nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}

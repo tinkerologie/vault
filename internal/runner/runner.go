@@ -171,6 +171,7 @@ type Runner struct {
 	escrowMu        sync.Mutex
 	escrowed        map[int64]string
 	snapshotManager *db.SnapshotManager
+	backgroundWork  sync.WaitGroup
 	breaker         *Breaker
 	mu              sync.Mutex
 	// onAdmitted runs, under activeMu, whenever a task is counted active;
@@ -227,10 +228,12 @@ type Runner struct {
 	// Drain coordination. activeMu guards activeCount and draining.
 	// activeCond is signalled when activeCount transitions to 0 so Drain
 	// wakes without polling.
-	activeMu    sync.Mutex
-	activeCond  *sync.Cond
-	activeCount int
-	draining    bool
+	activeMu     sync.Mutex
+	drainOnce    sync.Once
+	drainStarted chan struct{}
+	activeCond   *sync.Cond
+	activeCount  int
+	draining     bool
 }
 
 // Finalization step timeouts (issue #112). Each blocking call that runs after
@@ -257,6 +260,7 @@ func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 		hub:               hub,
 		serverKey:         serverKey,
 		queueCancelledIDs: make(map[string]struct{}),
+		drainStarted:      make(chan struct{}),
 		progress:          newProgressTracker(nil),
 	}
 	failThreshold, _ := database.GetSettingInt("breaker_fail_threshold", docsmeta.DefaultInt("breaker_fail_threshold"))
@@ -273,6 +277,11 @@ func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 // cleanly.
 func (r *Runner) Drain(ctx context.Context) error {
 	r.activeMu.Lock()
+	r.drainOnce.Do(func() {
+		if r.drainStarted != nil {
+			close(r.drainStarted)
+		}
+	})
 	r.draining = true
 	r.activeMu.Unlock()
 
@@ -298,6 +307,25 @@ func (r *Runner) Drain(ctx context.Context) error {
 		<-done // wait for inner goroutine to finish before returning
 		return ctx.Err()
 	}
+}
+
+// WaitForBackgroundWork joins auxiliary tasks after HTTP, scheduler and
+// Runner producers have stopped.
+func (r *Runner) WaitForBackgroundWork() {
+	r.backgroundWork.Wait()
+}
+
+// startAsync reserves Runner admission before a caller acknowledges a
+// background operation. The runtime waits for it even if it has not run yet.
+func (r *Runner) startAsync(run func()) error {
+	if !r.tryMarkStart() {
+		return ErrRunnerDraining
+	}
+	go func() {
+		defer r.markFinish()
+		run()
+	}()
+	return nil
 }
 
 // IsDraining reports whether Drain has been called.
@@ -682,12 +710,16 @@ func (r *Runner) SetEvaluator(e anomalyEnqueuer) {
 // sweep loops check ctx between items, so the goroutine exits instead of
 // leaking — logs a clear ERROR naming the step, and returns without
 // waiting further. Components used by steps (SnapshotManager via its own
-// mutex, the DB pool, per-job retention) are safe for this.
+// mutex, the DB pool, per-job retention) are safe for this. The runtime
+// joins any remaining finalization work before closing those resources.
 func (r *Runner) runFinalizationStep(name string, jobID, runID int64, timeout time.Duration, fn func(ctx context.Context)) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
-	go func() { defer close(done); fn(ctx) }()
+	r.backgroundWork.Go(func() {
+		defer close(done)
+		fn(ctx)
+	})
 	select {
 	case <-done:
 		return
@@ -715,6 +747,11 @@ func (r *Runner) RunJobManual(jobID int64) {
 	r.runJobInternal(jobID, runOptions{manual: true})
 }
 
+// StartJobManual admits a manual backup and runs it in the background.
+func (r *Runner) StartJobManual(jobID int64) error {
+	return r.startAsync(func() { r.runAdmittedJob(jobID, runOptions{manual: true}) })
+}
+
 // RunJobFull runs a job as a FULL backup whatever its backup_type_chain says.
 // The scheduler calls this on a job's full_backup_schedule (issue #322). It
 // goes through the same pipeline as every other run, so it queues behind an
@@ -739,6 +776,10 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		return
 	}
 	defer r.markFinish()
+	r.runAdmittedJob(jobID, opts)
+}
+
+func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 
 	// Look up the job name before queuing so the queue entry is informative.
 	jobName := fmt.Sprintf("Job #%d", jobID)
@@ -860,7 +901,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	// backup pipeline. A flaky destination should not tie up the run slot.
 	// Failure records a "skipped" run and returns
 	// early so retry policy can pick it up on the next tick (Task 7).
-	if pfErr := Preflight(context.Background(), dest); pfErr != nil {
+	if pfErr := preflight(context.Background(), dest, r.backgroundWork.Go); pfErr != nil {
 		log.Printf("runner: preflight failed for job %d (%s) -> dest %s: %v",
 			jobID, job.Name, dest.Name, pfErr)
 		skippedRun := db.JobRun{
@@ -2790,17 +2831,6 @@ func ResolveItemManifestID(rp db.RestorePoint, itemName string) (dedup.ID, bool)
 // result over the WebSocket hub as `dedup_gc_complete` and logs progress
 // so operators can follow along in the daemon log.
 func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
-	if !dest.DedupEnabled {
-		log.Printf("gc: refusing to run on non-dedup destination %d (%q)", dest.ID, dest.Name)
-		r.Broadcast(map[string]any{
-			"type":        "dedup_gc_complete",
-			"gc_run_id":   runID,
-			"destination": dest.ID,
-			"status":      "failed",
-			"error":       "destination is not dedup-enabled",
-		})
-		return
-	}
 	// GC must never overlap a backup/restore writing to the repo: an
 	// in-flight run registers packs immediately but its restore-point row
 	// (which makes those packs reachable) only lands at the end, so a
@@ -2820,6 +2850,26 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 		return
 	}
 	defer r.markFinish()
+	r.runAdmittedDedupGC(dest, runID)
+}
+
+// StartDedupGC admits garbage collection and runs it in the background.
+func (r *Runner) StartDedupGC(dest db.StorageDestination, runID string) error {
+	return r.startAsync(func() { r.runAdmittedDedupGC(dest, runID) })
+}
+
+func (r *Runner) runAdmittedDedupGC(dest db.StorageDestination, runID string) {
+	if !dest.DedupEnabled {
+		log.Printf("gc: refusing to run on non-dedup destination %d (%q)", dest.ID, dest.Name)
+		r.Broadcast(map[string]any{
+			"type":        "dedup_gc_complete",
+			"gc_run_id":   runID,
+			"destination": dest.ID,
+			"status":      "failed",
+			"error":       "destination is not dedup-enabled",
+		})
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -3865,7 +3915,7 @@ type RestoreTarget struct {
 // while the job row sat at "running" for hours (issue #265). Staying alive
 // costs one goroutine and keeps the stall visible in the log.
 func (r *Runner) startStallWatchdog(ctx context.Context, done <-chan struct{}, cancel context.CancelFunc, jobID, runID int64, tick, warn, cancelAfter time.Duration) {
-	go func() {
+	r.backgroundWork.Go(func() {
 		ticker := time.NewTicker(tick)
 		defer ticker.Stop()
 		var cancelledAt time.Time
@@ -3919,7 +3969,7 @@ func (r *Runner) startStallWatchdog(ctx context.Context, done <-chan struct{}, c
 					stuck.Truncate(time.Second)))
 			}
 		}
-	}()
+	})
 }
 
 // markRunStalled records the stall on the run row and tells connected clients,
@@ -3957,6 +4007,15 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		return
 	}
 	defer r.markFinish()
+	r.runAdmittedRestore(restorePoint, targets, destination, passphrase)
+}
+
+// StartRestore admits a tracked restore and runs it in the background.
+func (r *Runner) StartRestore(restorePoint db.RestorePoint, targets []RestoreTarget, destination, passphrase string) error {
+	return r.startAsync(func() { r.runAdmittedRestore(restorePoint, targets, destination, passphrase) })
+}
+
+func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []RestoreTarget, destination, passphrase string) {
 
 	jobName := fmt.Sprintf("Job #%d", restorePoint.JobID)
 	if job, err := r.db.GetJob(restorePoint.JobID); err == nil {
@@ -4349,8 +4408,8 @@ func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, d
 // maintenance task holds the runner.
 var ErrRunnerBusy = errors.New("a backup, restore or maintenance task is running; try again when it finishes")
 
-// errRunnerDraining refuses an untracked restore while the daemon shuts down.
-var errRunnerDraining = errors.New("the Vault daemon is shutting down; try again after it restarts")
+// ErrRunnerDraining refuses new work while the daemon shuts down.
+var ErrRunnerDraining = errors.New("the Vault daemon is shutting down; try again after it restarts")
 
 // acquireUntrackedRestore gives an untracked restore the same exclusion as a
 // tracked one: it holds r.mu, which backups, tracked restores, dedup GC and
@@ -4361,7 +4420,7 @@ var errRunnerDraining = errors.New("the Vault daemon is shutting down; try again
 // once the restore has finished.
 func (r *Runner) acquireUntrackedRestore() (release func(), err error) {
 	if !r.tryMarkStart() {
-		return nil, errRunnerDraining
+		return nil, ErrRunnerDraining
 	}
 	if !r.mu.TryLock() {
 		r.markFinish()
@@ -6635,7 +6694,7 @@ func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.Sto
 	r.queueMu.Unlock()
 	r.broadcastQueueUpdate()
 
-	go func() {
+	r.backgroundWork.Go(func() {
 		defer func() {
 			r.queueMu.Lock()
 			for i, e := range r.queue {
@@ -6717,7 +6776,7 @@ func (r *Runner) CleanupJobStorageAsync(jobID int64, jobName string, dest db.Sto
 		r.broadcast(map[string]any{
 			"type": "job_cleanup_complete", "job_id": jobID, "job_name": jobName,
 		})
-	}()
+	})
 }
 
 // reclaimDedupAfterJobDelete frees dedup data left behind by a just-deleted
@@ -6793,7 +6852,7 @@ func (r *Runner) CleanupRestorePointStorageAsync(jobID, rpID int64, dest db.Stor
 	r.queueMu.Unlock()
 	r.broadcastQueueUpdate()
 
-	go func() {
+	r.backgroundWork.Go(func() {
 		defer func() {
 			r.queueMu.Lock()
 			for i, e := range r.queue {
@@ -6844,7 +6903,7 @@ func (r *Runner) CleanupRestorePointStorageAsync(jobID, rpID int64, dest db.Stor
 		r.broadcast(map[string]any{
 			"type": "restore_point_cleanup_complete", "job_id": jobID, "restore_point_id": rpID,
 		})
-	}()
+	})
 }
 
 // CleanupStorageDestination deletes Vault's backup files from a storage

@@ -110,17 +110,10 @@ disaster recovery.`,
 		// The backup runner callback is a no-op since replicas don't run backups.
 		sched := scheduler.New(database, func(_ int64) {})
 		sched.SetReplicationRunner(func(sourceID int64) {
-			go func() {
-				if _, err := syncer.SyncSource(sourceID, nil); err != nil {
-					log.Printf("Replication sync failed for source %d: %v", sourceID, err)
-				}
-			}()
+			if _, err := syncer.SyncSource(sourceID, nil); err != nil {
+				log.Printf("Replication sync failed for source %d: %v", sourceID, err)
+			}
 		})
-
-		if err := sched.Start(); err != nil {
-			log.Printf("Warning: scheduler failed to start: %v", err)
-		}
-		defer sched.Stop()
 
 		srv.SetScheduleReloader(sched.Reload)
 
@@ -128,12 +121,13 @@ disaster recovery.`,
 		ctx, stop := shutdownNotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
-		// Zeroconf/mDNS discovery (#137). Replica instances are also
-		// discoverable on the LAN unless bound to loopback or started with
-		// --mdns=false. Shuts down with ctx.
-		startDiscovery(ctx, mdns, addr, tlsCert != "" && tlsKey != "")
-
-		err = srv.StartWithContext(ctx)
+		workers := daemonWorkers{
+			scheduler: sched,
+			discovery: mdns,
+			addr:      addr,
+			tls:       tlsCert != "",
+		}
+		err = workers.run(ctx, srv)
 		if errors.Is(err, http.ErrServerClosed) {
 			log.Println("Vault replica daemon stopped gracefully")
 			return nil

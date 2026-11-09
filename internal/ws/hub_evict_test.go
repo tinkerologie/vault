@@ -1,8 +1,12 @@
 package ws
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -108,5 +112,77 @@ func TestCloseOnceArbitratesClosePaths(t *testing.T) {
 
 	if calls != 1 {
 		t.Fatalf("close body ran %d times, want exactly 1", calls)
+	}
+}
+
+func TestStopJoinsEvictionWithPartialPeerFrame(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+	t.Cleanup(hub.Stop)
+
+	accepted := make(chan *Client, 1)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept: %v", err)
+			return
+		}
+		socket := r.Context().Value(socketContextKey{}).(net.Conn)
+		// Leave the unbuffered send queue undrained, so the first broadcast
+		// runs the eviction handshake without a concurrent read pump.
+		accepted <- &Client{hub: hub, conn: conn, socket: socket, send: make(chan []byte)}
+	}))
+	server.Config.ConnContext = WithSocket
+	server.Start()
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	dialer := net.Dialer{}
+	peer, err := dialer.DialContext(ctx, "tcp", server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	if err := peer.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(peer, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n", server.Listener.Addr()); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(peer)
+	response, err := http.ReadResponse(reader, nil)
+	if err != nil || response.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("upgrade response = %v, error = %v", response, err)
+	}
+	_ = response.Body.Close()
+	select {
+	case client := <-accepted:
+		hub.Register(client)
+	case <-ctx.Done():
+		t.Fatal("server did not register the WebSocket")
+	}
+	hub.Broadcast([]byte("evict this peer"))
+	var closeHeader [2]byte
+	if _, err := io.ReadFull(reader, closeHeader[:]); err != nil || closeHeader[0] != 0x88 {
+		t.Fatalf("close frame header = %x, error = %v", closeHeader, err)
+	}
+	if _, err := io.CopyN(io.Discard, reader, int64(closeHeader[1])); err != nil {
+		t.Fatal(err)
+	}
+	// Masked binary frame, one declared payload byte, no payload sent.
+	if _, err := peer.Write([]byte{0x82, 0x81, 0, 0, 0, 0}); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		hub.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-ctx.Done():
+		t.Fatal("an evicted peer's partial frame prevented hub shutdown")
 	}
 }

@@ -249,10 +249,17 @@ func populateManifestTree(ctx context.Context, repo *dedup.Repo, cache *ChunkCac
 type fuseServer interface {
 	Unmount() error
 	WaitMount() error
-	Wait()
+	Done() <-chan struct{}
 }
 
-var _ fuseServer = (*fuse.Server)(nil)
+type ownedFuseServer struct {
+	*fuse.Server
+	done <-chan struct{}
+}
+
+func (s *ownedFuseServer) Done() <-chan struct{} { return s.done }
+
+var _ fuseServer = (*ownedFuseServer)(nil)
 
 // fuseMount, runFusermount and sysUnmount are the package's only contact with
 // the kernel and external binaries. Production always uses the real
@@ -260,11 +267,18 @@ var _ fuseServer = (*fuse.Server)(nil)
 // fakes and never mount, unmount or exec anything.
 var (
 	fuseMount = func(dir string, root fs.InodeEmbedder, opts *fs.Options) (fuseServer, error) {
-		server, err := fs.Mount(dir, root, opts)
+		// Keep the server handle if WaitMount later fails. fs.Mount
+		// discards it before the caller can detach or join the serve loop.
+		server, err := fuse.NewServer(fs.NewNodeFS(root, opts), dir, &opts.MountOptions)
 		if err != nil {
 			return nil, err
 		}
-		return server, nil
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			server.Serve()
+		}()
+		return &ownedFuseServer{Server: server, done: done}, nil
 	}
 	runFusermount = func(bin, path string) error {
 		return exec.Command(bin, "-u", path).Run()
@@ -275,8 +289,10 @@ var (
 type linuxMountHandle struct {
 	server    fuseServer
 	mountPath string
-	done      chan struct{}
-	once      sync.Once
+	done      <-chan struct{}
+
+	unmountMu sync.Mutex
+	unmounted bool
 }
 
 func (h *linuxMountHandle) MountPath() string {
@@ -284,25 +300,44 @@ func (h *linuxMountHandle) MountPath() string {
 }
 
 func (h *linuxMountHandle) Unmount() error {
-	var err error
-	h.once.Do(func() {
-		if h.server != nil {
-			err = h.server.Unmount()
-			if err != nil {
-				// Best effort fallback via fusermount
-				if uerr := runFusermount("fusermount3", h.mountPath); uerr == nil {
-					err = nil
-				} else if uerr := runFusermount("fusermount", h.mountPath); uerr == nil {
-					err = nil
-				}
+	h.unmountMu.Lock()
+	defer h.unmountMu.Unlock()
+	if h.unmounted {
+		return nil
+	}
+	if h.server != nil {
+		if err := h.server.Unmount(); err != nil {
+			// Best effort fallback via fusermount.
+			if runFusermount("fusermount3", h.mountPath) != nil &&
+				runFusermount("fusermount", h.mountPath) != nil {
+				return err
 			}
 		}
+	}
+	h.wait()
+	h.unmounted = true
+	return nil
+}
+
+func (h *linuxMountHandle) wait() { <-h.done }
+
+// finishUnmount retries a busy detach during daemon shutdown. If the
+// server stops on its own, the caller can close the adapter and retain
+// the failed session record for cleanup at the next startup.
+func (h *linuxMountHandle) finishUnmount(err error) error {
+	retry := time.NewTicker(time.Second)
+	defer retry.Stop()
+	for {
 		select {
 		case <-h.done:
-		case <-time.After(3 * time.Second):
+			return err
+		case <-retry.C:
+			err = h.Unmount()
+			if err == nil {
+				return nil
+			}
 		}
-	})
-	return err
+	}
 }
 
 func buildTree(ctx context.Context, repo *dedup.Repo, cache *ChunkCache, rootInode *fs.Inode, manifests map[string]dedup.Manifest, onActivity func()) error {
@@ -376,33 +411,34 @@ func MountManifests(ctx context.Context, repo *dedup.Repo, manifests map[string]
 		}
 	}
 
+	handle := &linuxMountHandle{
+		server:    server,
+		mountPath: mountPath,
+		done:      server.Done(),
+	}
+
+	cleanup := func() {
+		if err := handle.Unmount(); err != nil {
+			_ = handle.finishUnmount(err)
+		}
+	}
+
 	if err := server.WaitMount(); err != nil {
-		_ = server.Unmount()
+		cleanup()
 		return nil, fmt.Errorf("mount: server.WaitMount on %s: %w", mountPath, err)
 	}
 
 	select {
 	case <-state.done:
 	case <-ctx.Done():
-		_ = server.Unmount()
+		cleanup()
 		return nil, fmt.Errorf("mount: context cancelled while building tree: %w", ctx.Err())
 	}
 
 	if state.err != nil {
-		_ = server.Unmount()
+		cleanup()
 		return nil, fmt.Errorf("mount: build tree: %w", state.err)
 	}
-
-	handle := &linuxMountHandle{
-		server:    server,
-		mountPath: mountPath,
-		done:      make(chan struct{}),
-	}
-
-	go func() {
-		server.Wait()
-		close(handle.done)
-	}()
 
 	return handle, nil
 }

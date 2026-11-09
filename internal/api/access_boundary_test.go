@@ -560,6 +560,8 @@ func TestHomeAssistantWebSocketAccepted(t *testing.T) {
 	database := testDB(t)
 	key := setTestAPIKey(t, database)
 	srv := NewServer(database, ServerConfig{Addr: ":0"})
+	go srv.Hub().Run()
+	t.Cleanup(srv.Hub().Stop)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.RemoteAddr, r.Host = remotePeer, lanHost
 		srv.router.ServeHTTP(w, r)

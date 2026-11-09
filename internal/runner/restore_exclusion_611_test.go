@@ -104,7 +104,7 @@ func TestUntrackedRestoreRefusals(t *testing.T) {
 	r.activeMu.Lock()
 	r.draining = true
 	r.activeMu.Unlock()
-	if err := r.RestoreItem(db.RestorePoint{}, "web", "container", "", ""); !errors.Is(err, errRunnerDraining) || ran {
+	if err := r.RestoreItem(db.RestorePoint{}, "web", "container", "", ""); !errors.Is(err, ErrRunnerDraining) || ran {
 		t.Fatalf("draining: err = %v, ran = %v", err, ran)
 	}
 	// A restore that runs releases the runner and the drain count afterwards.

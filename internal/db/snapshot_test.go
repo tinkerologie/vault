@@ -876,3 +876,24 @@ func TestPathBarriersRejectSuspiciousPaths(t *testing.T) {
 		t.Errorf("removeValidated(%q): %v", snap, err)
 	}
 }
+
+func TestSnapshotCloseCoalescesQueuedFlush(t *testing.T) {
+	d := setupTestDB(t)
+	path := filepath.Join(t.TempDir(), "snapshot.db")
+	sm := NewSnapshotManager(d, path, path)
+	sm.flushDebounce = time.Hour
+	sm.ScheduleFlush()
+	if err := sm.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("final snapshot missing: %v", err)
+	}
+	sm.ScheduleFlush()
+	if sm.flushPending.Load() {
+		t.Fatal("closed snapshot manager accepted a flush")
+	}
+	if err := sm.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

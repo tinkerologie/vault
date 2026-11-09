@@ -71,6 +71,8 @@ type Manager struct {
 	mu           sync.Mutex
 	activeMounts map[int64]activeMount
 	stopSweeper  chan struct{}
+	startOnce    sync.Once
+	sweeper      sync.WaitGroup
 	stopOnce     sync.Once
 }
 
@@ -152,27 +154,50 @@ func (m *Manager) sessionMountDir(targetDir string, sessID int64) (string, error
 
 // Start launches the periodic idle sweeper and cleans up stale mounts from previous daemon runs.
 func (m *Manager) Start(ctx context.Context) {
-	m.CleanupStale(ctx)
-	m.cleanupOrphanedSessionDirs()
-	m.cleanupLegacyRoot()
-	go m.runIdleSweeper(ctx)
+	m.startOnce.Do(func() {
+		if ctx.Err() != nil {
+			return
+		}
+		m.CleanupStale(ctx)
+		m.cleanupOrphanedSessionDirs()
+		m.cleanupLegacyRoot()
+		m.sweeper.Go(func() { m.runIdleSweeper(ctx) })
+	})
 }
 
-// Stop terminates active mounts and stops background routines.
+// Stop joins the idle sweeper before unmounting active sessions.
+// The runtime has already joined any handlers that could create a mount.
 func (m *Manager) Stop(ctx context.Context) {
 	m.stopOnce.Do(func() {
 		close(m.stopSweeper)
-	})
-	m.mu.Lock()
-	ids := make([]int64, 0, len(m.activeMounts))
-	for id := range m.activeMounts {
-		ids = append(ids, id)
-	}
-	m.mu.Unlock()
+		// Join startup, or prevent it from starting if Stop won the race.
+		m.startOnce.Do(func() {})
+		m.sweeper.Wait()
 
-	for _, id := range ids {
-		_ = m.Unmount(ctx, id)
-	}
+		m.mu.Lock()
+		ids := make([]int64, 0, len(m.activeMounts))
+		for id := range m.activeMounts {
+			ids = append(ids, id)
+		}
+		m.mu.Unlock()
+
+		for _, id := range ids {
+			if err := m.Unmount(ctx, id); err != nil {
+				log.Printf("WARN mount: %v", err)
+				m.mu.Lock()
+				entry := m.activeMounts[id]
+				m.mu.Unlock()
+				if handle, ok := entry.handle.(interface{ finishUnmount(error) error }); ok {
+					if handle.finishUnmount(err) == nil {
+						_ = m.Unmount(ctx, id)
+					} else {
+						// Retain the session for stale cleanup on restart.
+						closeAdapter(entry.adapter)
+					}
+				}
+			}
+		}
+	})
 }
 
 // CleanupStale cleans up orphaned mounts from crashes or restarts.

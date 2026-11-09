@@ -151,13 +151,28 @@ func (r *Runner) adaptivePostpone(jobID int64, jobName, reason string) bool {
 	})
 
 	if needTimer {
-		time.AfterFunc(recheck, func() {
+		r.backgroundWork.Go(func() {
 			defer guardPanic("adaptive re-check")
+			timer := time.NewTimer(recheck)
+			defer timer.Stop()
+			select {
+			case <-r.drainStarted:
+				return
+			case <-timer.C:
+			}
+			if !r.tryMarkStart() {
+				return
+			}
+			defer r.markFinish()
 			r.postponeMu.Lock()
-			if st := r.postponedSince[jobID]; st != nil {
+			current := r.postponedSince[jobID] == st
+			if current {
 				st.recheckPending = false
 			}
 			r.postponeMu.Unlock()
+			if !current {
+				return
+			}
 			// The job may have been disabled or had adaptive turned off
 			// while postponed — never resurrect a run the operator stopped.
 			job, err := r.db.GetJob(jobID)

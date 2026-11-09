@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -19,8 +20,8 @@ import (
 	"github.com/tinkerologie/vault/internal/dedup"
 )
 
-// fakeFuseServer stands in for a kernel FUSE session (#458). Wait blocks
-// until Unmount is called, like the real server's serve loop.
+// fakeFuseServer stands in for a kernel FUSE session (#458). Its serve
+// loop finishes when Unmount is called.
 type fakeFuseServer struct {
 	unmountErr   error
 	waitMountErr error
@@ -37,8 +38,8 @@ func (s *fakeFuseServer) Unmount() error {
 	return s.unmountErr
 }
 
-func (s *fakeFuseServer) WaitMount() error { return s.waitMountErr }
-func (s *fakeFuseServer) Wait()            { <-s.stop }
+func (s *fakeFuseServer) WaitMount() error      { return s.waitMountErr }
+func (s *fakeFuseServer) Done() <-chan struct{} { return s.stop }
 
 // fakeMounter records fuseMount calls. When build is true it initialises the
 // node tree in memory (fs.NewNodeFS runs the OnAdd hook, exactly as a real
@@ -520,4 +521,17 @@ func TestLinuxMountHandleUnmountFallback458(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLinuxMountShutdownRetriesBusyDetach(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv := newFakeFuseServer()
+		handle := &linuxMountHandle{server: srv, done: srv.Done()}
+		if err := handle.finishUnmount(errors.New("mount busy")); err != nil {
+			t.Fatal(err)
+		}
+		if srv.unmounts.Load() != 1 {
+			t.Fatalf("detach retries = %d, want 1", srv.unmounts.Load())
+		}
+	})
 }

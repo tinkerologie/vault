@@ -98,12 +98,17 @@ func dnssdRegister(reg registration) (shutdowner, error) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		if err := rp.Respond(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("discovery: mDNS responder stopped: %v", err)
 		}
 	}()
-	return shutdownFunc(cancel), nil
+	return shutdownFunc(func() {
+		cancel()
+		<-done
+	}), nil
 }
 
 // listInterfaces enumerates host interfaces for address selection. It is a
@@ -155,29 +160,29 @@ func New(addr, version string, tlsEnabled bool) *Service {
 // Start begins mDNS advertisement if the daemon is reachable off-host. When
 // bound to loopback (or lacking a port) it logs the reason and returns without
 // registering. The registration is shut down when ctx is cancelled, so callers
-// need no explicit cleanup — pass the same signal context used by the daemon.
+// can wait for shutdown using the returned function.
 //
 // The service is published under Vault's own host name (vault-<host>.local)
 // rather than the OS host name, so it never contends with avahi-daemon for
 // the host's A/AAAA records (#468). The instance name and TXT records are
 // unchanged, keeping existing Home Assistant discoveries stable.
-func (s *Service) Start(ctx context.Context) {
+func (s *Service) Start(ctx context.Context) func() {
 	if !s.advertise {
 		log.Printf("discovery: mDNS advertisement disabled for bind address %q (loopback or no port) — Vault is local-only", s.addr)
-		return
+		return func() {}
 	}
 	if ctx.Err() != nil {
-		return
+		return func() {}
 	}
 
 	adv, ok, err := advertisedAddrs(ctx, s.bindHost, listInterfaces, resolveHost)
 	if err != nil {
 		log.Printf("discovery: mDNS advertisement skipped: %v", err)
-		return
+		return func() {}
 	}
 	if !ok {
 		log.Printf("discovery: mDNS advertisement skipped: no advertisable address for bind address %q", s.addr)
-		return
+		return func() {}
 	}
 
 	server, err := registrar(registration{
@@ -195,17 +200,20 @@ func (s *Service) Start(ctx context.Context) {
 		// A failure here (e.g. no multicast-capable interface) must not be
 		// fatal — discovery is a convenience, not a requirement for backups.
 		log.Printf("discovery: failed to register mDNS service: %v", err)
-		return
+		return func() {}
 	}
 
 	log.Printf("discovery: zeroconf advertisement enabled (%s %s on %s.local port %d, %s)",
 		s.instance, serviceType, s.hostLabel, s.port, adv)
 
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		<-ctx.Done()
 		server.Shutdown()
 		log.Printf("discovery: zeroconf advertisement stopped")
 	}()
+	return func() { <-done }
 }
 
 // String describes the advertisement for logs.

@@ -2,10 +2,12 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -105,4 +107,31 @@ func TestDrainIsIdempotent(t *testing.T) {
 	if err := r.Drain(context.Background()); err != nil {
 		t.Errorf("second drain: %v", err)
 	}
+}
+
+func TestDrainWaitsForAcceptedDispatch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newDrainRunner()
+		release := make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(release) })
+		defer unblock()
+		if err := r.startAsync(func() { <-release }); err != nil {
+			t.Fatal(err)
+		}
+		drained := make(chan error, 1)
+		go func() { drained <- r.Drain(t.Context()) }()
+		synctest.Wait()
+		select {
+		case err := <-drained:
+			t.Fatalf("drain returned before the accepted dispatch finished: %v", err)
+		default:
+		}
+		if err := r.startAsync(func() {}); !errors.Is(err, ErrRunnerDraining) {
+			t.Errorf("dispatch returned %v, want shutdown rejection", err)
+		}
+		unblock()
+		if err := <-drained; err != nil {
+			t.Fatal(err)
+		}
+	})
 }

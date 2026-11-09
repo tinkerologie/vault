@@ -1094,6 +1094,10 @@ func (h *JobHandler) VerifyRestorePoint(w http.ResponseWriter, r *http.Request) 
 	}
 
 	id, err := h.runner.RunVerify(rp, mode)
+	if errors.Is(err, runner.ErrRunnerDraining) {
+		respondError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	if err != nil {
 		respondInternalError(w, err)
 		return
@@ -1260,7 +1264,10 @@ func (h *JobHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 
 	// Run the backup asynchronously. Manual "run now" invocations bypass
 	// automatic retry scheduling — the user can re-press the button.
-	go h.runner.RunJobManual(id)
+	if err := h.runner.StartJobManual(id); err != nil {
+		respondError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 
 	respondJSON(w, http.StatusAccepted, map[string]any{
 		"message": "backup started",
@@ -1546,7 +1553,10 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	go h.runner.RunRestore(*found, runnerTargets, req.Destination, req.Passphrase)
+	if err := h.runner.StartRestore(*found, runnerTargets, req.Destination, req.Passphrase); err != nil {
+		respondError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 
 	respondJSON(w, http.StatusAccepted, map[string]any{
 		"message":          "restore started",

@@ -88,26 +88,10 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 		log.Printf("runner: health check FAILED for %q (id=%d): adapter construction: %s", dest.Name, dest.ID, msg)
 		return "failed", msg
 	}
-	defer storage.CloseAdapter(adapter)
-
-	// Run TestConnection in a goroutine + timeout so a hung adapter
-	// can't stall the whole sweep.
-	resultCh := make(chan error, 1)
-	go func() { resultCh <- adapter.TestConnection() }()
-
-	select {
-	case checkErr := <-resultCh:
-		if checkErr != nil {
-			msg := redactStorageError(checkErr.Error())
-			_ = r.db.UpdateStorageDestinationHealth(dest.ID, "failed", msg)
-			r.recordBreakerOutcome(dest.ID, false)
-			r.broadcastStorageHealth(dest.ID, "failed", msg)
-			lv, ms, dt := healthCheckActivity(dest, "failed", msg, time.Since(started))
-			r.logActivity(lv, "health", ms, dt)
-			log.Printf("runner: health check FAILED for %q (id=%d): %s", dest.Name, dest.ID, msg)
-			return "failed", msg
-		}
-	case <-time.After(healthCheckTimeout):
+	// Bound the health check response while retaining ownership of any
+	// probe that is still running when the deadline expires.
+	checkErr, returned := probeConnection(context.Background(), adapter, healthCheckTimeout, r.backgroundWork.Go)
+	if !returned {
 		msg := "health check timed out after " + healthCheckTimeout.String()
 		_ = r.db.UpdateStorageDestinationHealth(dest.ID, "failed", msg)
 		r.recordBreakerOutcome(dest.ID, false)
@@ -115,6 +99,17 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 		lv, ms, dt := healthCheckActivity(dest, "failed", msg, time.Since(started))
 		r.logActivity(lv, "health", ms, dt)
 		log.Printf("runner: health check TIMEOUT for %q (id=%d)", dest.Name, dest.ID)
+		return "failed", msg
+	}
+	defer storage.CloseAdapter(adapter)
+	if checkErr != nil {
+		msg := redactStorageError(checkErr.Error())
+		_ = r.db.UpdateStorageDestinationHealth(dest.ID, "failed", msg)
+		r.recordBreakerOutcome(dest.ID, false)
+		r.broadcastStorageHealth(dest.ID, "failed", msg)
+		lv, ms, dt := healthCheckActivity(dest, "failed", msg, time.Since(started))
+		r.logActivity(lv, "health", ms, dt)
+		log.Printf("runner: health check FAILED for %q (id=%d): %s", dest.Name, dest.ID, msg)
 		return "failed", msg
 	}
 

@@ -628,3 +628,37 @@ func TestJobRestorePointContents458_EncryptedSidecars(t *testing.T) {
 		wantStatus458(t, w, http.StatusInternalServerError)
 	})
 }
+
+func TestJobDispatchRejectsRequestsWhileDraining(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+	seedJobItem(t, d, jobID, "folder", "src")
+	rpID := seedRP458(t, d, jobID, "full", "rp", "{}")
+	if err := h.runner.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"restore_point_id": rpID,
+		"items":            []string{"src"},
+		"destination":      t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		body []byte
+		run  http.HandlerFunc
+	}{
+		{"backup", nil, h.RunNow},
+		{"verification", []byte(`{"mode":"quick"}`), h.VerifyRestorePoint},
+		{"restore", body, h.Restore},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := withURLParams(newReq(http.MethodPost, "/x", tc.body), "id", idStr(jobID), "rpid", idStr(rpID))
+			tc.run(w, req)
+			wantStatus458(t, w, http.StatusServiceUnavailable)
+		})
+	}
+}

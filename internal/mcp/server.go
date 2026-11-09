@@ -85,6 +85,30 @@ func (s *MCPServer) HTTPHandler() http.Handler {
 	)
 }
 
+// SetShutdownContext stops subscriptions whose RPC contexts outlive their
+// HTTP requests. The runtime calls this before it starts serving.
+func (s *MCPServer) SetShutdownContext(stop context.Context) {
+	s.server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == "subscriptions/listen" {
+				listenCtx, cancel := context.WithCancel(ctx)
+				stopCancel := context.AfterFunc(stop, cancel)
+				defer stopCancel()
+				defer cancel()
+				ctx = listenCtx
+			}
+			return next(ctx, method, req)
+		}
+	})
+}
+
+// Close closes and joins sessions after the HTTP transport has stopped.
+func (s *MCPServer) Close() {
+	for session := range s.server.Sessions() {
+		_ = session.Close()
+	}
+}
+
 // registerTools adds all Vault management tools to the MCP server.
 func (s *MCPServer) registerTools() {
 	// Job tools
@@ -186,7 +210,9 @@ func (s *MCPServer) addRunJobTool() {
 			return nil, nil, fmt.Errorf("job %d not found: %w", input.ID, err)
 		}
 		// Manual "run now" invocations bypass automatic retry scheduling.
-		go s.runner.RunJobManual(input.ID)
+		if err := s.runner.StartJobManual(input.ID); err != nil {
+			return nil, nil, err
+		}
 		r, _ := textResult(map[string]any{"message": "backup started", "job_id": input.ID})
 		return r, nil, nil
 	})

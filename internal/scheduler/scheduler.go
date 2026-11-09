@@ -160,8 +160,9 @@ func (s *Scheduler) Start() error {
 	return nil
 }
 
+// Stop stops scheduling and waits for active callbacks to finish.
 func (s *Scheduler) Stop() {
-	s.cron.Stop()
+	<-s.cron.Stop().Done()
 }
 
 func (s *Scheduler) Reload() error {
@@ -406,15 +407,13 @@ func (s *Scheduler) fireDueRetries() {
 		log.Printf("retry watcher: %v", err)
 		return
 	}
+	var dispatched sync.WaitGroup
 	for _, c := range claimed {
 		log.Printf("retry watcher: dispatching job %d retry attempt %d (orig run %d)",
 			c.JobID, c.AttemptSoFar+1, c.OriginalRunID)
-		// Goroutine so a slow runner.RunJobRetry doesn't block the cron
-		// loop for other retries. RunJobRetry itself is serialised by
-		// the runner's internal mutex.
-		c := c // capture
-		go s.retryDispatcher(c.JobID, c.OriginalRunID, c.AttemptSoFar+1)
+		dispatched.Go(func() { s.retryDispatcher(c.JobID, c.OriginalRunID, c.AttemptSoFar+1) })
 	}
+	dispatched.Wait()
 }
 
 func (s *Scheduler) NextRun(jobID int64) (string, bool) {

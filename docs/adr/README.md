@@ -17,3 +17,5 @@ See the [glossary](../../GLOSSARY.md), [implementation context](../../CONTEXT.md
 - [0006: Serialize conflicting runtime and offline maintenance work](0006-runtime-and-maintenance-exclusion.md)
 
 - [0007: Commit a Job and its items together](0007-atomic-job-aggregate-mutation.md)
+
+- [0008: Give daemon workers one shutdown owner](0008-daemon-runtime-shutdown.md)

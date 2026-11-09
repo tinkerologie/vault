@@ -154,7 +154,7 @@ func TestCleanupJobStorageAsyncDedupSharedRepoRunsGCB458(t *testing.T) {
 }
 
 func TestCleanupRestorePointStorageAsyncB458(t *testing.T) {
-	r, d, storageDir := setupTestRunner(t)
+	_, d, storageDir := setupTestRunner(t)
 	dest := createLocalDest(t, d, storageDir)
 	jobID, err := d.CreateJob(db.Job{Name: "rp-job", StorageDestID: dest.ID, BackupTypeChain: "full"})
 	if err != nil {
@@ -162,6 +162,7 @@ func TestCleanupRestorePointStorageAsyncB458(t *testing.T) {
 	}
 
 	t.Run("success uses job name", func(t *testing.T) {
+		r := New(d, nil, nil)
 		b458WriteFile(t, filepath.Join(storageDir, "rp-job", "run1", "data.tar"), "x")
 		b458RunAsync(t, func() {
 			r.CleanupRestorePointStorageAsync(jobID, 11, dest, "rp-job/run1")
@@ -172,6 +173,7 @@ func TestCleanupRestorePointStorageAsyncB458(t *testing.T) {
 	})
 
 	t.Run("empty path unknown job", func(t *testing.T) {
+		r := New(d, nil, nil)
 		b458RunAsync(t, func() {
 			r.CleanupRestorePointStorageAsync(99999, 12, dest, "")
 		})
@@ -181,6 +183,7 @@ func TestCleanupRestorePointStorageAsyncB458(t *testing.T) {
 	})
 
 	t.Run("adapter error", func(t *testing.T) {
+		r := New(d, nil, nil)
 		bad := db.StorageDestination{Type: "bogus-type", Config: "{}"}
 		b458RunAsync(t, func() {
 			r.CleanupRestorePointStorageAsync(jobID, 13, bad, "rp-job/run2")
@@ -191,6 +194,7 @@ func TestCleanupRestorePointStorageAsyncB458(t *testing.T) {
 	})
 
 	t.Run("delete failure", func(t *testing.T) {
+		r := New(d, nil, nil)
 		b458RunAsync(t, func() {
 			r.CleanupRestorePointStorageAsync(jobID, 14, dest, "../escape")
 		})

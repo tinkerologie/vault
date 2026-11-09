@@ -23,7 +23,6 @@ import (
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/diagnostics"
-	"github.com/tinkerologie/vault/internal/discovery"
 	"github.com/tinkerologie/vault/internal/docsmeta"
 	"github.com/tinkerologie/vault/internal/engine"
 	"github.com/tinkerologie/vault/internal/logbuf"
@@ -589,11 +588,9 @@ var daemonCmd = &cobra.Command{
 		syncer.SetServerKey(cfg.ServerKey)
 		srv.SetReplicationSyncer(syncer)
 		sched.SetReplicationRunner(func(sourceID int64) {
-			go func() {
-				if _, err := syncer.SyncSource(sourceID, nil); err != nil {
-					log.Printf("Replication sync failed for source %d: %v", sourceID, err)
-				}
-			}()
+			if _, err := syncer.SyncSource(sourceID, nil); err != nil {
+				log.Printf("Replication sync failed for source %d: %v", sourceID, err)
+			}
 		})
 
 		// Daily storage destination health check (Feature F).
@@ -618,11 +615,6 @@ var daemonCmd = &cobra.Command{
 			srv.Runner().RunJobRetry(jobID, originalRunID, attempt)
 		})
 
-		if err := sched.Start(); err != nil {
-			log.Printf("Warning: scheduler failed to start: %v", err)
-		}
-		defer sched.Stop()
-
 		srv.SetScheduleReloader(sched.Reload)
 		srv.SetNextRunResolver(sched.NextRun)
 		// Diagnostics next-run reporter shares the scheduler resolver
@@ -636,7 +628,6 @@ var daemonCmd = &cobra.Command{
 		// evaluator and registers the four built-in detectors.
 		anomalyEvaluator := buildAnomalyEvaluator(database, srv)
 		if anomalyEvaluator != nil {
-			anomalyEvaluator.Start()
 			srv.Runner().SetEvaluator(anomalyEvaluator)
 			srv.SetAnomalyEvaluator(anomalyEvaluator)
 		}
@@ -654,78 +645,18 @@ var daemonCmd = &cobra.Command{
 		ctx, stop := shutdownNotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
-		stopHeartbeat := daemonStartHeartbeat(ctx, filepath.Join(hbDir, "heartbeat"), version)
-		defer stopHeartbeat()
-
-		// Adaptive upload throttle controller (issue #237). Idles until the
-		// auto_throttle_enabled setting is turned on; settings are re-read
-		// every tick so no restart is needed.
-		go srv.Runner().RunAutoThrottleLoop(ctx)
-
-		// Periodic USB safety-net refresh. Belt-and-braces for the
-		// case where event-driven flushes (configChangeHook on every
-		// mutation, post-backup snapshot, SIGTERM pre-drain) all
-		// happen to be quiet for a long stretch — e.g. a system that
-		// has been idle for hours then loses power unexpectedly. The
-		// ticker fires every 30 min; the underlying USB write is
-		// gated by the existing 1 h usbMinInterval throttle, so wear
-		// is bounded to one write per hour regardless. The
-		// pool-snapshot half always runs (zero flash cost). Hybrid
-		// mode only; in USB-direct mode the working DB IS the USB
-		// file so a "USB backup" would be a no-op self-copy
-		// (issue #108).
-		if hybridMode && snapshotMgr != nil {
-			go func() {
-				ticker := time.NewTicker(30 * time.Minute)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-ticker.C:
-						if err := snapshotMgr.SaveSnapshotAndUSBBackup(); err != nil {
-							log.Printf("Warning: periodic snapshot save failed: %v", err)
-						}
-					}
-				}
-			}()
+		workers := daemonWorkers{
+			scheduler:     sched,
+			throttle:      srv.Runner().RunAutoThrottleLoop,
+			snapshots:     snapshotMgr,
+			evaluator:     anomalyEvaluator,
+			heartbeatPath: filepath.Join(hbDir, "heartbeat"),
+			discovery:     mdns,
+			addr:          addr,
+			tls:           tlsCert != "",
 		}
-
-		// Anomaly trend ticker: runs EvaluateTrendDetectors every 5 minutes
-		// and prunes old terminal anomalies on each tick. Cancelled by ctx
-		// (the same signal context used for all other goroutines).
-		if anomalyEvaluator != nil {
-			go runAnomalyTrendTicker(ctx, anomalyEvaluator)
-		}
-
-		// Zeroconf/mDNS discovery (#137). Advertises the daemon on the LAN so
-		// integrations (e.g. the Home Assistant Vault integration) can
-		// auto-discover it. Automatically no-ops when bound to loopback — the
-		// local-only default — so a 127.0.0.1 bind is never advertised, and
-		// can be turned off with --mdns=false (#468). Shuts down with ctx; no
-		// explicit cleanup required.
-		startDiscovery(ctx, mdns, addr, tlsCert != "" && tlsKey != "")
-
-		err = srv.StartWithContext(ctx)
+		err = workers.run(ctx, srv)
 		if errors.Is(err, http.ErrServerClosed) {
-			// Drain the anomaly evaluator so any in-flight per-run evaluations
-			// complete before we exit. Uses a 5-second timeout; on timeout we
-			// log a warning and continue with shutdown — the runner has already
-			// drained at this point so no new work can arrive.
-			if anomalyEvaluator != nil {
-				drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				if drainErr := anomalyEvaluator.Drain(drainCtx); drainErr != nil {
-					log.Printf("WARN anomaly: drain incomplete at shutdown: %v", drainErr)
-				}
-				drainCancel()
-			}
-
-			// Flush the working DB to the persistent snapshot before exiting.
-			if hybridMode && snapshotMgr != nil {
-				if snapErr := snapshotMgr.Close(); snapErr != nil {
-					log.Printf("Warning: final snapshot save failed: %v", snapErr)
-				}
-			}
 			log.Println("Vault daemon stopped gracefully")
 			return nil
 		}
@@ -746,17 +677,6 @@ func init() {
 
 // mdnsFlagUsage is shared by the daemon and replica --mdns flags.
 const mdnsFlagUsage = "Advertise the API over mDNS (_vault._tcp) for LAN discovery; requires a non-loopback --addr"
-
-// startDiscovery starts mDNS advertisement unless it was disabled with
-// --mdns=false. Both daemon and replica start discovery through this helper so
-// the opt-out behaves identically.
-func startDiscovery(ctx context.Context, enabled bool, addr string, tlsEnabled bool) {
-	if !enabled {
-		log.Println("discovery: mDNS advertisement disabled by configuration (--mdns=false)")
-		return
-	}
-	discovery.New(addr, version, tlsEnabled).Start(ctx)
-}
 
 // detectBootKind classifies the /boot mount on Unraid as "flash"
 // (traditional USB FAT32) or "internal" (Unraid 7.3+ internal-boot
