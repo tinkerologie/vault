@@ -3,17 +3,20 @@ package ws
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 )
 
 type Client struct {
-	hub  *Hub
-	conn *websocket.Conn
-	send chan []byte
+	hub    *Hub
+	conn   *websocket.Conn
+	socket net.Conn
+	send   chan []byte
 
 	// closeOnce ensures exactly one of the close paths wins: the hub evicting
 	// a slow client, or either pump unwinding. Without it the eviction's
@@ -28,6 +31,11 @@ type Client struct {
 // close frame must not block the hub loop.
 func (c *Client) closeSlow() {
 	c.closeOnce.Do(func() {
+		if c.socket != nil {
+			// Bound the whole handshake, including partial data frames
+			// discarded after the peer receives our close frame.
+			_ = c.socket.SetDeadline(time.Now().Add(5 * time.Second))
+		}
 		if c.conn != nil {
 			_ = c.conn.Close(websocket.StatusPolicyViolation, "connection too slow to keep up with messages")
 		}
@@ -180,6 +188,13 @@ func (h *Hub) SetAllowedOrigins(origins []string) {
 
 var originGlobEscaper = strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`, `*`, `\*`, `?`, `\?`)
 
+type socketContextKey struct{}
+
+// WithSocket attaches the HTTP connection for deadlines after a WS upgrade.
+func WithSocket(ctx context.Context, socket net.Conn) context.Context {
+	return context.WithValue(ctx, socketContextKey{}, socket)
+}
+
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	// Count the upgrade itself before handing its socket to net/http's
 	// hijack path. Stop prevents new additions under the same lock.
@@ -202,7 +217,8 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		h.sessions.Done()
 		return
 	}
-	client := &Client{hub: h, conn: conn, send: make(chan []byte, 256)}
+	socket, _ := r.Context().Value(socketContextKey{}).(net.Conn)
+	client := &Client{hub: h, conn: conn, socket: socket, send: make(chan []byte, 256)}
 	if !h.Register(client) {
 		client.closeNow()
 		h.sessions.Done()

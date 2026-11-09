@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tinkerologie/vault/internal/api/handlers"
+	"github.com/tinkerologie/vault/internal/ws"
 )
 
 func (s *Server) StartWithContext(ctx context.Context) error {
@@ -32,6 +33,7 @@ func (s *Server) Run(ctx context.Context, startWorkers func(context.Context) Wor
 	srv := &http.Server{
 		Addr:              s.config.Addr,
 		Handler:           s.router,
+		ConnContext:       ws.WithSocket,
 		ReadTimeout:       15 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 		// Single source of truth: outbound connectivity probes derive their
