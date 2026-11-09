@@ -59,10 +59,8 @@
     ['all', 'All'], ['completed', 'Completed'], ['failed', 'Failed'], ['running', 'Running'],
     ['skipped', 'Skipped'], ['cancelled', 'Cancelled'], ['partial', 'Partial'],
   ]
-  const initialParams = new URLSearchParams(getRawHash().split('?')[1])
-  const initialStatus = initialParams.get('status')
-  let selectedStatus = $state(statusFilters.some(([status]) => status === initialStatus) ? initialStatus : 'all')
-  let needsReview = $state(initialParams.get('review') === 'outstanding')
+  let selectedStatus = $state('all')
+  let needsReview = $state(false)
   let reviewFilter = $state()
   let selectedRunIds = new SvelteSet()
   let acknowledgeReason = $state('')
@@ -163,7 +161,18 @@
     } catch { /* keep whatever is already loaded */ }
   }
 
+  function applyReviewFilters() {
+    const [path, query] = getRawHash().split('?', 2)
+    if (path !== '/history') return
+    const params = new URLSearchParams(query)
+    const status = params.get('status')
+    selectedStatus = statusFilters.some(([value]) => value === status) ? status : 'all'
+    needsReview = params.get('review') === 'outstanding'
+  }
+
   onMount(() => {
+    applyReviewFilters()
+    window.addEventListener('hashchange', applyReviewFilters)
     api.getRunnerStatus().then(s => restoreFromStatus(s)).catch(() => {})
     loadData()
     loadTrend()
@@ -174,7 +183,10 @@
         loadData(true)
       }
     })
-    return unsub
+    return () => {
+      window.removeEventListener('hashchange', applyReviewFilters)
+      unsub()
+    }
   })
 
   let dataRequestGeneration = 0

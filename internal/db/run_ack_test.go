@@ -112,3 +112,38 @@ func TestLegacyRunAcknowledgementMigration(t *testing.T) {
 		}
 	}
 }
+
+func TestRunAcknowledgementRollsBackIfTheUpdateFails(t *testing.T) {
+	d := setupTestDB(t)
+	jobID, err := d.CreateJob(Job{Name: "VMs", BackupTypeChain: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := d.CreateJobRun(JobRun{JobID: jobID, Status: "cancelled", BackupType: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := d.CreateJobRun(JobRun{JobID: jobID, Status: "failed", BackupType: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// FAIL leaves earlier changes in the statement intact unless the transaction
+	// rolls back. The first updated row activates the trigger for the next row.
+	if _, err := d.Exec(`CREATE TRIGGER fail_second_run_ack BEFORE UPDATE OF acknowledged_at ON job_runs
+		WHEN EXISTS (SELECT 1 FROM job_runs WHERE acknowledged_at IS NOT NULL)
+		BEGIN SELECT RAISE(FAIL, 'injected acknowledgement failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if acknowledged, skipped, err := d.AcknowledgeJobRuns(t.Context(), []int64{first, second}, "api", ""); err == nil || acknowledged != 0 || skipped != 0 {
+		t.Fatalf("expected failed request, got %d acknowledged, %d skipped, error %v", acknowledged, skipped, err)
+	}
+	runs, err := d.GetJobRuns(jobID, 10)
+	if err != nil || len(runs) != 2 {
+		t.Fatalf("history: %v, error %v", runs, err)
+	}
+	for _, run := range runs {
+		if run.AcknowledgedAt != nil {
+			t.Errorf("failed batch left run %d acknowledged", run.ID)
+		}
+	}
+}
