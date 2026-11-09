@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
-- Job create and update responses return the stored records, including timestamps, source ID, and anomaly sensitivity.
+- Job create and update responses return the stored records, including timestamps and source ID. Creating a Job also saves the requested anomaly sensitivity.
 - Revise the user guides and reference prose for ASD-STE100 Issue 9.
 
 ## [v2026.11.00] - 2026-11-07

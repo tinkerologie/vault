@@ -32,16 +32,16 @@ func insertJob(ctx context.Context, q jobSQL, job Job) (int64, error) {
 		post_script, notify_on, verify_backup, storage_dest_id, defer_remote_upload,
 		keep_latest, keep_daily, keep_weekly, keep_monthly, keep_yearly,
 		verify_schedule, verify_mode, full_backup_schedule,
-		retry_max_override, retry_delays_override,
+		retry_max_override, retry_delays_override, anomaly_sensitivity,
 		max_parallel_uploads, adaptive_enabled, auto_include_containers)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.Name, job.Description, job.Enabled, job.Schedule, job.BackupTypeChain,
 		job.RetentionCount, job.RetentionDays, job.Compression, job.CompressionLevel, job.Encryption, job.ContainerMode,
 		job.VMMode, job.PreScript, job.PostScript, job.NotifyOn, job.VerifyBackup, nullableID(job.StorageDestID),
 		job.DeferRemoteUpload,
 		job.KeepLatest, job.KeepDaily, job.KeepWeekly, job.KeepMonthly, job.KeepYearly,
 		job.VerifySchedule, job.VerifyMode, job.FullBackupSchedule,
-		job.RetryMaxOverride, job.RetryDelaysOverride,
+		job.RetryMaxOverride, job.RetryDelaysOverride, job.AnomalySensitivity,
 		job.MaxParallelUploads, job.AdaptiveEnabled, job.AutoIncludeContainers,
 	)
 	if err != nil {

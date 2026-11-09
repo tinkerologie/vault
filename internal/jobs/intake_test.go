@@ -460,7 +460,7 @@ func TestMutationReturnsStoredRecordsAndRunsEffectsAfterCommit(t *testing.T) {
 	i, d, _ := newIntake(t)
 	created := validJob()
 	created.SourceID = 123 // Job Intake persists source ownership only through replication.
-	created.AnomalySensitivity = "high"
+	created.AnomalySensitivity = "strict"
 	var order []string
 	var readErr error
 	var gotName string
@@ -499,6 +499,9 @@ func TestMutationReturnsStoredRecordsAndRunsEffectsAfterCommit(t *testing.T) {
 	}
 	if saved.CreatedAt.IsZero() || saved.UpdatedAt.IsZero() || saved.SourceID != 0 {
 		t.Fatalf("create did not return persisted values: %+v", saved)
+	}
+	if saved.AnomalySensitivity != created.AnomalySensitivity {
+		t.Fatalf("created Job sensitivity = %q, want %q", saved.AnomalySensitivity, created.AnomalySensitivity)
 	}
 	assertCommitted(saved, items, 1)
 
