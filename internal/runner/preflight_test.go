@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/tinkerologie/vault/internal/storage"
@@ -35,6 +36,11 @@ func (s *stubAdapter) WriteFrom(string, func() (io.ReadCloser, error)) error { r
 // Compile-time: stub satisfies the interface.
 var _ storage.Adapter = (*stubAdapter)(nil)
 
+func preflightAdapter(ctx context.Context, adapter storage.Adapter, timeout time.Duration) error {
+	result := launchStorageProbe(adapter, func(check func()) { go check() })
+	return preflightResult(ctx, result, timeout)
+}
+
 func TestPreflightSuccess(t *testing.T) {
 	if err := preflightAdapter(context.Background(), &stubAdapter{}, 1*time.Second); err != nil {
 		t.Errorf("expected nil, got %v", err)
@@ -55,4 +61,55 @@ func TestPreflightTimeout(t *testing.T) {
 	if !errors.Is(err, ErrPreflightTimeout) {
 		t.Errorf("expected ErrPreflightTimeout, got %v", err)
 	}
+}
+
+type blockedStorageProbe struct {
+	stubAdapter
+	started chan struct{}
+	release chan struct{}
+	closed  chan struct{}
+}
+
+func (p *blockedStorageProbe) TestConnection() error {
+	close(p.started)
+	<-p.release
+	return nil
+}
+
+func (p *blockedStorageProbe) Close() error {
+	close(p.closed)
+	return nil
+}
+
+func TestTimedOutStorageProbeRetainsOwnership(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		probe := &blockedStorageProbe{started: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{})}
+		r := &Runner{}
+		result := launchStorageProbe(probe, r.backgroundWork.Go)
+		<-probe.started
+		if err := preflightResult(t.Context(), result, time.Second); !errors.Is(err, ErrPreflightTimeout) {
+			t.Errorf("probe error = %v, want timeout", err)
+		}
+
+		stopped := make(chan struct{})
+		go func() {
+			r.WaitForBackgroundWork()
+			close(stopped)
+		}()
+		synctest.Wait()
+		select {
+		case <-probe.closed:
+			t.Error("adapter closed while the timed-out probe was active")
+		case <-stopped:
+			t.Error("runner stopped while the timed-out probe was active")
+		default:
+		}
+		close(probe.release)
+		<-stopped
+		select {
+		case <-probe.closed:
+		default:
+			t.Fatal("runner returned without closing the adapter")
+		}
+	})
 }

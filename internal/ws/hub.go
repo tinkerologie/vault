@@ -45,67 +45,92 @@ func (c *Client) closeNow() {
 }
 
 type Hub struct {
-	clients    map[*Client]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
-	mu         sync.RWMutex
+	mu        sync.RWMutex
+	clients   map[*Client]bool
+	broadcast chan []byte
+	stopping  chan struct{}
+	runOnce   sync.Once
+	stopOnce  sync.Once
+	sessions  sync.WaitGroup
+	evictions sync.WaitGroup
 
 	originPatterns []string
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte, 256),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		clients:   make(map[*Client]bool),
+		broadcast: make(chan []byte, 256),
+		stopping:  make(chan struct{}),
 	}
 }
 
 func (h *Hub) Run() {
-	for {
+	h.runOnce.Do(func() {
+		for {
+			select {
+			case <-h.stopping:
+				return
+			case msg := <-h.broadcast:
+				h.fanOut(msg)
+			}
+		}
+	})
+}
+
+func (h *Hub) fanOut(msg []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for client := range h.clients {
 		select {
-		case client := <-h.register:
-			h.mu.Lock()
-			h.clients[client] = true
-			h.mu.Unlock()
-		case client := <-h.unregister:
-			h.mu.Lock()
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
+		case client.send <- msg:
+		default:
+			delete(h.clients, client)
+			// Let the client see why it must reconnect and resync.
+			h.evictions.Go(func() {
+				client.closeSlow()
 				close(client.send)
-			}
-			h.mu.Unlock()
-		case msg := <-h.broadcast:
-			// Take the write lock — the broadcast branch may
-			// delete from h.clients (when a client's send buffer
-			// is full and we drop them). RLock would race with
-			// the map mutation under -race.
-			h.mu.Lock()
-			for client := range h.clients {
-				select {
-				case client.send <- msg:
-				default:
-					close(client.send)
-					delete(h.clients, client)
-					// Tell the client why it was dropped. It reconnects and
-					// resyncs from /runner/status, so the message discarded
-					// here — possibly a terminal event — is recovered.
-					go client.closeSlow()
-				}
-			}
-			h.mu.Unlock()
+			})
 		}
 	}
 }
 
-func (h *Hub) Register(c *Client) {
-	h.register <- c
+// Stop closes admissions and connections, then joins fan-out and all pumps.
+func (h *Hub) Stop() {
+	h.stopOnce.Do(func() {
+		h.mu.Lock()
+		close(h.stopping)
+		clients := h.clients
+		h.clients = nil
+		h.mu.Unlock()
+		for client := range clients {
+			close(client.send)
+			client.closeNow()
+		}
+		// Join Run, or prevent a future Run if Stop won the race.
+		h.runOnce.Do(func() {})
+		h.sessions.Wait()
+		h.evictions.Wait()
+	})
+}
+
+func (h *Hub) Register(c *Client) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.clients == nil {
+		return false
+	}
+	h.clients[c] = true
+	return true
 }
 
 func (h *Hub) Unregister(c *Client) {
-	h.unregister <- c
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.clients[c] {
+		delete(h.clients, c)
+		close(c.send)
+	}
 }
 
 // Broadcast queues msg for fan-out to every connected client, waiting for
@@ -113,7 +138,15 @@ func (h *Hub) Unregister(c *Client) {
 // by waiting — run completion, item failures, queue changes — since dropping
 // one can leave the interface showing a job as running forever.
 func (h *Hub) Broadcast(msg []byte) {
-	h.broadcast <- msg
+	select {
+	case <-h.stopping:
+		return
+	default:
+	}
+	select {
+	case <-h.stopping:
+	case h.broadcast <- msg:
+	}
 }
 
 // BroadcastLossy queues msg only if there is room, discarding it otherwise.
@@ -124,6 +157,11 @@ func (h *Hub) Broadcast(msg []byte) {
 // (issue #256). This mirrors the per-client fan-out in Run, which already
 // drops clients that cannot keep up.
 func (h *Hub) BroadcastLossy(msg []byte) {
+	select {
+	case <-h.stopping:
+		return
+	default:
+	}
 	select {
 	case h.broadcast <- msg:
 	default:
@@ -143,6 +181,16 @@ func (h *Hub) SetAllowedOrigins(origins []string) {
 var originGlobEscaper = strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`, `*`, `\*`, `?`, `\?`)
 
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
+	// Count the upgrade itself before handing its socket to net/http's
+	// hijack path. Stop prevents new additions under the same lock.
+	h.mu.Lock()
+	if h.clients == nil {
+		h.mu.Unlock()
+		http.Error(w, "server is shutting down", http.StatusServiceUnavailable)
+		return
+	}
+	h.sessions.Add(1)
+	h.mu.Unlock()
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// coder/websocket always accepts same-origin; anything else must be an
 		// origin the operator listed. A private-network or .local address says
@@ -151,13 +199,23 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Printf("ws accept error: %v", err)
+		h.sessions.Done()
 		return
 	}
 	client := &Client{hub: h, conn: conn, send: make(chan []byte, 256)}
-	h.Register(client)
+	if !h.Register(client) {
+		client.closeNow()
+		h.sessions.Done()
+		return
+	}
 
-	go client.writePump()
-	go client.readPump()
+	go func() {
+		defer h.sessions.Done()
+		var writer sync.WaitGroup
+		writer.Go(client.writePump)
+		client.readPump()
+		writer.Wait()
+	}()
 }
 
 func (c *Client) writePump() {

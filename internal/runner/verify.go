@@ -110,11 +110,18 @@ func (r *Runner) RunVerify(rp db.RestorePoint, mode VerifyMode) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("loading storage destination %d: %w", job.StorageDestID, err)
 	}
+	if !r.tryMarkStart() {
+		return 0, ErrRunnerDraining
+	}
 	id, err := r.db.CreateVerifyRun(rp.ID, string(mode))
 	if err != nil {
+		r.markFinish()
 		return 0, err
 	}
-	go r.runVerifyLoop(id, rp, mode, dest)
+	go func() {
+		defer r.markFinish()
+		r.runVerifyLoop(id, rp, mode, dest)
+	}()
 	return id, nil
 }
 

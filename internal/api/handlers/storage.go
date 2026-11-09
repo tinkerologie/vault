@@ -1273,7 +1273,10 @@ func (h *StorageHandler) RunDedupGC(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, fmt.Errorf("generate gc id: %w", err))
 		return
 	}
-	go h.runner.RunDedupGC(dest, runID)
+	if err := h.runner.StartDedupGC(dest, runID); err != nil {
+		respondError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	respondJSON(w, http.StatusAccepted, map[string]string{"gc_run_id": runID})
 }
 

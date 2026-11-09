@@ -29,27 +29,41 @@ var ErrPreflightTimeout = errors.New("preflight: timed out")
 // and returns an error wrapping either ErrPreflightFailed or
 // ErrPreflightTimeout. On success returns nil.
 func Preflight(ctx context.Context, dest db.StorageDestination) error {
+	return preflight(ctx, dest, func(check func()) { go check() })
+}
+
+func preflight(ctx context.Context, dest db.StorageDestination, launch func(func())) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		return fmt.Errorf("%w: adapter construction: %v", ErrPreflightFailed, err)
 	}
-	defer storage.CloseAdapter(adapter)
-	return preflightAdapter(ctx, adapter, preflightTimeout)
+	return preflightResult(ctx, launchStorageProbe(adapter, launch), preflightTimeout)
 }
 
-// preflightAdapter is the testable core — it operates on a pre-built
-// adapter so unit tests can inject stubs without going through the
-// storage factory.
-func preflightAdapter(_ context.Context, adapter storage.Adapter, timeout time.Duration) error {
-	resultCh := make(chan error, 1)
-	go func() { resultCh <- adapter.TestConnection() }()
+func preflightResult(ctx context.Context, result <-chan error, timeout time.Duration) error {
 	select {
-	case err := <-resultCh:
+	case err := <-result:
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPreflightFailed, err)
 		}
 		return nil
 	case <-time.After(timeout):
 		return ErrPreflightTimeout
+	case <-ctx.Done():
+		return ctx.Err()
 	}
+}
+
+// launchStorageProbe transfers adapter ownership to the asynchronous probe.
+// Timeout limits the caller's wait, and shutdown still joins the probe.
+func launchStorageProbe(adapter storage.Adapter, launch func(func())) <-chan error {
+	result := make(chan error, 1)
+	launch(func() {
+		defer storage.CloseAdapter(adapter)
+		result <- adapter.TestConnection()
+	})
+	return result
 }

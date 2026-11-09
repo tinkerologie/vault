@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tinkerologie/vault/internal/credentials"
@@ -75,6 +76,7 @@ type SyncerProvider = func() *replication.Syncer
 type ReplicationHandler struct {
 	db             *db.DB
 	getSyncer      SyncerProvider
+	syncs          sync.WaitGroup
 	serverKey      []byte
 	schedReload    ScheduleReloader
 	broadcaster    Broadcaster
@@ -556,13 +558,19 @@ func (h *ReplicationHandler) SyncNow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Run sync in background, return immediately.
-	go func() {
+	h.syncs.Go(func() {
 		if _, err := syncer.SyncSource(id, nil); err != nil {
 			log.Printf("Manual sync failed for source %d: %v", id, err) // #nosec G706 //nolint:gosec // G706: id is a validated int64, err is from internal syncer
 		}
-	}()
+	})
 
 	respondJSON(w, http.StatusAccepted, map[string]string{"status": "sync_started"})
+}
+
+// WaitForSyncs joins work accepted by SyncNow. The server calls it once
+// HTTP has stopped admitting requests and all handlers have returned.
+func (h *ReplicationHandler) WaitForSyncs() {
+	h.syncs.Wait()
 }
 
 // ListReplicatedJobs returns jobs replicated from a specific source.

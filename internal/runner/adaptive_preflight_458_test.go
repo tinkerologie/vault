@@ -146,11 +146,12 @@ func TestAdaptivePostponeRecheckA458(t *testing.T) {
 }
 
 func TestAdaptivePostponeClosedDBA458(t *testing.T) {
-	r, d := a458Runner(t)
+	_, d := a458Runner(t)
 	_ = d.Close()
-	// Fake time is safe here: with the database closed every query fails at
-	// once, so nothing inside the bubble blocks on the connection pool.
+	// Build the runner inside the bubble so its shutdown channel and timer
+	// share the fake clock. Closed DB queries complete without blocking.
 	synctest.Test(t, func(t *testing.T) {
+		r := New(d, nil, nil)
 		// Settings fall back to defaults; the postponed-row insert fails
 		// and is logged; the re-check then finds no job and clears.
 		if !r.adaptivePostpone(5, "gone", "busy") {

@@ -1,19 +1,20 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"net"
 	"net/http"
-	"time"
+	"sync"
+	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/tinkerologie/vault/internal/anomaly"
 	"github.com/tinkerologie/vault/internal/api/handlers"
 	"github.com/tinkerologie/vault/internal/db"
 	jobintake "github.com/tinkerologie/vault/internal/jobs"
+	mcpserver "github.com/tinkerologie/vault/internal/mcp"
 	"github.com/tinkerologie/vault/internal/mount"
 	"github.com/tinkerologie/vault/internal/replication"
 	"github.com/tinkerologie/vault/internal/runner"
@@ -41,6 +42,9 @@ type Server struct {
 	router      *chi.Mux
 	config      ServerConfig
 	schedReload ScheduleReloader
+	runStarted  atomic.Bool
+	mcp         *mcpserver.MCPServer
+	timedReads  sync.WaitGroup
 
 	// nextRunResolver looks up the next scheduled run time for a job.
 	nextRunResolver func(jobID int64) (string, bool)
@@ -97,9 +101,7 @@ func NewServer(database *db.DB, cfg ServerConfig) *Server {
 		config: cfg,
 	}
 	s.runner = runner.New(database, s.hub, cfg.ServerKey)
-	go s.hub.Run()
 	s.mountMgr = mount.NewManager(database, s.hub, cfg.ServerKey)
-	s.mountMgr.Start(context.Background())
 	s.router = s.setupRoutes()
 	return s
 }
@@ -157,7 +159,7 @@ func (s *Server) SetConfigChangeHook(fn handlers.ConfigChangeHook) {
 // before the runner drain. The daemon uses this to flush the DB snapshot
 // and USB backup so configuration survives even when rc.vault escalates
 // to SIGKILL during a long-running drain (issue #108). The hook runs
-// synchronously in the shutdown goroutine; keep it under a few seconds.
+// synchronously in the runtime before draining; keep it under a few seconds.
 func (s *Server) SetPreShutdownHook(fn func()) {
 	s.preShutdownHook = fn
 }
@@ -218,70 +220,6 @@ func (s *Server) SetAnomalyEvaluator(ev *anomaly.Evaluator) {
 	if s.anomalyHandler != nil && ev != nil {
 		s.anomalyHandler.SetEvaluator(ev)
 	}
-}
-
-func (s *Server) StartWithContext(ctx context.Context) error {
-	srv := &http.Server{
-		Addr:              s.config.Addr,
-		Handler:           s.router,
-		ReadTimeout:       15 * time.Second,
-		ReadHeaderTimeout: 5 * time.Second,
-		// Single source of truth: outbound connectivity probes derive their
-		// own deadline from this so they always finish early enough for the
-		// error response to be flushed (handlers.probeTimeoutHeadroom).
-		WriteTimeout: handlers.ServerWriteTimeout,
-		IdleTimeout:  60 * time.Second,
-	}
-
-	go func() {
-		<-ctx.Done()
-		// Phase 0: persist configuration to flash immediately. The
-		// runner drain below can take up to 30 s, and rc.vault may
-		// escalate to SIGKILL before drain completes; flushing the DB
-		// snapshot and USB backup first guarantees that even a hard
-		// kill leaves a current configuration on the /boot/ flash drive
-		// (issue #108).
-		if s.preShutdownHook != nil {
-			start := time.Now()
-			s.preShutdownHook()
-			log.Printf("server shutdown: pre-drain flush completed in %v", time.Since(start).Round(time.Millisecond))
-		}
-
-		// Phase 1: drain the runner — let the active per-file upload finish.
-		// 30 s ceiling; if exceeded, the existing context cancel still kills
-		// mid-flight work.
-		drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		if err := s.runner.Drain(drainCtx); err != nil {
-			log.Printf("server shutdown: runner drain incomplete: %v", err)
-		} else {
-			log.Println("server shutdown: runner drained cleanly")
-		}
-		drainCancel()
-
-		if s.mountMgr != nil {
-			s.mountMgr.Stop(ctx)
-		}
-
-		// Phase 2: HTTP server shutdown.
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Printf("server shutdown error: %v", err)
-		}
-	}()
-
-	if err := CheckTLSPair(s.config.TLSCert, s.config.TLSKey); err != nil {
-		return err
-	}
-	if s.config.TLSCert != "" && s.config.TLSKey != "" {
-		log.Printf("Vault API server listening on %s (TLS)", s.config.Addr)
-		return srv.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
-	}
-	log.Printf("Vault API server listening on %s", s.config.Addr)
-	if !isLoopbackAddr(s.config.Addr) {
-		log.Printf("Warning: the Vault API on %s uses plain HTTP, so API keys and data can be read on the network. Use it only on a network you trust, or start the daemon with --tls-cert and --tls-key", s.config.Addr)
-	}
-	return srv.ListenAndServe()
 }
 
 // CheckTLSPair rejects a half-configured TLS setup, which would otherwise fall

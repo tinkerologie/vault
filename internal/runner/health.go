@@ -88,12 +88,9 @@ func (r *Runner) checkOneStorage(dest db.StorageDestination) (string, string) {
 		log.Printf("runner: health check FAILED for %q (id=%d): adapter construction: %s", dest.Name, dest.ID, msg)
 		return "failed", msg
 	}
-	defer storage.CloseAdapter(adapter)
-
-	// Run TestConnection in a goroutine + timeout so a hung adapter
-	// can't stall the whole sweep.
-	resultCh := make(chan error, 1)
-	go func() { resultCh <- adapter.TestConnection() }()
+	// Bound the health check response while retaining ownership of any
+	// probe that is still running when the deadline expires.
+	resultCh := launchStorageProbe(adapter, r.backgroundWork.Go)
 
 	select {
 	case checkErr := <-resultCh:
