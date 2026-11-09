@@ -296,3 +296,22 @@ func TestCheckFreeSpaceOverrideAndErrorA458(t *testing.T) {
 		t.Fatalf("error: %+v, want skip", c)
 	}
 }
+
+func TestAdaptiveRecheckCancelsDuringDrain(t *testing.T) {
+	_, d := a458Runner(t)
+	_ = d.Close()
+	synctest.Test(t, func(t *testing.T) {
+		r := New(d, nil, nil)
+		if !r.adaptivePostpone(5, "postponed", "busy") {
+			t.Fatal("expected a postponed run")
+		}
+		start := time.Now()
+		if err := r.Drain(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		r.WaitForBackgroundWork()
+		if time.Since(start) != 0 {
+			t.Fatal("shutdown waited for the pending adaptive timer to fire")
+		}
+	})
+}

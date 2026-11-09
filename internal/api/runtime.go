@@ -127,7 +127,7 @@ func (s *Server) serveRuntime(ctx context.Context, listener net.Listener, srv *h
 	if workers.WaitForDispatch != nil {
 		workers.WaitForDispatch()
 	}
-	s.drainRunner(cleanupCtx)
+	drainRunner(cleanupCtx, s.runner.Drain)
 	if err := <-httpDone; err != nil {
 		log.Printf("server shutdown error: %v", err)
 	}
@@ -149,15 +149,15 @@ func (s *Server) serveRuntime(ctx context.Context, listener net.Listener, srv *h
 	return serveErr
 }
 
-func (s *Server) drainRunner(ctx context.Context) {
+func drainRunner(ctx context.Context, drain func(context.Context) error) {
 	drainCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	err := s.runner.Drain(drainCtx)
+	err := drain(drainCtx)
 	cancel()
 	if err != nil {
 		log.Printf("server shutdown: runner still draining after 30s: %v", err)
 		// The host owns forced termination. Never return while a writer can
 		// still touch the database or storage.
-		_ = s.runner.Drain(ctx)
+		_ = drain(ctx)
 	}
 	log.Println("server shutdown: runner drained cleanly")
 }

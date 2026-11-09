@@ -40,30 +40,41 @@ func preflight(ctx context.Context, dest db.StorageDestination, launch func(func
 	if err != nil {
 		return fmt.Errorf("%w: adapter construction: %v", ErrPreflightFailed, err)
 	}
-	return preflightResult(ctx, launchStorageProbe(adapter, launch), preflightTimeout)
+	return preflightAdapter(ctx, adapter, preflightTimeout, launch)
 }
 
-func preflightResult(ctx context.Context, result <-chan error, timeout time.Duration) error {
+func preflightAdapter(ctx context.Context, adapter storage.Adapter, timeout time.Duration, launch func(func())) error {
+	err, returned := probeConnection(ctx, adapter, timeout, launch)
+	if !returned {
+		return err
+	}
+	storage.CloseAdapter(adapter)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrPreflightFailed, err)
+	}
+	return nil
+}
+
+// probeConnection owns the adapter until the caller receives the result.
+// If the wait expires first, the probe closes the adapter when it finishes.
+func probeConnection(ctx context.Context, adapter storage.Adapter, timeout time.Duration, launch func(func())) (err error, returned bool) {
+	result := make(chan error)
+	abandoned := make(chan struct{})
+	defer close(abandoned)
+	launch(func() {
+		err := adapter.TestConnection()
+		select {
+		case result <- err:
+		case <-abandoned:
+			storage.CloseAdapter(adapter)
+		}
+	})
 	select {
 	case err := <-result:
-		if err != nil {
-			return fmt.Errorf("%w: %v", ErrPreflightFailed, err)
-		}
-		return nil
+		return err, true
 	case <-time.After(timeout):
-		return ErrPreflightTimeout
+		return ErrPreflightTimeout, false
 	case <-ctx.Done():
-		return ctx.Err()
+		return ctx.Err(), false
 	}
-}
-
-// launchStorageProbe transfers adapter ownership to the asynchronous probe.
-// Timeout limits the caller's wait, and shutdown still joins the probe.
-func launchStorageProbe(adapter storage.Adapter, launch func(func())) <-chan error {
-	result := make(chan error, 1)
-	launch(func() {
-		defer storage.CloseAdapter(adapter)
-		result <- adapter.TestConnection()
-	})
-	return result
 }

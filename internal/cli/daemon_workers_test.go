@@ -8,6 +8,7 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"github.com/tinkerologie/vault/internal/anomaly"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/scheduler"
 )
@@ -24,6 +25,7 @@ func TestDaemonWorkersJoinBlockedLoop(t *testing.T) {
 		workers := daemonWorkers{
 			scheduler: scheduler.New(d, func(int64) {}),
 			snapshots: db.NewSnapshotManager(d, path, path),
+			evaluator: anomaly.NewEvaluator(d, nil, &anomaly.Registry{}, anomaly.RealClock{}),
 			throttle: func(ctx context.Context) {
 				<-ctx.Done()
 				close(waiting)

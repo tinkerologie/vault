@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -520,4 +521,17 @@ func TestLinuxMountHandleUnmountFallback458(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLinuxMountShutdownRetriesBusyDetach(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv := newFakeFuseServer()
+		handle := &linuxMountHandle{server: srv, done: srv.Done()}
+		if err := handle.finishUnmount(errors.New("mount busy")); err != nil {
+			t.Fatal(err)
+		}
+		if srv.unmounts.Load() != 1 {
+			t.Fatalf("detach retries = %d, want 1", srv.unmounts.Load())
+		}
+	})
 }

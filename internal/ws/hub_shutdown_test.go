@@ -1,6 +1,8 @@
 package ws
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"testing/synctest"
 )
@@ -27,4 +29,22 @@ func TestStopReleasesBlockedBroadcast(t *testing.T) {
 		<-sent
 		h.Broadcast([]byte("discard after stop"))
 	})
+}
+
+func TestStoppedHubRefusesNewClients(t *testing.T) {
+	h := NewHub()
+	h.Stop()
+	h.Run()
+	if h.Register(&Client{send: make(chan []byte)}) {
+		t.Fatal("a stopped hub admitted a client")
+	}
+	rec := httptest.NewRecorder()
+	h.HandleWS(rec, httptest.NewRequest(http.MethodGet, "/ws", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("upgrade status = %d, want 503", rec.Code)
+	}
+	h.BroadcastLossy([]byte("discard"))
+	if len(h.broadcast) != 0 {
+		t.Fatal("a stopped hub queued a lossy broadcast")
+	}
 }

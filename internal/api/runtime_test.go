@@ -3,6 +3,8 @@ package api
 import (
 	"bufio"
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net"
@@ -341,5 +343,64 @@ func TestTimedReadRemainsOwnedAfterResponse(t *testing.T) {
 		}
 		unblock()
 		<-joined
+	})
+}
+
+func TestRuntimeStartsWithValidTLS(t *testing.T) {
+	d := testDB(t)
+	if err := d.SetSetting("fuse_mount_base_dir", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	peer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	cert := peer.TLS.Certificates[0]
+	peer.Close()
+	key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	certPath, keyPath := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewServer(d, ServerConfig{Addr: "127.0.0.1:0", TLSCert: certPath, TLSKey: keyPath})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err = s.Run(ctx, func(context.Context) WorkerShutdown {
+		cancel()
+		return WorkerShutdown{}
+	})
+	if !errors.Is(err, http.ErrServerClosed) {
+		t.Fatalf("TLS runtime returned %v, want http.ErrServerClosed", err)
+	}
+	if err := s.Run(ctx, nil); err == nil || errors.Is(err, http.ErrServerClosed) {
+		t.Fatalf("second start returned %v, want single-use error", err)
+	}
+}
+
+func TestRunnerDrainContinuesAfterGracePeriod(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		calls := 0
+		drainRunner(t.Context(), func(ctx context.Context) error {
+			calls++
+			if calls == 1 {
+				if _, ok := ctx.Deadline(); !ok {
+					t.Fatal("first wait has no grace period")
+				}
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			if _, ok := ctx.Deadline(); ok {
+				t.Fatal("final join must wait even after the grace period")
+			}
+			return nil
+		})
+		if calls != 2 {
+			t.Fatalf("drain called %d times, want a grace period followed by a join", calls)
+		}
 	})
 }

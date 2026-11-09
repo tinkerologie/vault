@@ -457,3 +457,41 @@ func TestManager458_SweepIdleListError(t *testing.T) {
 	})
 	mgr.sweepIdle(context.Background(), time.Now().Add(time.Hour))
 }
+
+type shutdownMountHandle struct {
+	fakeHandle
+	recover bool
+	joined  bool
+}
+
+func (h *shutdownMountHandle) finishUnmount(err error) error {
+	h.joined = true
+	if h.recover {
+		h.err = nil
+		return nil
+	}
+	return err
+}
+
+func TestManagerStopJoinsFailedDetach(t *testing.T) {
+	for _, recover := range []bool{true, false} {
+		name := "retain failed session"
+		if recover {
+			name = "finish recovered session"
+		}
+		t.Run(name, func(t *testing.T) {
+			m := NewManager(nil, nil, nil)
+			h := &shutdownMountHandle{
+				fakeHandle: fakeHandle{path: t.TempDir(), err: errors.New("mount busy")},
+				recover:    recover,
+			}
+			m.activeMounts[7] = activeMount{handle: h}
+			m.Stop(t.Context())
+			m.Stop(t.Context())
+			_, retained := m.activeMounts[7]
+			if !h.joined || retained == recover {
+				t.Fatalf("joined = %t, retained = %t, recovered = %t", h.joined, retained, recover)
+			}
+		})
+	}
+}

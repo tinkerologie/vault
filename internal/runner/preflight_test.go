@@ -36,20 +36,17 @@ func (s *stubAdapter) WriteFrom(string, func() (io.ReadCloser, error)) error { r
 // Compile-time: stub satisfies the interface.
 var _ storage.Adapter = (*stubAdapter)(nil)
 
-func preflightAdapter(ctx context.Context, adapter storage.Adapter, timeout time.Duration) error {
-	result := launchStorageProbe(adapter, func(check func()) { go check() })
-	return preflightResult(ctx, result, timeout)
-}
+func launchTestProbe(check func()) { go check() }
 
 func TestPreflightSuccess(t *testing.T) {
-	if err := preflightAdapter(context.Background(), &stubAdapter{}, 1*time.Second); err != nil {
+	if err := preflightAdapter(context.Background(), &stubAdapter{}, time.Second, launchTestProbe); err != nil {
 		t.Errorf("expected nil, got %v", err)
 	}
 }
 
 func TestPreflightFailure(t *testing.T) {
 	adapter := &stubAdapter{testErr: errors.New("dial: connection refused")}
-	err := preflightAdapter(context.Background(), adapter, 1*time.Second)
+	err := preflightAdapter(context.Background(), adapter, time.Second, launchTestProbe)
 	if err == nil || !errors.Is(err, ErrPreflightFailed) {
 		t.Errorf("expected ErrPreflightFailed wrap, got %v", err)
 	}
@@ -57,7 +54,7 @@ func TestPreflightFailure(t *testing.T) {
 
 func TestPreflightTimeout(t *testing.T) {
 	adapter := &stubAdapter{delay: 200 * time.Millisecond}
-	err := preflightAdapter(context.Background(), adapter, 50*time.Millisecond)
+	err := preflightAdapter(context.Background(), adapter, 50*time.Millisecond, launchTestProbe)
 	if !errors.Is(err, ErrPreflightTimeout) {
 		t.Errorf("expected ErrPreflightTimeout, got %v", err)
 	}
@@ -85,10 +82,9 @@ func TestTimedOutStorageProbeRetainsOwnership(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		probe := &blockedStorageProbe{started: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{})}
 		r := &Runner{}
-		result := launchStorageProbe(probe, r.backgroundWork.Go)
-		<-probe.started
-		if err := preflightResult(t.Context(), result, time.Second); !errors.Is(err, ErrPreflightTimeout) {
-			t.Errorf("probe error = %v, want timeout", err)
+		err, returned := probeConnection(t.Context(), probe, time.Second, r.backgroundWork.Go)
+		if !errors.Is(err, ErrPreflightTimeout) || returned {
+			t.Errorf("probe error = %v, ownership returned = %t, want timeout", err, returned)
 		}
 
 		stopped := make(chan struct{})
@@ -111,5 +107,24 @@ func TestTimedOutStorageProbeRetainsOwnership(t *testing.T) {
 		default:
 			t.Fatal("runner returned without closing the adapter")
 		}
+	})
+}
+
+func TestSuccessfulStorageProbeReturnsOpenAdapter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		probe := &blockedStorageProbe{started: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{})}
+		close(probe.release)
+		r := &Runner{}
+		err, returned := probeConnection(t.Context(), probe, time.Second, r.backgroundWork.Go)
+		r.WaitForBackgroundWork()
+		if err != nil || !returned {
+			t.Fatalf("probe error = %v, ownership returned = %t", err, returned)
+		}
+		select {
+		case <-probe.closed:
+			t.Fatal("probe closed the adapter before the caller could check capacity")
+		default:
+		}
+		storage.CloseAdapter(probe)
 	})
 }
