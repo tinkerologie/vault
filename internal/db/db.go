@@ -21,6 +21,8 @@ type DB struct {
 	path   string
 	// credKey is the vault.key used to seal config secrets (credentials.go).
 	credKey atomic.Pointer[[]byte]
+	// Tests can set this before starting a writer to pause it at commit.
+	beforeJobAggregateCommit func()
 }
 
 // sql returns the current underlying handle.

@@ -1,12 +1,15 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/runner"
@@ -264,9 +267,12 @@ func TestWhitespaceScheduleBecomesManualOnly(t *testing.T) {
 // TestUpdateMissingJobIsNotFound pins the guard against a silent no-op:
 // UpdateJob is an UPDATE … WHERE that does not error on zero rows.
 func TestUpdateMissingJobIsNotFound(t *testing.T) {
-	i, _, _ := newIntake(t)
+	i, _, e := newIntake(t)
 	if _, _, err := i.Update(4242, validJob(), nil); !errors.Is(err, ErrJobNotFound) {
 		t.Fatalf("Update of a missing job = %v, want ErrJobNotFound", err)
+	}
+	if e.reloads != 0 || e.flushes != 0 || len(e.runner.broadcasts) != 0 {
+		t.Fatalf("missing update ran effects: %+v", e)
 	}
 }
 
@@ -348,41 +354,70 @@ func TestCreateLeavesNothingBehindWhenAnItemFails(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("half-built job survived the failure: %+v", jobs)
 	}
+	if items, err := d.ListJobItems(t.Context()); err != nil || len(items) != 0 {
+		t.Fatalf("items after create failure = %v, error = %v", items, err)
+	}
 	if e.reloads != 0 || e.flushes != 0 || len(e.runner.broadcasts) != 0 {
 		t.Fatalf("effects ran for a write that failed: %+v", e)
 	}
 }
 
-// Replacing items is delete-then-insert, so a failure partway once left the
-// Job with fewer items than either the old or the new set — silently dropping
-// things from the backup.
-func TestUpdateRestoresThePreviousItemsWhenAReplacementFails(t *testing.T) {
-	i, d, e := newIntake(t)
-
-	job, _, err := i.Create(validJob(), []db.JobItem{item("plex"), item("sonarr")})
-	if err != nil {
-		t.Fatalf("creating job: %v", err)
-	}
-	failItemInserts(t, d)
-	before := e.reloads
-
-	if _, _, err := i.Update(job.ID, job, []db.JobItem{item("radarr"), item("boom")}); err == nil {
-		t.Fatal("expected the failing item insert to surface")
-	}
-
-	saved, err := d.GetJobItems(job.ID)
-	if err != nil {
-		t.Fatalf("reading items: %v", err)
-	}
-	var names []string
-	for _, it := range saved {
-		names = append(names, it.ItemName)
-	}
-	if strings.Join(names, ",") != "plex,sonarr" {
-		t.Fatalf("previous items were not restored, got %v", names)
-	}
-	if e.reloads != before {
-		t.Fatalf("effects ran for a write that failed: %d reloads", e.reloads-before)
+func TestFailedUpdatePreservesTheJobAndItems(t *testing.T) {
+	for _, tt := range []struct{ name, trigger, wantError string }{
+		{"insert", `CREATE TRIGGER fail_item_insert BEFORE INSERT ON job_items
+			WHEN NEW.item_name = 'boom' BEGIN SELECT RAISE(ABORT, 'item insert failed'); END`, "item insert failed"},
+		{"delete", `CREATE TRIGGER fail_item_delete BEFORE DELETE ON job_items
+			BEGIN SELECT RAISE(ABORT, 'item delete failed'); END`, "item delete failed"},
+		{"commit", `CREATE TABLE commit_failure (
+			job_id INTEGER REFERENCES jobs(id) DEFERRABLE INITIALLY DEFERRED);
+			CREATE TRIGGER fail_job_commit AFTER INSERT ON job_items
+			BEGIN INSERT INTO commit_failure (job_id) VALUES (-1); END;`, "commit job mutation"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			i, d, e := newIntake(t)
+			job := validJob()
+			job.StorageDestID = createLocalDest(t, d, "old", `{"path":"/mnt/old"}`)
+			first, second := item("plex"), item("sonarr")
+			first.Settings, second.SortOrder = `{"option":true}`, 1
+			created, items, err := i.Create(job, []db.JobItem{first, second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := d.MarkJobItemsMissing([]int64{items[0].ID}, "2026-11-01 01:00:00"); err != nil {
+				t.Fatal(err)
+			}
+			before, err := d.GetJob(created.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeItems, err := d.GetJobItems(created.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := d.Exec(tt.trigger); err != nil {
+				t.Fatal(err)
+			}
+			updated := before
+			updated.Name, updated.Schedule, updated.RetentionCount = "edited", "0 5 * * *", before.RetentionCount+1
+			updated.StorageDestID = createLocalDest(t, d, "new", `{"path":"/mnt/new"}`)
+			if _, _, err := i.Update(created.ID, updated, []db.JobItem{item("radarr"), item("boom")}); err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected injected %s failure, got %v", tt.name, err)
+			}
+			after, err := d.GetJob(created.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			afterItems, err := d.GetJobItems(created.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(after, before) || !reflect.DeepEqual(afterItems, beforeItems) {
+				t.Fatalf("failed update changed persisted state: job = %+v, items = %+v", after, afterItems)
+			}
+			if e.reloads != 1 || e.flushes != 1 || len(e.runner.broadcasts) != 1 {
+				t.Fatalf("failed update ran effects: %+v", e)
+			}
+		})
 	}
 }
 
@@ -410,4 +445,69 @@ func TestIntakeRefusesUnsafeItemPaths(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+}
+
+type effectOrderRunner struct {
+	fakeRunner
+	recordBroadcast func()
+}
+
+func (r *effectOrderRunner) Broadcast(map[string]any) {
+	r.recordBroadcast()
+}
+
+func TestMutationReturnsStoredRecordsAndRunsEffectsAfterCommit(t *testing.T) {
+	i, d, _ := newIntake(t)
+	created := validJob()
+	created.SourceID = 123 // Job Intake persists source ownership only through replication.
+	created.AnomalySensitivity = "high"
+	var order []string
+	var readErr error
+	var gotName string
+	var gotItems int
+	wantName := created.Name
+	i.reload = func() error {
+		order = append(order, "reload")
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		readErr = d.QueryRowContext(ctx, `SELECT name, (SELECT COUNT(*) FROM job_items WHERE job_id = jobs.id)
+			FROM jobs WHERE name = ?`, wantName).Scan(&gotName, &gotItems)
+		return errors.New("injected reload failure")
+	}
+	i.onChange = func() { order = append(order, "flush") }
+	i.runner = &effectOrderRunner{recordBroadcast: func() { order = append(order, "broadcast") }}
+	assertCommitted := func(saved db.Job, items []db.JobItem, wantItems int) {
+		t.Helper()
+		if readErr != nil || gotName != wantName || gotItems != wantItems {
+			t.Fatalf("reload saw job %q and %d items, error %v", gotName, gotItems, readErr)
+		}
+		if !reflect.DeepEqual(order, []string{"reload", "flush", "broadcast"}) {
+			t.Fatalf("effects = %v", order)
+		}
+		got, err := d.GetJob(saved.ID)
+		if err != nil || !reflect.DeepEqual(got, saved) {
+			t.Fatalf("returned job differs from stored job: %+v, %v", got, err)
+		}
+		persisted, err := d.GetJobItems(saved.ID)
+		if err != nil || !reflect.DeepEqual(persisted, items) || len(items) != wantItems {
+			t.Fatalf("returned items differ from stored selection: %v, %v", persisted, err)
+		}
+	}
+	saved, items, err := i.Create(created, []db.JobItem{item("first")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.CreatedAt.IsZero() || saved.UpdatedAt.IsZero() || saved.SourceID != 0 {
+		t.Fatalf("create did not return persisted values: %+v", saved)
+	}
+	assertCommitted(saved, items, 1)
+
+	order = nil
+	wantName = "renamed"
+	saved.Name = wantName
+	saved, items, err = i.Update(saved.ID, saved, []db.JobItem{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCommitted(saved, items, 0)
 }

@@ -22,7 +22,11 @@ func nullableID(id int64) any {
 }
 
 func (d *DB) CreateJob(job Job) (int64, error) {
-	res, err := d.Exec(
+	return insertJob(context.Background(), d, job)
+}
+
+func insertJob(ctx context.Context, q jobSQL, job Job) (int64, error) {
+	res, err := q.ExecContext(ctx,
 		`INSERT INTO jobs (name, description, enabled, schedule, backup_type_chain,
 		retention_count, retention_days, compression, compression_level, encryption, container_mode, vm_mode, pre_script,
 		post_script, notify_on, verify_backup, storage_dest_id, defer_remote_upload,
@@ -47,9 +51,10 @@ func (d *DB) CreateJob(job Job) (int64, error) {
 }
 
 func (d *DB) GetJob(id int64) (Job, error) {
-	var job Job
-	err := d.QueryRow(
-		`SELECT id, name, description, enabled, schedule, backup_type_chain,
+	return getJob(context.Background(), d, id)
+}
+
+const selectJob = `SELECT id, name, description, enabled, schedule, backup_type_chain,
 		retention_count, retention_days, compression, compression_level, encryption, container_mode, vm_mode, pre_script,
 		post_script, notify_on, verify_backup, COALESCE(storage_dest_id, 0), COALESCE(source_id, 0),
 		COALESCE(defer_remote_upload, 0),
@@ -63,8 +68,11 @@ func (d *DB) GetJob(id int64) (Job, error) {
 		COALESCE(adaptive_enabled, 0),
 		COALESCE(auto_include_containers, 0),
 		created_at, updated_at
-		FROM jobs WHERE id = ?`, id,
-	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
+		FROM jobs`
+
+func scanJob(row interface{ Scan(...any) error }) (Job, error) {
+	var job Job
+	err := row.Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
 		&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression, &job.CompressionLevel,
 		&job.Encryption, &job.ContainerMode, &job.VMMode, &job.PreScript, &job.PostScript, &job.NotifyOn,
 		&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.DeferRemoteUpload,
@@ -80,40 +88,20 @@ func (d *DB) GetJob(id int64) (Job, error) {
 	return job, err
 }
 
+func getJob(ctx context.Context, q jobSQL, id int64) (Job, error) {
+	return scanJob(q.QueryRowContext(ctx, selectJob+" WHERE id = ?", id))
+}
+
 func (d *DB) ListJobs() ([]Job, error) {
-	rows, err := d.Query(
-		`SELECT id, name, description, enabled, schedule, backup_type_chain,
-		retention_count, retention_days, compression, compression_level, encryption, container_mode, vm_mode, pre_script,
-		post_script, notify_on, verify_backup, COALESCE(storage_dest_id, 0), COALESCE(source_id, 0),
-		COALESCE(defer_remote_upload, 0),
-		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
-		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
-		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
-		COALESCE(full_backup_schedule, ''),
-		retry_max_override, retry_delays_override,
-		COALESCE(anomaly_sensitivity, ''),
-		COALESCE(max_parallel_uploads, 1),
-		COALESCE(adaptive_enabled, 0),
-		COALESCE(auto_include_containers, 0),
-		created_at, updated_at
-		FROM jobs ORDER BY name`)
+	rows, err := d.Query(selectJob + " ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var jobs []Job
 	for rows.Next() {
-		var job Job
-		if err := rows.Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
-			&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression, &job.CompressionLevel,
-			&job.Encryption, &job.ContainerMode, &job.VMMode, &job.PreScript, &job.PostScript, &job.NotifyOn,
-			&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.DeferRemoteUpload,
-			&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
-			&job.VerifySchedule, &job.VerifyMode, &job.FullBackupSchedule,
-			&job.RetryMaxOverride, &job.RetryDelaysOverride,
-			&job.AnomalySensitivity,
-			&job.MaxParallelUploads, &job.AdaptiveEnabled, &job.AutoIncludeContainers,
-			&job.CreatedAt, &job.UpdatedAt); err != nil {
+		job, err := scanJob(rows)
+		if err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, job)
@@ -122,7 +110,12 @@ func (d *DB) ListJobs() ([]Job, error) {
 }
 
 func (d *DB) UpdateJob(job Job) error {
-	_, err := d.Exec(
+	_, err := updateJob(context.Background(), d, job)
+	return err
+}
+
+func updateJob(ctx context.Context, q jobSQL, job Job) (sql.Result, error) {
+	return q.ExecContext(ctx,
 		`UPDATE jobs SET name=?, description=?, enabled=?, schedule=?, backup_type_chain=?,
 		retention_count=?, retention_days=?, compression=?, compression_level=?, encryption=?, container_mode=?, vm_mode=?, pre_script=?,
 		post_script=?, notify_on=?, verify_backup=?, storage_dest_id=?, defer_remote_upload=?,
@@ -143,7 +136,6 @@ func (d *DB) UpdateJob(job Job) error {
 		job.MaxParallelUploads, job.AdaptiveEnabled, job.AutoIncludeContainers,
 		job.ID,
 	)
-	return err
 }
 
 func (d *DB) DeleteJob(id int64) error {
@@ -154,37 +146,7 @@ func (d *DB) DeleteJob(id int64) error {
 // GetJobByName looks up a job by its unique name. Returns ErrNotFound if
 // no matching job exists.
 func (d *DB) GetJobByName(name string) (Job, error) {
-	var job Job
-	err := d.QueryRow(
-		`SELECT id, name, description, enabled, schedule, backup_type_chain,
-		retention_count, retention_days, compression, compression_level, encryption, container_mode, vm_mode, pre_script,
-		post_script, notify_on, verify_backup, COALESCE(storage_dest_id, 0), COALESCE(source_id, 0),
-		COALESCE(defer_remote_upload, 0),
-		COALESCE(keep_latest, 0), COALESCE(keep_daily, 0), COALESCE(keep_weekly, 0),
-		COALESCE(keep_monthly, 0), COALESCE(keep_yearly, 0),
-		COALESCE(verify_schedule, ''), COALESCE(verify_mode, 'quick'),
-		COALESCE(full_backup_schedule, ''),
-		retry_max_override, retry_delays_override,
-		COALESCE(anomaly_sensitivity, ''),
-		COALESCE(max_parallel_uploads, 1),
-		COALESCE(adaptive_enabled, 0),
-		COALESCE(auto_include_containers, 0),
-		created_at, updated_at
-		FROM jobs WHERE name = ?`, name,
-	).Scan(&job.ID, &job.Name, &job.Description, &job.Enabled, &job.Schedule,
-		&job.BackupTypeChain, &job.RetentionCount, &job.RetentionDays, &job.Compression, &job.CompressionLevel,
-		&job.Encryption, &job.ContainerMode, &job.VMMode, &job.PreScript, &job.PostScript, &job.NotifyOn,
-		&job.VerifyBackup, &job.StorageDestID, &job.SourceID, &job.DeferRemoteUpload,
-		&job.KeepLatest, &job.KeepDaily, &job.KeepWeekly, &job.KeepMonthly, &job.KeepYearly,
-		&job.VerifySchedule, &job.VerifyMode, &job.FullBackupSchedule,
-		&job.RetryMaxOverride, &job.RetryDelaysOverride,
-		&job.AnomalySensitivity,
-		&job.MaxParallelUploads, &job.AdaptiveEnabled, &job.AutoIncludeContainers,
-		&job.CreatedAt, &job.UpdatedAt)
-	if err == sql.ErrNoRows {
-		return job, ErrNotFound
-	}
-	return job, err
+	return scanJob(d.QueryRow(selectJob+" WHERE name = ?", name))
 }
 
 // normalizeItemSettings turns a blank settings blob into "{}" so the stored
@@ -205,7 +167,11 @@ func normalizeItemSettings(settings string) string {
 }
 
 func (d *DB) AddJobItem(item JobItem) (int64, error) {
-	res, err := d.Exec(
+	return insertJobItem(context.Background(), d, item)
+}
+
+func insertJobItem(ctx context.Context, q jobSQL, item JobItem) (int64, error) {
+	res, err := q.ExecContext(ctx,
 		"INSERT INTO job_items (job_id, item_type, item_name, item_id, settings, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
 		item.JobID, item.ItemType, item.ItemName, item.ItemID, normalizeItemSettings(item.Settings), item.SortOrder,
 	)
@@ -216,7 +182,11 @@ func (d *DB) AddJobItem(item JobItem) (int64, error) {
 }
 
 func (d *DB) GetJobItems(jobID int64) ([]JobItem, error) {
-	rows, err := d.Query("SELECT id, job_id, item_type, item_name, item_id, settings, sort_order, missing_since FROM job_items WHERE job_id = ? ORDER BY sort_order ASC", jobID)
+	return getJobItems(context.Background(), d, jobID)
+}
+
+func getJobItems(ctx context.Context, q jobSQL, jobID int64) ([]JobItem, error) {
+	rows, err := q.QueryContext(ctx, "SELECT id, job_id, item_type, item_name, item_id, settings, sort_order, missing_since FROM job_items WHERE job_id = ? ORDER BY sort_order ASC", jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +238,11 @@ func (d *DB) UpdateJobItemSettings(id int64, settings string) error {
 }
 
 func (d *DB) DeleteJobItems(jobID int64) error {
-	_, err := d.Exec("DELETE FROM job_items WHERE job_id = ?", jobID)
+	return deleteJobItems(context.Background(), d, jobID)
+}
+
+func deleteJobItems(ctx context.Context, q jobSQL, jobID int64) error {
+	_, err := q.ExecContext(ctx, "DELETE FROM job_items WHERE job_id = ?", jobID)
 	return err
 }
 

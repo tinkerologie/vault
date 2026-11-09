@@ -1,26 +1,13 @@
-// Package jobs implements Job Intake: the single module through which every
-// Job write passes.
-//
-// Before this module existed, three callers each hand-rolled their own version
-// of "create a Job": the REST handlers, the MCP tools, and the replication
-// import path. They diverged. Jobs created over MCP were never handed to the
-// scheduler and so silently never ran, skipped every enum, schedule, storage
-// destination, folder-path and source/destination-overlap check, and — on
-// delete — bypassed the guard that refuses to remove a Job while a restore for
-// it is mid-write.
-//
-// The interface here is three methods. Everything a caller must know is that
-// a Job write either succeeds completely or returns an error. "Completely"
-// means validated, normalised, persisted, handed to the scheduler, flushed to
-// the USB config, and broadcast to connected clients — in that order. There is
-// no way to perform half of that sequence, because the sequence is not part of
-// the interface.
+// Package jobs implements the shared Job Intake policy for REST and MCP.
+// Create and Update commit a Job and its items in one SQLite transaction.
+// Scheduler reload, configuration flush scheduling and broadcast run afterward
+// and have their own outcomes. Replication and import use separate paths.
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 
 	"github.com/tinkerologie/vault/internal/db"
@@ -32,7 +19,7 @@ import (
 // without a daemon restart. The scheduler never reloads on its own.
 type ScheduleReloader = func() error
 
-// ConfigChangeHook flushes the database to USB flash after a mutation.
+// ConfigChangeHook schedules a configuration flush after a mutation.
 type ConfigChangeHook = func()
 
 // PathValidator applies the browse handler's allowed-root policy to a
@@ -76,134 +63,37 @@ func New(database *db.DB, r Runner, reload ScheduleReloader, onChange ConfigChan
 // The browse handler that owns the policy is built after the Intake is.
 func (i *Intake) SetPathValidator(fn PathValidator) { i.validatePath = fn }
 
-// SetConfigChangeHook installs the USB flush hook after construction.
+// SetConfigChangeHook installs the configuration flush hook after construction.
 func (i *Intake) SetConfigChangeHook(fn ConfigChangeHook) { i.onChange = fn }
 
-// Create validates and persists a new Job together with its items, then runs
-// the effect chain. The returned Job carries its assigned ID and the returned
-// items carry theirs.
+// Create validates and commits a new Job and its items, then runs the effects.
 func (i *Intake) Create(job db.Job, items []db.JobItem) (db.Job, []db.JobItem, error) {
-	if err := i.check(&job, items); err != nil {
+	if err := i.checkRequest(&job, items); err != nil {
 		return db.Job{}, nil, err
 	}
-	id, err := i.db.CreateJob(job)
-	if err != nil {
-		return db.Job{}, nil, err
-	}
-	// The Job row and its items are one unit as far as a caller is concerned.
-	// The repo has no transactional variant of these calls, so a failed item
-	// insert is undone by removing the Job again (items cascade with it)
-	// rather than leaving a half-built Job behind that would back up the wrong
-	// set of things on its next run.
-	for _, item := range items {
-		item.JobID = id
-		if _, addErr := i.db.AddJobItem(item); addErr != nil {
-			if delErr := i.db.DeleteJob(id); delErr != nil {
-				return db.Job{}, nil, fmt.Errorf("adding job item: %w (rollback also failed: %v)", addErr, delErr)
-			}
-			return db.Job{}, nil, addErr
-		}
-	}
-	job.ID = id
-	saved, err := i.db.GetJobItems(id)
+	saved, savedItems, err := i.db.CreateJobWithItems(context.Background(), job, items, checkMutation(job.StorageDestID, items))
 	if err != nil {
 		return db.Job{}, nil, err
 	}
 	i.applyEffects()
-	return job, saved, nil
+	return saved, savedItems, nil
 }
 
-// Update replaces the Job at id. A nil items slice leaves the persisted items
-// untouched; a non-nil slice (including an empty one) replaces them wholesale.
-// Returns ErrJobNotFound if id does not exist — UpdateJob is an UPDATE … WHERE
-// that does not error on zero rows, so without this check updating a missing
-// id was a silent no-op.
+// Update replaces the Job at id. Nil items preserve the saved selection and
+// a non-nil slice replaces it. An empty slice clears the selection.
 func (i *Intake) Update(id int64, job db.Job, items []db.JobItem) (db.Job, []db.JobItem, error) {
-	persisted, err := i.db.GetJob(id)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return db.Job{}, nil, ErrJobNotFound
-		}
+	if err := i.checkRequest(&job, items); err != nil {
 		return db.Job{}, nil, err
 	}
-	// A replicated job's files are on the destination its source syncs to, and
-	// restore and preflight open the job's destination to find them. Pointing
-	// the job anywhere else would make its restore points unreadable, so its
-	// destination follows the source. The persisted origin decides this; the
-	// request's source_id is never trusted.
-	if persisted.SourceID != 0 && job.StorageDestID != persisted.StorageDestID {
-		return db.Job{}, nil, invalid("storage_dest_id", "the destination of a replicated job follows its replication source and cannot be changed")
+	saved, savedItems, err := i.db.UpdateJobWithItems(context.Background(), id, job, items, checkMutation(job.StorageDestID, items))
+	if errors.Is(err, db.ErrNotFound) {
+		return db.Job{}, nil, ErrJobNotFound
 	}
-
-	// A request that omits items leaves the persisted items in place, so check
-	// the overlap against those rather than the (nil) request items —
-	// otherwise a destination change alone could sneak the job into its own
-	// source.
-	// Read the persisted items once: they are both the overlap-check subject
-	// when the request omits items, and the restore point if a wholesale
-	// replacement fails halfway.
-	existing, err := i.db.GetJobItems(id)
-	if err != nil {
-		return db.Job{}, nil, err
-	}
-	overlapItems := items
-	if overlapItems == nil {
-		overlapItems = existing
-	}
-	if err := i.checkJob(&job); err != nil {
-		return db.Job{}, nil, err
-	}
-	if items != nil {
-		if err := i.checkFolderPaths(items); err != nil {
-			return db.Job{}, nil, err
-		}
-	}
-	if err := i.checkOverlap(job.StorageDestID, overlapItems); err != nil {
-		return db.Job{}, nil, err
-	}
-
-	job.ID = id
-	if err := i.db.UpdateJob(job); err != nil {
-		return db.Job{}, nil, err
-	}
-	if items != nil {
-		// Replacing items is delete-then-insert, so a failure partway leaves
-		// the Job with fewer items than either the old or the new set — the
-		// one outcome the caller never asked for, and a silent way to stop
-		// backing something up. Put the previous items back instead.
-		if err := i.db.DeleteJobItems(id); err != nil {
-			return db.Job{}, nil, err
-		}
-		for _, item := range items {
-			item.JobID = id
-			if _, addErr := i.db.AddJobItem(item); addErr != nil {
-				return db.Job{}, nil, i.restoreItems(id, existing, addErr)
-			}
-		}
-	}
-	saved, err := i.db.GetJobItems(id)
 	if err != nil {
 		return db.Job{}, nil, err
 	}
 	i.applyEffects()
-	return job, saved, nil
-}
-
-// restoreItems puts a Job's previous items back after a failed wholesale
-// replacement, and reports the original failure. A rollback that itself fails
-// is folded into the message: the Job is then genuinely inconsistent and the
-// operator needs to see both halves.
-func (i *Intake) restoreItems(id int64, previous []db.JobItem, cause error) error {
-	if err := i.db.DeleteJobItems(id); err != nil {
-		return fmt.Errorf("replacing job items: %w (rollback also failed: %v)", cause, err)
-	}
-	for _, item := range previous {
-		item.JobID = id
-		if _, err := i.db.AddJobItem(item); err != nil {
-			return fmt.Errorf("replacing job items: %w (rollback also failed: %v)", cause, err)
-		}
-	}
-	return cause
+	return saved, savedItems, nil
 }
 
 // DeleteOptions controls how far a Delete goes.
@@ -289,45 +179,33 @@ func (i *Intake) Delete(id int64, opts DeleteOptions) (DeleteOutcome, error) {
 	return DeleteOutcome{CleanupStarted: doCleanup}, nil
 }
 
-// check runs every create-time validation against a Job and its items.
-func (i *Intake) check(job *db.Job, items []db.JobItem) error {
-	if err := i.checkJob(job); err != nil {
-		return err
-	}
-	if err := i.checkFolderPaths(items); err != nil {
-		return err
-	}
-	return i.checkOverlap(job.StorageDestID, items)
-}
-
-// checkJob validates and normalises the Job's own fields, then confirms its
-// storage destination exists.
-func (i *Intake) checkJob(job *db.Job) error {
+// checkRequest validates fields and caller-supplied paths before taking the
+// database write lock. The injected path validator can use the pool.
+func (i *Intake) checkRequest(job *db.Job, items []db.JobItem) error {
 	if err := normalize(job); err != nil {
 		return err
 	}
-	return i.checkStorageDest(job.StorageDestID)
+	return i.checkFolderPaths(items)
 }
 
-// checkStorageDest rejects a storage_dest_id that does not exist. Without this
-// the bad foreign key reached SQLite and surfaced as an opaque 500; the caller
-// could not tell a typo from a server fault. A job may legitimately have no
-// destination yet (0), which the runner treats as unconfigured.
-func (i *Intake) checkStorageDest(destID int64) error {
-	if destID == 0 {
-		return nil
-	}
-	if _, err := i.db.GetStorageDestination(destID); err != nil {
-		// Only a genuinely absent row is the caller's fault. Any other error
-		// (DB closed, I/O failure) must stay a server fault — reporting it as
-		// "destination not found" would send the operator hunting for a
-		// config mistake during an outage.
-		if errors.Is(err, db.ErrNotFound) {
+func checkMutation(destID int64, items []db.JobItem) func(db.JobMutationState) error {
+	return func(state db.JobMutationState) error {
+		// The persisted origin owns the destination of a replicated Job.
+		if current := state.Current; current != nil && current.SourceID != 0 && destID != current.StorageDestID {
+			return invalid("storage_dest_id", "the destination of a replicated job follows its replication source and cannot be changed")
+		}
+		if destID != 0 && !state.DestinationFound {
 			return invalid("storage_dest_id", "storage destination %d not found", destID)
 		}
-		return err
+		overlapItems := items
+		if overlapItems == nil {
+			overlapItems = state.Items
+		}
+		if reason, bad := folderSourceOverlap(localDestPath(state.Destination), overlapItems); bad {
+			return invalid("", "%s", reason)
+		}
+		return nil
 	}
-	return nil
 }
 
 // checkFolderPaths applies the allowed-root policy to every folder item.
@@ -363,24 +241,9 @@ func (i *Intake) checkFolderPaths(items []db.JobItem) error {
 	return nil
 }
 
-// checkOverlap refuses a Job whose local destination sits inside (or contains)
-// one of its own folder sources.
-func (i *Intake) checkOverlap(storageDestID int64, items []db.JobItem) error {
-	if reason, bad := folderSourceOverlap(i.localDestPath(storageDestID), items); bad {
-		return invalid("", "%s", reason)
-	}
-	return nil
-}
-
-// localDestPath returns the on-array path of a local storage destination, or ""
-// for remote destinations (sftp/smb/nfs/s3/webdav) which have no local path
-// that could collide with a source tree.
-func (i *Intake) localDestPath(storageDestID int64) string {
-	if storageDestID == 0 {
-		return ""
-	}
-	dest, err := i.db.GetStorageDestination(storageDestID)
-	if err != nil || dest.Type != "local" {
+// localDestPath returns the configured local path, if any.
+func localDestPath(dest db.StorageDestination) string {
+	if dest.Type != "local" {
 		return ""
 	}
 	var cfg struct {
@@ -392,9 +255,10 @@ func (i *Intake) localDestPath(storageDestID int64) string {
 	return cfg.Path
 }
 
-// applyEffects is the sequence every successful Job write must run: hand the
-// change to the scheduler, flush it to USB, tell connected clients. Callers
-// cannot skip a step or reorder them, because they never see them.
+// applyEffects runs after persistence. Reload errors are logged and the later
+// effects still run. The daemon's hook schedules a best-effort flush.
+// Broadcast may block while queuing and does not guarantee client delivery.
+// A panic stops the later effects without undoing the committed write.
 func (i *Intake) applyEffects() {
 	if i.reload != nil {
 		if err := i.reload(); err != nil {

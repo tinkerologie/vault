@@ -3,7 +3,7 @@
 Use the [glossary](GLOSSARY.md) for technical terms. See the [architecture decisions](docs/adr/README.md) for the reasons for the design.
 
 - [CLI wiring](internal/cli/daemon.go) starts the daemon and connects its components.
-- [Job Intake](internal/jobs/intake.go) applies the same policy to REST and MCP job changes. Import and replication use separate paths.
+- [Job Intake](internal/jobs/intake.go) applies the same policy to REST and MCP Job changes. Create and update commit the Job and its items together. Scheduler reload, configuration flush scheduling, and broadcast follow commit. Replication, imports, Runner item edits, and item remediation use separate paths. See [ADR 0007](docs/adr/0007-atomic-job-aggregate-mutation.md) for effect and error handling.
 - [Scheduler](internal/scheduler/) sets job start times. The [Runner](internal/runner/) starts jobs, reports progress, and prevents conflicting restore and maintenance operations.
 - [Engine handlers](internal/engine/types.go) do backup and restore operations for each item type. The [storage adapters](internal/storage/adapter.go) connect to storage destinations.
 - [Database](internal/db/) stores records and configuration snapshots. The [deduplication code](internal/dedup/) manages shared backup data and its keys.
