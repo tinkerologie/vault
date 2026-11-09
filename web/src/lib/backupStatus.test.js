@@ -12,9 +12,9 @@ describe('deriveBackupStatus', () => {
   it.each([
     ['healthy', READY, { state: 'healthy', tone: 'success', title: 'Backups healthy', hrefs: [] }],
     ['unprotected', { ...READY, unprotected: 3, protectedCount: 4 }, { state: 'attention', tone: 'warning', title: 'Needs attention', hrefs: ['/jobs'] }],
-    ['failed jobs', { ...READY, failures: 2 }, { state: 'attention', tone: 'danger', title: 'Needs attention', hrefs: ['/history'] }],
-    ['warnings', { ...READY, warnings: 1 }, { state: 'attention', tone: 'warning', title: 'Needs attention', hrefs: ['/history'] }],
-    ['mixed', { ...READY, failures: 1, warnings: 1, unprotected: 2 }, { state: 'attention', tone: 'danger', title: 'Needs attention', hrefs: ['/history', '/history', '/jobs'] }],
+    ['failed jobs', { ...READY, failures: 2 }, { state: 'attention', tone: 'danger', title: 'Needs attention', hrefs: ['/history?status=failed&review=outstanding'] }],
+    ['warnings', { ...READY, warnings: 1 }, { state: 'attention', tone: 'warning', title: 'Needs attention', hrefs: ['/history?status=partial&review=outstanding'] }],
+    ['mixed', { ...READY, failures: 1, warnings: 1, unprotected: 2 }, { state: 'attention', tone: 'danger', title: 'Needs attention', hrefs: ['/history?status=failed&review=outstanding', '/history?status=partial&review=outstanding', '/jobs'] }],
     ['first run', { summary: FRESH }, { state: 'setup', tone: 'info', title: 'Set up your first backup', hrefs: ['/storage'] }],
     ['jobs without storage', { hasJobs: true, summary: FRESH }, { state: 'setup', tone: 'info', title: 'Set up your first backup', hrefs: ['/storage'] }],
     ['storage without jobs', { hasStorage: true, summary: FRESH }, { state: 'setup', tone: 'info', title: 'Create your first backup job', hrefs: ['/jobs'] }],
@@ -25,7 +25,7 @@ describe('deriveBackupStatus', () => {
     ['incomplete data', { ...READY, incomplete: true }, { state: 'unknown', tone: 'neutral', title: 'Backup health unavailable', hrefs: ['/history'] }],
     ['replica healthy', { ...READY, replica: true }, { state: 'healthy', tone: 'success', title: 'Backups healthy', hrefs: [] }],
     ['replica ignores unprotected', { ...READY, replica: true, unprotected: 3 }, { state: 'healthy', tone: 'success', title: 'Backups healthy', hrefs: [] }],
-    ['replica failures', { ...READY, replica: true, failures: 1 }, { state: 'attention', tone: 'danger', title: 'Needs attention', hrefs: ['/history'] }],
+    ['replica failures', { ...READY, replica: true, failures: 1 }, { state: 'attention', tone: 'danger', title: 'Needs attention', hrefs: ['/history?status=failed&review=outstanding'] }],
     ['replica first run', { replica: true }, { state: 'setup', tone: 'info', title: 'No backup data on this replica yet', hrefs: ['/replication'] }],
     ['replica waiting', { hasStorage: true, hasJobs: true, replica: true, pending: 1, total: 1, summary: FRESH }, { state: 'waiting', tone: 'info', title: 'No backups completed yet', hrefs: [] }],
   ])('%s', (_name, input, expected) => {
@@ -245,8 +245,8 @@ describe('false "Backups healthy" (#527)', () => {
   const STALE = { id: 3, name: 'Photos', enabled: false, last_success_at: '2025-03-12T02:00:00Z' }
 
   it.each([
-    ['skipped runs', { skipped: 2 }, 'warning', ['/history'], '2 runs skipped'],
-    ['cancelled runs', { cancelled: 1 }, 'warning', ['/history'], '1 run cancelled'],
+    ['skipped runs', { skipped: 2 }, 'warning', ['/history?status=skipped&review=outstanding'], '2 runs skipped'],
+    ['cancelled runs', { cancelled: 1 }, 'warning', ['/history?status=cancelled&review=outstanding'], '1 run cancelled'],
     ['one unhealthy destination', { unhealthy: ['NAS'] }, 'danger', ['/storage'], 'Storage "NAS" is unhealthy'],
     ['several unhealthy destinations', { unhealthy: ['NAS', 'S3'] }, 'danger', ['/storage'], '2 storage destinations are unhealthy'],
     ['a disabled job gone stale', { summary: { ...SUMMARY, stale_jobs: [STALE] } }, 'warning', ['/jobs'], 'Disabled job "Photos" last backed up 2025-03-12'],
@@ -295,6 +295,18 @@ describe('false "Backups healthy" (#527)', () => {
       expect(merged).toEqual({ failures: 1, warnings: 2, skipped: 3, cancelled: 4 })
     })
 
+    it('uses outstanding counters where present and falls back per field', () => {
+      const summary = { recent_failed: 4, recent_partial: 3, recent_skipped: 2, outstanding_failed: 0, outstanding_partial: 1 }
+      expect(mergeRunCounts(NONE, summary)).toEqual({ failures: 0, warnings: 1, skipped: 2, cancelled: 0 })
+    })
+
+    it('clears cancellation and low-score attention when all scored runs were reviewed', () => {
+      const summary = { protected_items: 5, recent_success: 0, recent_cancelled: 2, outstanding_cancelled: 0, health_score: 40 }
+      const counts = mergeRunCounts(NONE, summary)
+      expect(deriveBackupStatus({ ...READY, ...counts, summary }).issues).toEqual([])
+      expect(healthText(summary, counts)).toBe('Backups OK · no scored runs')
+    })
+
     it('keeps what only the sample saw, and copes with no summary', () => {
       const sample = { failed: 1, warnings: 2, skipped: 3, cancelled: 4 }
       expect(mergeRunCounts(sample, null)).toEqual({ failures: 1, warnings: 2, skipped: 3, cancelled: 4 })
@@ -302,6 +314,15 @@ describe('false "Backups healthy" (#527)', () => {
   })
 
   describe('countRunOutcomes', () => {
+    it('ignores reviewed cancellations and restore failures while counting new failures', () => {
+      const runs = [
+        { status: 'cancelled', acknowledged_at: '2026-11-08T00:00:00Z' },
+        { status: 'failed', run_type: 'restore', acknowledged_at: '2026-11-08T00:00:00Z' },
+        { status: 'failed', acknowledged_at: null },
+      ]
+      expect(countRunOutcomes(runs)).toEqual({ failed: 1, warnings: 0, skipped: 0, cancelled: 0 })
+    })
+
     it('counts skipped and cancelled backups', () => {
       const runs = [{ status: 'skipped' }, { status: 'skipped', run_type: 'backup' }, { status: 'cancelled' }]
       expect(countRunOutcomes(runs)).toMatchObject({ skipped: 2, cancelled: 1 })

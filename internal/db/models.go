@@ -153,6 +153,10 @@ type JobRun struct {
 	// previously read identically.
 	StalledAt   *time.Time `json:"stalled_at"`
 	StallReason string     `json:"stall_reason"`
+	// Review metadata is separate from the original run outcome.
+	AcknowledgedAt    *time.Time `json:"acknowledged_at"`
+	AcknowledgedBy    *string    `json:"acknowledged_by"`
+	AcknowledgeReason *string    `json:"acknowledge_reason"`
 }
 
 type RestorePoint struct {

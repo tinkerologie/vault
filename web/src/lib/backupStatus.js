@@ -17,6 +17,7 @@ const plural = (count, one, many = `${one}s`) => `${count} ${count === 1 ? one :
 export function countRunOutcomes(runs) {
   const counts = { failed: 0, warnings: 0, skipped: 0, cancelled: 0 }
   for (const run of runs || []) {
+    if (run.acknowledged_at) continue
     if (run.status === 'failed' || run.status === 'error') counts.failed++
     else if ((run.run_type || 'backup') !== 'backup') continue
     else if (run.status === 'partial') counts.warnings++
@@ -32,10 +33,10 @@ export function countRunOutcomes(runs) {
  */
 export function mergeRunCounts(sample, summary) {
   return {
-    failures: Math.max(sample.failed, summary?.recent_failed ?? 0),
-    warnings: Math.max(sample.warnings, summary?.recent_partial ?? 0),
-    skipped: Math.max(sample.skipped, summary?.recent_skipped ?? 0),
-    cancelled: Math.max(sample.cancelled, summary?.recent_cancelled ?? 0),
+    failures: Math.max(sample.failed, summary?.outstanding_failed ?? summary?.recent_failed ?? 0),
+    warnings: Math.max(sample.warnings, summary?.outstanding_partial ?? summary?.recent_partial ?? 0),
+    skipped: Math.max(sample.skipped, summary?.outstanding_skipped ?? summary?.recent_skipped ?? 0),
+    cancelled: Math.max(sample.cancelled, summary?.outstanding_cancelled ?? summary?.recent_cancelled ?? 0),
   }
 }
 
@@ -68,8 +69,15 @@ function ranInWindow(summary) {
 
 // A score that says something is wrong. Items not yet backed up score low too,
 // and those are reported as waiting, not as a low score.
+function hasScoredRuns(summary) {
+  return Boolean(summary.recent_success ||
+    (summary.outstanding_failed ?? summary.recent_failed) ||
+    (summary.outstanding_skipped ?? summary.recent_skipped) ||
+    (summary.outstanding_cancelled ?? summary.recent_cancelled))
+}
+
 function isLowScore(summary) {
-  return Boolean(summary?.protected_items) && ranInWindow(summary) && (summary.health_score ?? 0) < HEALTHY_SCORE
+  return Boolean(summary?.protected_items) && hasScoredRuns(summary) && (summary.health_score ?? 0) < HEALTHY_SCORE
 }
 
 function storageSummary(names) {
@@ -105,16 +113,16 @@ function setupVerdict({ hasStorage, replica }) {
 function attentionIssues({ failures, warnings, skipped, cancelled, unhealthy, stale, unprotected, total, summary, replica }) {
   const issues = []
   if (failures > 0) {
-    issues.push({ key: 'failures', summary: plural(failures, 'recent failure'), action: 'Review failures', href: '/history' })
+    issues.push({ key: 'failures', summary: plural(failures, 'recent failure'), action: 'Review failures', href: '/history?status=failed&review=outstanding' })
   }
   if (skipped > 0) {
-    issues.push({ key: 'skipped', summary: `${plural(skipped, 'run')} skipped`, action: 'Review skipped runs', href: '/history' })
+    issues.push({ key: 'skipped', summary: `${plural(skipped, 'run')} skipped`, action: 'Review skipped runs', href: '/history?status=skipped&review=outstanding' })
   }
   if (cancelled > 0) {
-    issues.push({ key: 'cancelled', summary: `${plural(cancelled, 'run')} cancelled`, action: 'Review cancelled runs', href: '/history' })
+    issues.push({ key: 'cancelled', summary: `${plural(cancelled, 'run')} cancelled`, action: 'Review cancelled runs', href: '/history?status=cancelled&review=outstanding' })
   }
   if (warnings > 0) {
-    issues.push({ key: 'warnings', summary: `${plural(warnings, 'run')} finished with warnings`, action: 'Review warnings', href: '/history' })
+    issues.push({ key: 'warnings', summary: `${plural(warnings, 'run')} finished with warnings`, action: 'Review warnings', href: '/history?status=partial&review=outstanding' })
   }
   if (unhealthy.length > 0) {
     issues.push({ key: 'storage', summary: storageSummary(unhealthy), action: 'Check storage', href: '/storage' })
@@ -228,7 +236,7 @@ function healthQualifiers({ unprotected = 0, pending = 0, warnings = 0, incomple
 
 // Restore points exist but no runs are on record, so the score means nothing.
 function isScoreUnassessed(summary) {
-  return Boolean(summary.protected_items) && !ranInWindow(summary)
+  return Boolean(summary.protected_items) && !hasScoredRuns(summary)
 }
 
 /**
@@ -237,7 +245,7 @@ function isScoreUnassessed(summary) {
  */
 export function healthText(summary, counts = {}) {
   if (!summary) return 'Health unavailable'
-  const failures = counts.failures ?? summary.recent_failed ?? 0
+  const failures = counts.failures ?? summary.outstanding_failed ?? summary.recent_failed ?? 0
   if (failures > 0) return plural(failures, 'recent failure')
   const problems = healthProblems(counts, summary)
   const qualifiers = healthQualifiers(counts)
@@ -245,7 +253,9 @@ export function healthText(summary, counts = {}) {
   // A fresh install scores 0 because nothing has completed yet, not because
   // anything went wrong, so "needs attention" there would be a false alarm.
   if (!hasBackupHistory(summary)) return 'No backups completed yet'
-  if (isScoreUnassessed(summary)) return ['Backups OK', 'no recent runs', ...qualifiers].join(' · ')
+  if (isScoreUnassessed(summary)) {
+    return ['Backups OK', ranInWindow(summary) ? 'no scored runs' : 'no recent runs', ...qualifiers].join(' · ')
+  }
   if (summary.protected_items === 0 && ranInWindow(summary)) return ['No items backed up yet', ...qualifiers].join(' · ')
   if ((summary.health_score ?? 0) < HEALTHY_SCORE) return ['Needs attention', ...qualifiers].join(' · ')
   return qualifiers.length ? ['Backups OK', ...qualifiers].join(' · ') : 'All backups healthy'
@@ -257,7 +267,7 @@ export function healthTone(summary, counts = {}) {
   if (isScoreUnassessed(summary)) return 'warning'
   const score = summary.health_score ?? 0
   if (score < 50) return 'danger'
-  if ((counts.failures ?? summary.recent_failed ?? 0) > 0) return 'warning'
+  if ((counts.failures ?? summary.outstanding_failed ?? summary.recent_failed ?? 0) > 0) return 'warning'
   if (score < HEALTHY_SCORE || healthQualifiers(counts).length > 0 || healthProblems(counts, summary).length > 0) return 'warning'
   return 'success'
 }

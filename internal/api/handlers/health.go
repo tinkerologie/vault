@@ -100,6 +100,7 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var recentSuccess, recentFailed, recentPartial, recentSkipped, recentCancelled int
+	var outstandingFailed, outstandingPartial, outstandingSkipped, outstandingCancelled int
 	var lastSuccessTime *time.Time
 	staleJobs := []staleJob{}
 	now := time.Now()
@@ -191,12 +192,24 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 				recentSuccess++
 			case "failed", "error":
 				recentFailed++
+				if run.AcknowledgedAt == nil {
+					outstandingFailed++
+				}
 			case "partial":
 				recentPartial++
+				if run.AcknowledgedAt == nil {
+					outstandingPartial++
+				}
 			case "skipped":
 				recentSkipped++
+				if run.AcknowledgedAt == nil {
+					outstandingSkipped++
+				}
 			case "cancelled":
 				recentCancelled++
+				if run.AcknowledgedAt == nil {
+					outstandingCancelled++
+				}
 			}
 		}
 	}
@@ -232,25 +245,35 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		protectionPct = (protectedItems * 100) / totalItems
 	}
 
-	// Health score: weighted average of protection % and success rate.
+	// Acknowledgement clears outstanding attention without rewriting historical metrics.
+	outstandingTotal := recentSuccess + outstandingFailed + outstandingSkipped + outstandingCancelled
+	outstandingSuccessRate := 0
+	if outstandingTotal > 0 {
+		outstandingSuccessRate = (recentSuccess * 100) / outstandingTotal
+	}
+	// Health score: weighted average of protection % and outstanding success rate.
 	// Round to nearest integer rather than truncating.
-	healthScore := (protectionPct*40 + successRate*60 + 50) / 100
+	healthScore := (protectionPct*40 + outstandingSuccessRate*60 + 50) / 100
 
 	result := map[string]any{
-		"health_score":     healthScore,
-		"total_items":      totalItems,
-		"protected_items":  protectedItems,
-		"protected_keys":   protectedKeys,
-		"pending_keys":     pendingKeys,
-		"protection_pct":   protectionPct,
-		"success_rate":     successRate,
-		"recent_success":   recentSuccess,
-		"recent_failed":    recentFailed,
-		"recent_partial":   recentPartial,
-		"recent_skipped":   recentSkipped,
-		"recent_cancelled": recentCancelled,
-		"last_success_at":  lastSuccessTime,
-		"stale_jobs":       staleJobs,
+		"health_score":          healthScore,
+		"total_items":           totalItems,
+		"protected_items":       protectedItems,
+		"protected_keys":        protectedKeys,
+		"pending_keys":          pendingKeys,
+		"protection_pct":        protectionPct,
+		"success_rate":          successRate,
+		"recent_success":        recentSuccess,
+		"recent_failed":         recentFailed,
+		"recent_partial":        recentPartial,
+		"recent_skipped":        recentSkipped,
+		"recent_cancelled":      recentCancelled,
+		"outstanding_failed":    outstandingFailed,
+		"outstanding_partial":   outstandingPartial,
+		"outstanding_skipped":   outstandingSkipped,
+		"outstanding_cancelled": outstandingCancelled,
+		"last_success_at":       lastSuccessTime,
+		"stale_jobs":            staleJobs,
 	}
 	respondJSON(w, http.StatusOK, result)
 }

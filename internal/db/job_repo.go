@@ -569,7 +569,8 @@ func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
 		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
 		items_total, items_done, items_failed, size_bytes,
 		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
-		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at, stalled_at, COALESCE(stall_reason, '')
+		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at, stalled_at, COALESCE(stall_reason, ''),
+		acknowledged_at, acknowledged_by, acknowledge_reason
 		FROM job_runs ORDER BY started_at DESC LIMIT ?`, limit,
 	)
 	if err != nil {
@@ -583,7 +584,8 @@ func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
 			&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
 			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
 			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt,
-			&run.StalledAt, &run.StallReason); err != nil {
+			&run.StalledAt, &run.StallReason,
+			&run.AcknowledgedAt, &run.AcknowledgedBy, &run.AcknowledgeReason); err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)
@@ -602,12 +604,14 @@ func (d *DB) ListJobRuns(ctx context.Context, limitPerJob int) ([]JobRun, error)
 				CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END AS duration_seconds,
 				retry_of_run_id, COALESCE(retry_attempt, 0) AS retry_attempt, retry_next_at,
 				stalled_at, COALESCE(stall_reason, '') AS stall_reason,
+				acknowledged_at, acknowledged_by, acknowledge_reason,
 				ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY started_at DESC, id DESC) AS row_num
 			FROM job_runs
 		)
 		SELECT id, job_id, status, backup_type, run_type, started_at, completed_at, log,
 			items_total, items_done, items_failed, size_bytes, duration_seconds,
-			retry_of_run_id, retry_attempt, retry_next_at, stalled_at, stall_reason
+			retry_of_run_id, retry_attempt, retry_next_at, stalled_at, stall_reason,
+			acknowledged_at, acknowledged_by, acknowledge_reason
 		FROM ranked WHERE row_num <= ? ORDER BY started_at DESC, id DESC`, limitPerJob,
 	)
 	if err != nil {
@@ -621,7 +625,8 @@ func (d *DB) ListJobRuns(ctx context.Context, limitPerJob int) ([]JobRun, error)
 			&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
 			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
 			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt,
-			&run.StalledAt, &run.StallReason); err != nil {
+			&run.StalledAt, &run.StallReason,
+			&run.AcknowledgedAt, &run.AcknowledgedBy, &run.AcknowledgeReason); err != nil {
 			return nil, fmt.Errorf("scan job run: %w", err)
 		}
 		runs = append(runs, run)
@@ -640,17 +645,59 @@ func (d *DB) GetJobRun(id int64) (JobRun, error) {
 		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
 		items_total, items_done, items_failed, size_bytes,
 		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
-		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at, stalled_at, COALESCE(stall_reason, '')
+		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at, stalled_at, COALESCE(stall_reason, ''),
+		acknowledged_at, acknowledged_by, acknowledge_reason
 		FROM job_runs WHERE id = ?`, id,
 	).Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
 		&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
 		&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
 		&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt,
-		&run.StalledAt, &run.StallReason)
+		&run.StalledAt, &run.StallReason,
+		&run.AcknowledgedAt, &run.AcknowledgedBy, &run.AcknowledgeReason)
 	if err == sql.ErrNoRows {
 		return run, ErrNotFound
 	}
 	return run, err
+}
+
+// AcknowledgeJobRuns records review metadata for terminal problem runs.
+func (d *DB) AcknowledgeJobRuns(ctx context.Context, ids []int64, actor, reason string) (acknowledged, skipped int, err error) {
+	if len(ids) == 0 {
+		return 0, 0, nil
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	args := make([]any, 0, len(ids)+3)
+	args = append(args, time.Now().UTC(), actor, reason)
+	for _, id := range ids {
+		if _, duplicate := seen[id]; duplicate {
+			continue
+		}
+		seen[id] = struct{}{}
+		args = append(args, id)
+	}
+
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("begin run acknowledgement: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Only placeholders are generated. All request values are bound.
+	placeholders := strings.Repeat("?,", len(seen)-1) + "?"
+	result, err := tx.ExecContext(ctx, `UPDATE job_runs
+		SET acknowledged_at = ?, acknowledged_by = ?, acknowledge_reason = ?
+		WHERE acknowledged_at IS NULL AND status IN ('failed', 'error', 'cancelled', 'skipped', 'partial')
+		AND id IN (`+placeholders+`)`, args...) // #nosec G202 -- only placeholders are concatenated
+	if err != nil {
+		return 0, 0, fmt.Errorf("acknowledge job runs: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, 0, fmt.Errorf("count acknowledged job runs: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, fmt.Errorf("commit run acknowledgement: %w", err)
+	}
+	return int(count), len(seen) - int(count), nil
 }
 
 // PurgeJobRuns deletes all job run records and returns the count of deleted rows.
@@ -667,7 +714,8 @@ func (d *DB) GetJobRuns(jobID int64, limit int) ([]JobRun, error) {
 		`SELECT id, job_id, status, backup_type, COALESCE(run_type, 'backup'), started_at, completed_at, log,
 		items_total, items_done, items_failed, size_bytes,
 		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
-		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at, stalled_at, COALESCE(stall_reason, '')
+		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at, stalled_at, COALESCE(stall_reason, ''),
+		acknowledged_at, acknowledged_by, acknowledge_reason
 		FROM job_runs WHERE job_id = ? ORDER BY started_at DESC LIMIT ?`, jobID, limit,
 	)
 	if err != nil {
@@ -681,7 +729,8 @@ func (d *DB) GetJobRuns(jobID int64, limit int) ([]JobRun, error) {
 			&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
 			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
 			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt,
-			&run.StalledAt, &run.StallReason); err != nil {
+			&run.StalledAt, &run.StallReason,
+			&run.AcknowledgedAt, &run.AcknowledgedBy, &run.AcknowledgeReason); err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)

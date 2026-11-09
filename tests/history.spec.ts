@@ -65,3 +65,24 @@ test.describe('Backup History & Run Inspector', () => {
     await expect(page.getByText('Deduplication savings 53%')).toBeVisible();
   });
 });
+
+test('can acknowledge one failed run without changing its outcome', async ({ page }) => {
+  await setupVaultMockApi(page);
+  await page.goto('/#/history?status=failed');
+  const rowAction = page.getByRole('button', { name: 'Acknowledge', exact: true });
+  await rowAction.click();
+  await expect(page.getByText('Acknowledged 1 run. Skipped 0.')).toBeVisible();
+  await expect(page.getByText('Acknowledged', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^VM Backups failed/ })).toBeVisible();
+  await expect(rowAction).toHaveCount(0);
+});
+
+test('replicas can review History but have no acknowledgement actions', async ({ page }) => {
+  await setupVaultMockApi(page, { replica: true });
+  await page.goto('/#/history?status=failed&review=outstanding');
+  await expect(page.getByText('Read-only replica', { exact: false }).first()).toBeVisible();
+  await expect(page.locator('main span').getByText('VM Backups', { exact: true })).toBeVisible();
+  await expect(page.getByText('failed', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Acknowledge/ })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: /Select run .* for acknowledgement/ })).toHaveCount(0);
+});

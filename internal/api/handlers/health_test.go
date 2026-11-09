@@ -710,3 +710,51 @@ func TestScheduleStepper_RareRunsAndNeverFiring(t *testing.T) {
 		t.Errorf("never-firing schedule = %v, %v", at, ok)
 	}
 }
+
+func TestHealthSummaryAcknowledgedRuns(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		statuses []string
+		ackCount int
+		want     map[string]float64
+	}{
+		{"reviewed cancellations", []string{"cancelled", "cancelled", "success", "success"}, 2,
+			map[string]float64{"recent_cancelled": 2, "outstanding_cancelled": 0, "success_rate": 50, "health_score": 60}},
+		{"mixed failures", []string{"failed", "error", "success"}, 1,
+			map[string]float64{"recent_failed": 2, "outstanding_failed": 1, "success_rate": 33, "health_score": 30}},
+		{"no scored runs left", []string{"skipped", "partial", "cancelled"}, 3,
+			map[string]float64{"recent_skipped": 1, "recent_partial": 1, "recent_cancelled": 1,
+				"outstanding_skipped": 0, "outstanding_partial": 0, "outstanding_cancelled": 0, "health_score": 0}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newTestDB(t)
+			jobID, err := d.CreateJob(db.Job{Name: "VMs", BackupTypeChain: "full"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ids []int64
+			for _, status := range tt.statuses {
+				id, err := d.CreateJobRun(db.JobRun{JobID: jobID, Status: status, BackupType: "full"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ids = append(ids, id)
+			}
+			if _, _, err := d.AcknowledgeJobRuns(t.Context(), ids[:tt.ackCount], "api", ""); err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			NewHealthHandler(d).Summary(w, newReq(http.MethodGet, "/api/v1/health/summary", nil))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", w.Code, w.Body)
+			}
+			var resp map[string]any
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatal(err)
+			}
+			for key, want := range tt.want {
+				assertFloat(t, resp, key, want)
+			}
+		})
+	}
+}

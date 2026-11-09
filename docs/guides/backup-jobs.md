@@ -258,6 +258,19 @@ Jobs also have an automatic safeguard:
 
 ---
 
+## Acknowledging Reviewed Runs
+
+1. On the Dashboard, click the **Review** link for the warning to open filtered History.
+2. Review the original run outcome and details.
+3. If necessary, enter a reason.
+4. For one run, click **Acknowledge**. For multiple runs, select the runs. Then click **Acknowledge selected**.
+
+**Select all needing review** includes all matching runs in the loaded history, including runs on later pages.
+
+History keeps the original result, logs, and acknowledgement details. Clear **Needs review** to see runs you already acknowledged. Acknowledged runs stop contributing to outstanding Dashboard warnings. Historical success rates still include their original outcomes. Acknowledgement is available on the primary Vault instance.
+
+---
+
 ## Deleting a Job
 
 To delete a job:

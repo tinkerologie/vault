@@ -17,6 +17,9 @@ export const run = (id: number, status: string, jobId = 1) => ({
   completed_at: `2026-10-0${(id % 9) + 1}T02:15:00Z`,
   bytes_written: 1024,
   duration_seconds: 900,
+  acknowledged_at: null,
+  acknowledged_by: null,
+  acknowledge_reason: null,
 });
 
 /** A summary as the daemon would send it. Items not listed count as unprotected. */
