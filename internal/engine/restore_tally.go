@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"os"
 	"sync/atomic"
 )
 
@@ -50,4 +51,12 @@ func WithRestoreTally(ctx context.Context, t *RestoreTally) context.Context {
 func RestoreTallyFrom(ctx context.Context) *RestoreTally {
 	t, _ := ctx.Value(restoreTallyKey{}).(*RestoreTally)
 	return t
+}
+
+type restoreWritesKey struct{}
+
+// WithRestoreWrites lets sequential tar extracts record the identity of each
+// file they write, keyed by archive path, for incremental chain pruning.
+func WithRestoreWrites(ctx context.Context, writes map[string]os.FileInfo) context.Context {
+	return context.WithValue(ctx, restoreWritesKey{}, writes)
 }

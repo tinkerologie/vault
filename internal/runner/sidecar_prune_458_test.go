@@ -188,7 +188,7 @@ func TestPruneChainResurrectedEarlyReturnsC458(t *testing.T) {
 	// Unknown job.
 	ghost := f.child
 	ghost.JobID = 9999
-	f.r.pruneChainResurrected([]db.RestorePoint{ghost}, "item", t.TempDir(), "", time.Now())
+	f.r.pruneChainResurrected([]db.RestorePoint{ghost}, "item", t.TempDir(), "", nil)
 
 	// Job whose destination cannot build an adapter.
 	badID, err := f.d.CreateStorageDestination(db.StorageDestination{Name: "c458-bogus", Type: "bogus", Config: "{}"})
@@ -201,10 +201,10 @@ func TestPruneChainResurrectedEarlyReturnsC458(t *testing.T) {
 	}
 	bad := f.child
 	bad.JobID = badJob
-	f.r.pruneChainResurrected([]db.RestorePoint{bad}, "item", t.TempDir(), "", time.Now())
+	f.r.pruneChainResurrected([]db.RestorePoint{bad}, "item", t.TempDir(), "", nil)
 
 	// No listing on the newest step.
-	f.r.pruneChainResurrected(chain, "item", t.TempDir(), "", time.Now())
+	f.r.pruneChainResurrected(chain, "item", t.TempDir(), "", nil)
 
 	// Listing present but the earlier step has no tar index.
 	writeStorageFiles(t, f.adapter, map[string]string{
@@ -215,7 +215,7 @@ func TestPruneChainResurrectedEarlyReturnsC458(t *testing.T) {
 	if err := os.WriteFile(keepFile, []byte("k"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	f.r.pruneChainResurrected(chain, "item", dst, "", time.Now())
+	f.r.pruneChainResurrected(chain, "item", dst, "", nil)
 	if _, err := os.Stat(keepFile); err != nil {
 		t.Fatalf("missing index must skip the prune: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestPruneChainResurrectedEarlyReturnsC458(t *testing.T) {
 	writeStorageFiles(t, f.adapter, map[string]string{
 		"c458-prune/1/item/data.tar" + engine.IndexSuffix: c458IndexJSON(t, engine.TarIndexEntry{Path: "x", Size: 1}),
 	})
-	f.r.pruneChainResurrected(chain, "item", filepath.Join(t.TempDir(), "does-not-exist"), "", time.Now())
+	f.r.pruneChainResurrected(chain, "item", filepath.Join(t.TempDir(), "does-not-exist"), "", nil)
 }
 
 func TestPruneChainResurrectedFolderDestinationC458(t *testing.T) {
@@ -234,11 +234,29 @@ func TestPruneChainResurrectedFolderDestinationC458(t *testing.T) {
 	if _, err := f.d.AddJobItem(db.JobItem{JobID: f.jobID, ItemType: "folder", ItemName: "docs", Settings: string(settings)}); err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
-	for name, body := range map[string]string{"stale.txt": "old!", "keep.txt": "kk", "wrongsize.txt": "abc"} {
-		if err := os.WriteFile(filepath.Join(dst, name), []byte(body), 0o644); err != nil {
+	writes := make(map[string]os.FileInfo)
+	for name, body := range map[string]string{
+		"stale.txt": "old!", "keep.txt": "kk", "wrongsize.txt": "abc",
+		"untouched.txt": "user", "replaced.txt": "old!",
+	} {
+		target := filepath.Join(dst, name)
+		if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		if name != "untouched.txt" {
+			info, err := os.Lstat(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writes[name] = info
+		}
+	}
+	replacement := filepath.Join(dst, "replacement.tmp")
+	if err := os.WriteFile(replacement, []byte("user"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, filepath.Join(dst, "replaced.txt")); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(dst, "olddir", "inner"), 0o755); err != nil {
 		t.Fatal(err)
@@ -251,13 +269,15 @@ func TestPruneChainResurrectedFolderDestinationC458(t *testing.T) {
 			engine.TarIndexEntry{Path: "stale.txt", Size: 4},
 			engine.TarIndexEntry{Path: "wrongsize.txt", Size: 99},
 			engine.TarIndexEntry{Path: "keep.txt", Size: 2},
+			engine.TarIndexEntry{Path: "untouched.txt", Size: 4},
+			engine.TarIndexEntry{Path: "replaced.txt", Size: 4},
 		),
 		"c458-prune/2/docs/data.tar" + engine.ListingSuffix: c458IndexJSON(t,
 			engine.TarIndexEntry{Path: "keep.txt", Size: 2},
 		),
 	})
 
-	f.r.pruneChainResurrected([]db.RestorePoint{f.base, f.child}, "docs", "", "", start)
+	f.r.pruneChainResurrected([]db.RestorePoint{f.base, f.child}, "docs", "", "", writes)
 
 	if _, err := os.Stat(filepath.Join(dst, "stale.txt")); !os.IsNotExist(err) {
 		t.Errorf("stale.txt should be pruned: %v", err)
@@ -265,7 +285,7 @@ func TestPruneChainResurrectedFolderDestinationC458(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dst, "olddir")); !os.IsNotExist(err) {
 		t.Errorf("empty olddir tree should be pruned: %v", err)
 	}
-	for _, kept := range []string{"keep.txt", "wrongsize.txt"} {
+	for _, kept := range []string{"keep.txt", "wrongsize.txt", "untouched.txt", "replaced.txt"} {
 		if _, err := os.Stat(filepath.Join(dst, kept)); err != nil {
 			t.Errorf("%s should survive: %v", kept, err)
 		}
@@ -287,7 +307,7 @@ func TestPruneChainResurrectedPluginFallbackPathC458(t *testing.T) {
 	if _, err := os.Stat(engine.PluginPath("c458-no-such-plugin")); err == nil {
 		t.Skip("unexpected plugin dir present on host")
 	}
-	f.r.pruneChainResurrected([]db.RestorePoint{f.base, f.child}, "c458-no-such-plugin", "", "", time.Now())
+	f.r.pruneChainResurrected([]db.RestorePoint{f.base, f.child}, "c458-no-such-plugin", "", "", nil)
 
 	// No matching job item at all: same name-derived fallback.
 	f2 := c458NewPruneFixture(t, "c458-orphan")
@@ -295,5 +315,5 @@ func TestPruneChainResurrectedPluginFallbackPathC458(t *testing.T) {
 		"c458-prune/1/c458-orphan/data.tar" + engine.IndexSuffix:   c458IndexJSON(t, engine.TarIndexEntry{Path: "a", Size: 1}),
 		"c458-prune/2/c458-orphan/data.tar" + engine.ListingSuffix: c458IndexJSON(t),
 	})
-	f2.r.pruneChainResurrected([]db.RestorePoint{f2.base, f2.child}, "c458-orphan", "", "", time.Now())
+	f2.r.pruneChainResurrected([]db.RestorePoint{f2.base, f2.child}, "c458-orphan", "", "", nil)
 }

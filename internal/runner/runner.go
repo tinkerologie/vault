@@ -4584,7 +4584,11 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		if usesMergedRestoreChain(itemType) {
 			return r.restoreMergedChain(ctx, chain, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
 		}
-		replayStart := time.Now()
+		var writes map[string]os.FileInfo
+		if (itemType == "folder" || itemType == "plugin") && len(filePaths) == 0 {
+			writes = make(map[string]os.FileInfo)
+			ctx = engine.WithRestoreWrites(ctx, writes)
+		}
 		replayedSteps := 0
 		for i, rp := range chain {
 			// Skip steps that conclusively did not capture this item (e.g. the
@@ -4614,8 +4618,8 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		// plugins in #351 now that they write a listing). Whole-item
 		// restores only — a partial file-picker restore writes nothing
 		// prunable.
-		if (itemType == "folder" || itemType == "plugin") && len(filePaths) == 0 {
-			r.pruneChainResurrected(chain, itemName, destination, passphrase, replayStart)
+		if writes != nil {
+			r.pruneChainResurrected(chain, itemName, destination, passphrase, writes)
 		}
 		return nil
 	}
@@ -4629,7 +4633,7 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 // (deleted or newly excluded after the base full — issue #231). Best-effort:
 // without a listing (pre-listing backups) or without every step's tar index
 // the prune is skipped, preserving the old overlay behaviour.
-func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destination, passphrase string, replayStart time.Time) {
+func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destination, passphrase string, writes map[string]os.FileInfo) {
 	newest := chain[len(chain)-1]
 
 	job, err := r.db.GetJob(newest.JobID)
@@ -4743,16 +4747,15 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 			pruneDirs = append(pruneDirs, rel)
 			continue
 		}
-		// Ownership guard: only remove what this replay demonstrably wrote —
-		// a regular file whose mtime falls after the replay started (classic
-		// untar stamps extraction time) and whose size matches the archived
-		// entry. The 2s tolerance absorbs kernel coarse-clock granularity:
-		// on Linux a file extracted milliseconds after replayStart can carry
-		// an mtime slightly BEFORE it (file timestamps tick coarser than
-		// time.Now()), which shielded freshly-extracted files from the prune.
+		// Sidecars alone cannot authorize deletion. Match the regular file
+		// this replay wrote, even when extraction preserved an old mtime.
+		restored := writes[rel]
+		if restored == nil {
+			continue
+		}
 		info, statErr := root.Lstat(rel)
 		if statErr != nil || !info.Mode().IsRegular() ||
-			info.ModTime().Before(replayStart.Add(-2*time.Second)) || info.Size() != we.size {
+			!os.SameFile(restored, info) || info.Size() != we.size {
 			continue
 		}
 		if err := root.Remove(rel); err == nil {

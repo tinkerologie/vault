@@ -3894,6 +3894,7 @@ type dirRestoreMeta struct {
 // has already staged.
 func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, include []string) error {
 	cleanDest := filepath.Clean(destDir)
+	writes, _ := ctx.Value(restoreWritesKey{}).(map[string]os.FileInfo)
 	destPrefix := cleanDest + string(filepath.Separator)
 	if !restorePathSafe(cleanDest) || strings.Contains(cleanDest, "../") || strings.Contains(cleanDest, "..\\") {
 		return fmt.Errorf("refusing to extract to suspicious directory %q", destDir)
@@ -3988,6 +3989,10 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 				_ = f.Close()
 				return fmt.Errorf("writing file %s: expected %d bytes, wrote %d", target, header.Size, n)
 			}
+			if writes != nil {
+				// Read identity from the descriptor that received the data.
+				writes[header.Name], _ = f.Stat()
+			}
 			if err := f.Close(); err != nil {
 				return fmt.Errorf("closing file %s: %w", target, err)
 			}
@@ -4048,6 +4053,9 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			removeExistingNonDir(target) // overwrite semantics for links (#175)
 			if err := os.Link(linkTarget, target); err != nil {
 				return fmt.Errorf("creating hard link %s -> %s: %w", target, linkTarget, err)
+			}
+			if writes != nil {
+				writes[header.Name], _ = os.Lstat(target)
 			}
 			applyRestoredMeta(cleanDest, target, restoredMeta{uid: -1, gid: -1, modTime: header.ModTime})
 		default:

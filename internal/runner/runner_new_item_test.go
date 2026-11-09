@@ -427,7 +427,7 @@ func TestPruneChainResurrectedSkipsHistoricalSteps(t *testing.T) {
 	destDir := t.TempDir()
 
 	// Should execute smoothly and skip step 1.
-	r.pruneChainResurrected([]db.RestorePoint{baseRP, childRP}, "new-item", destDir, "", time.Now())
+	r.pruneChainResurrected([]db.RestorePoint{baseRP, childRP}, "new-item", destDir, "", nil)
 }
 
 // TestRestoreMergedChainGenericSkipsHistoricalSteps verifies that restoreMergedChain
@@ -618,7 +618,13 @@ func TestPruneChainResurrected_PluginDestinationResolution(t *testing.T) {
 
 	r := New(database, ws.NewHub(), nil)
 
-	r.pruneChainResurrected([]db.RestorePoint{baseRP, childRP}, "test-plugin", "", "", time.Now())
+	restored, err := os.Lstat(filepath.Join(pluginDest, "resurrected.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.pruneChainResurrected([]db.RestorePoint{baseRP, childRP}, "test-plugin", "", "", map[string]os.FileInfo{
+		"resurrected.conf": restored,
+	})
 
 	if _, err := os.Stat(filepath.Join(pluginDest, "resurrected.conf")); !os.IsNotExist(err) {
 		t.Errorf("resurrected.conf was not pruned: %v", err)

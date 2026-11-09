@@ -43,7 +43,7 @@ func TestPruneDirectoryMarkKeepsFilesAndSymlinks(t *testing.T) {
 		"c458-prune/2/docs/data.tar" + engine.ListingSuffix: c458IndexJSON(t),
 	})
 
-	f.r.pruneChainResurrected([]db.RestorePoint{f.base, f.child}, "docs", "", "", f.child.CreatedAt)
+	f.r.pruneChainResurrected([]db.RestorePoint{f.base, f.child}, "docs", "", "", nil)
 
 	for _, kept := range []string{"precious.db", "link"} {
 		if _, err := os.Lstat(filepath.Join(dst, kept)); err != nil {

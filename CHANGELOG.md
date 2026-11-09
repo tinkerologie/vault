@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Wait for active HTTP requests, WebSockets, mounts, and daemon workers before closing Vault resources during shutdown (#624).
 - Save a Job and its items together so a failed item write leaves the prior Job and selection intact (#623).
 - Acknowledge reviewed run warnings from History without removing backup or restore records. The Dashboard clears the reviewed warnings and updates its health score (#627).
+- Remove deleted or excluded files from classic incremental folder and plugin restores even when the restored files retain old timestamps. Only prune files that the replay wrote.
 
 ### Changed
 

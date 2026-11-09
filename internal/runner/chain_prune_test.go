@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
 )
@@ -25,6 +26,7 @@ func TestChainRestoreDoesNotResurrect(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			storageDir := t.TempDir()
 			sourceDir := t.TempDir()
+			archivedTime := time.Now().Add(-time.Hour)
 			for name, content := range map[string]string{
 				"keep.txt":       "keep",
 				"delete-me.txt":  "doomed",
@@ -32,6 +34,9 @@ func TestChainRestoreDoesNotResurrect(t *testing.T) {
 			} {
 				if err := os.WriteFile(filepath.Join(sourceDir, name), []byte(content), 0o644); err != nil {
 					t.Fatalf("write %s: %v", name, err)
+				}
+				if err := os.Chtimes(filepath.Join(sourceDir, name), archivedTime, archivedTime); err != nil {
+					t.Fatalf("set archived time for %s: %v", name, err)
 				}
 			}
 
