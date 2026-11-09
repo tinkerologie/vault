@@ -331,6 +331,9 @@ var alterMigrations = []string{
 	// retry_next_at, so the driver hands back a time.Time.
 	"ALTER TABLE job_runs ADD COLUMN stalled_at TIMESTAMP DEFAULT NULL",
 	"ALTER TABLE job_runs ADD COLUMN stall_reason TEXT DEFAULT ''",
+	"ALTER TABLE job_runs ADD COLUMN acknowledged_at DATETIME",
+	"ALTER TABLE job_runs ADD COLUMN acknowledged_by TEXT",
+	"ALTER TABLE job_runs ADD COLUMN acknowledge_reason TEXT",
 	// Replication sync summary (#287). The per-sync counters were only ever
 	// broadcast on the completion WebSocket event, so a page load (or the 10s
 	// poll) could not tell "connected but nothing new to replicate" apart from

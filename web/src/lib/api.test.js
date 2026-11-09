@@ -43,6 +43,20 @@ describe('history', () => {
     expect(fetch).toHaveBeenCalledOnce()
     expect(fetch.mock.calls[0][0]).toBe('/api/v1/history?limit_per_job=200')
   })
+
+  it('posts reviewed run IDs and the reason, and returns the acknowledgement counts', async () => {
+    const response = { acknowledged: 2, skipped: 1 }
+    const fetch = vi.fn(async () => Response.json(response))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(api.acknowledgeRuns([4, 5, 6], 'Reviewed')).resolves.toEqual(response)
+
+    expect(fetch).toHaveBeenCalledOnce()
+    const [path, request] = fetch.mock.calls[0]
+    expect(path).toBe('/api/v1/runs/ack')
+    expect(request.method).toBe('POST')
+    expect(JSON.parse(request.body)).toEqual({ ids: [4, 5, 6], reason: 'Reviewed' })
+  })
 })
 
 describe('jobs', () => {

@@ -314,6 +314,7 @@ export const api = {
     request('GET', `/runs/${runId}/logs?after=${after}&limit=${limit}${tail ? '&tail=true' : ''}`),
 
   // History
+  acknowledgeRuns: (ids, reason) => request('POST', '/runs/ack', { ids, reason }),
   purgeHistory: () => request('DELETE', '/history'),
 
   // Recovery

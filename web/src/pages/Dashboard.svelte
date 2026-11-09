@@ -101,7 +101,7 @@
   }
 
   onMount(() => {
-    loadDashboard()
+    void runDashboardReload()
     // Re-pack tiles when any tile's measured height changes (data load, theme,
     // font) or the viewport resizes. Content height depends only on tile width
     // (fixed by its column span), never on the row position we assign — so
@@ -130,11 +130,11 @@
         liveStartTime = null
         scheduleDashboardReload()
       }
-      if (msg.type === 'config_changed') {
+      if (msg.type === 'config_changed' || msg.type === 'job_runs_acknowledged') {
         // Storage / job / replication CRUD changes the inputs to the
         // 3-2-1 compliance widget, the protection-status panel, and the
         // recovery plan. Re-fetch so derived UI stays current without a
-        // page reload.
+        // page reload. Run acknowledgement also changes the health summary.
         scheduleDashboardReload()
       }
     })
@@ -1387,7 +1387,7 @@
   {/if}
 {/snippet}
 
-<PullToRefresh onrefresh={loadDashboard}>
+<PullToRefresh onrefresh={runDashboardReload}>
 <div>
   <div class="dash-page-head flex items-start justify-between gap-4 mb-6 flex-wrap">
     <div>

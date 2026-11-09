@@ -23,7 +23,7 @@ describe('StatusBanner', () => {
     render(StatusBanner, { status: deriveBackupStatus({ ...READY, failures: 1, unprotected: 2 }) })
     const links = screen.getAllByRole('link')
     expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
-      ['Review failures', '#/history'],
+      ['Review failures', '#/history?status=failed&review=outstanding'],
       ['Add to a backup job', '#/jobs'],
     ])
   })

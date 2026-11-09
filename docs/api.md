@@ -61,6 +61,8 @@ Then open `http://127.0.0.1:24085`. Use the Unraid web UI, an SSH tunnel, or the
 | GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal)                                                                                       |
 | GET    | `/release/latest`    | Latest GitHub release metadata (used by the About card update badge)                                                                                          |
 
+The `recent_*` counts and `success_rate` include acknowledged backup runs. The `outstanding_failed`, `outstanding_skipped`, `outstanding_cancelled`, and `outstanding_partial` counts include only unacknowledged runs in the same per-job window. Protection coverage makes up 40% of the health score. The remaining 60% comes from the share of successes among successful and outstanding failed, skipped, and cancelled backup runs. With no scored runs, the success component is zero.
+
 ## Jobs
 
 The job payload's `schedule`, `verify_schedule` and `full_backup_schedule` fields accept standard 5-field cron expressions (`minute hour day-of-month month day-of-week`). An empty `schedule` means manual-only for backups — the scheduler skips regular runs entirely. Similarly, an empty `verify_schedule` or `full_backup_schedule` disables that secondary schedule. Arbitrary expressions are accepted, including steps, ranges and lists, along with the `@daily`-style descriptors and Vault's `L` day-of-month token (last day of the month). An expression the scheduler cannot parse is rejected at create/update time rather than stored and silently never run.
@@ -175,11 +177,14 @@ A restore of selected files reports the size it actually wrote (`size_source: "r
 
 ## History
 
-| Method | Endpoint   | Description                                      |
-| ------ | ---------- | ------------------------------------------------ |
-| DELETE | `/history` | Purge all job run history records (irreversible) |
+| Method | Endpoint    | Description                                              |
+| ------ | ----------- | -------------------------------------------------------- |
+| DELETE | `/history`  | Purge all job run history records (irreversible)         |
+| POST   | `/runs/ack` | Acknowledge reviewed backup or restore runs on a primary |
 
-> Per-job history is available at `GET /jobs/{id}/history`. To get history for all jobs, send a request for each job. Combine the results in your client.
+Use `GET /history?limit_per_job=N` for all jobs, or `GET /jobs/{id}/history` for one job. Run records include `acknowledged_at`, `acknowledged_by`, and `acknowledge_reason`. These fields are null until an acknowledgement is recorded. The run's original outcome remains in the same record.
+
+To acknowledge runs, send `{"ids":[12,34],"reason":"Reviewed"}`. Supply 1 to 1,000 positive run IDs and an optional reason of up to 500 characters. Vault acknowledges failed, error, cancelled, skipped, and partial runs. The response is `{"acknowledged":2,"skipped":0}`. Counts are based on unique IDs. Missing, ineligible, and previously acknowledged runs count as skipped. Invalid JSON returns `400`, invalid field values return `422`, and replicas return `403`.
 
 Vault masks secrets in storage responses. Send the masked value to keep the stored secret on update. If you change a connection field in this list, enter the secret again.
 
@@ -202,7 +207,7 @@ On a `vault replica`, you can create, edit, test, and sync a source. The replica
 - Import
 - Circuit breaker closure
 - Forced storage destination deletion and backup file deletion
-- History and activity purges
+- History and activity purges, and run acknowledgement
 - Anomaly acknowledgement
 
 A sync copies only jobs with `source_id` set to `0` on the remote server. These jobs originated on that server. Vault skips jobs that the remote server copied from another source. To receive those jobs, add their origin server as a source.

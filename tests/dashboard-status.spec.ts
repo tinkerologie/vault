@@ -268,8 +268,8 @@ test.describe('states that used to read as healthy', () => {
 test.describe('banner actions', () => {
   const ACTIONS: { state: VaultMockOptions; name: string; heading: string; hash: string }[] = [
     { state: { healthSummary: summary(ALL_ITEM_KEYS.slice(0, 4)), historyRuns: [run(1, 'completed')] }, name: 'Add to a backup job', heading: 'Backup Jobs', hash: '#/jobs' },
-    { state: { healthSummary: summary(ALL_ITEM_KEYS, { recent_failed: 1 }), historyRuns: [run(1, 'failed')] }, name: 'Review failures', heading: 'Backup & Restore History', hash: '#/history' },
-    { state: { healthSummary: summary(ALL_ITEM_KEYS), historyRuns: [run(1, 'partial')] }, name: 'Review warnings', heading: 'Backup & Restore History', hash: '#/history' },
+    { state: { healthSummary: summary(ALL_ITEM_KEYS, { recent_failed: 1 }), historyRuns: [run(1, 'failed')] }, name: 'Review failures', heading: 'Backup & Restore History', hash: '#/history?status=failed&review=outstanding' },
+    { state: { healthSummary: summary(ALL_ITEM_KEYS), historyRuns: [run(1, 'partial')] }, name: 'Review warnings', heading: 'Backup & Restore History', hash: '#/history?status=partial&review=outstanding' },
     { state: BANNER_STATES.find((s) => s.name === 'first run, no storage')!.options, name: 'Add storage', heading: 'Storage Destinations', hash: '#/storage' },
     { state: BANNER_STATES.find((s) => s.name === 'no jobs')!.options, name: 'Create a job', heading: 'Backup Jobs', hash: '#/jobs' },
     { state: BANNER_STATES.find((s) => s.name === 'waiting for first backup')!.options, name: 'View jobs', heading: 'Backup Jobs', hash: '#/jobs' },
@@ -555,4 +555,48 @@ test.describe('3-2-1 panel', () => {
     await expect(panel(page)).toContainText('Configured');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
+});
+
+test('reviewed cancellations clear Dashboard attention but stay in History', async ({ page }) => {
+  await open(page, {
+    healthSummary: summary(ALL_ITEM_KEYS, { recent_success: 3, recent_cancelled: 2, success_rate: 60, health_score: 76 }),
+    historyRuns: [run(1, 'completed'), run(2, 'cancelled', 2), run(3, 'cancelled', 2)],
+  });
+  await expect(banner(page)).toContainText('2 runs cancelled');
+  await banner(page).getByRole('link', { name: 'Review cancelled runs' }).click();
+  await expect(page.getByRole('button', { name: 'Cancelled', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const review = page.getByRole('checkbox', { name: 'Needs review' });
+  await expect(review).toBeChecked();
+  await page.getByRole('button', { name: /Select all needing review \(2\)/ }).click();
+  await page.getByRole('textbox', { name: 'Acknowledgement reason (optional)' }).fill('Reviewed both cancellations');
+  await page.getByRole('button', { name: 'Acknowledge selected' }).press('Enter');
+  await expect(page.getByText('Acknowledged 2 runs. Skipped 0.')).toBeVisible();
+  await expect(page.getByText('No matching runs')).toBeVisible();
+  await expect(review).toBeFocused();
+  await review.uncheck();
+  await expect(page.getByText('Acknowledged', { exact: true })).toHaveCount(2);
+  await expect(page.getByRole('button', { name: 'VM Backups cancelled' })).toHaveCount(2);
+  await page.getByRole('button', { name: 'VM Backups cancelled' }).first().click();
+  await expect(page.getByText('Reviewed both cancellations', { exact: true })).toBeVisible();
+
+  await page.goto('/#/');
+  await expect(title(page)).toHaveText('Backups healthy');
+  await expect(banner(page).getByRole('link', { name: 'Review cancelled runs' })).toHaveCount(0);
+  await expect(healthTile(page)).toContainText('100');
+});
+
+test('an open Dashboard refreshes when another client acknowledges a run', async ({ page }) => {
+  let current = summary(ALL_ITEM_KEYS, { recent_cancelled: 1, outstanding_cancelled: 1, health_score: 88 });
+  let socket: WebSocketRoute | undefined;
+  await setupVaultMockApi(page, { historyRuns: [run(1, 'completed')] });
+  await page.routeWebSocket('**/api/v1/ws', (ws) => { socket = ws; });
+  await page.route('**/api/v1/health/summary', (route) => route.fulfill(json(current)));
+  await page.goto('/#/');
+  await expect(banner(page)).toContainText('1 run cancelled');
+  await expect.poll(() => socket).toBeDefined();
+
+  current = { ...current, outstanding_cancelled: 0, health_score: 100 };
+  socket!.send(JSON.stringify({ type: 'job_runs_acknowledged', acknowledged: 1, ids: [2] }));
+  await expect(title(page)).toHaveText('Backups healthy');
+  await expect(banner(page).getByRole('link', { name: 'Review cancelled runs' })).toHaveCount(0);
 });

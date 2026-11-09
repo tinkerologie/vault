@@ -1,6 +1,7 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { SvelteSet, SvelteMap } from 'svelte/reactivity'
+  import { getRawHash } from '../lib/router.svelte.js'
   import { api, isReplicaMode } from '../lib/api.js'
   import { relTime, formatBytes, runSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate, itemDisplayLabel, itemTypeNoun, commonItemType, unchangedItemCount } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
@@ -54,7 +55,67 @@
   let allRuns = $state([])
   let selectedJob = $state(0)
   let selectedRunType = $state('all')
+  const statusFilters = [
+    ['all', 'All'], ['completed', 'Completed'], ['failed', 'Failed'], ['running', 'Running'],
+    ['skipped', 'Skipped'], ['cancelled', 'Cancelled'], ['partial', 'Partial'],
+  ]
   let selectedStatus = $state('all')
+  let needsReview = $state(false)
+  let reviewFilter = $state()
+  let selectedRunIds = new SvelteSet()
+  let acknowledgeReason = $state('')
+  let acknowledging = $state(false)
+  const acknowledgementBatchLimit = 1000
+
+  function runNeedsReview(run) {
+    return !run.acknowledged_at && ['failed', 'error', 'skipped', 'cancelled', 'partial'].includes(run.status)
+  }
+
+  function selectAllNeedingReview() {
+    for (const run of reviewableRuns) selectedRunIds.add(run.id)
+  }
+
+  function acknowledgementMessage(acknowledged, skipped) {
+    return `Acknowledged ${acknowledged} ${acknowledged === 1 ? 'run' : 'runs'}. Skipped ${skipped}.`
+  }
+
+  async function acknowledgeRuns(ids) {
+    if (acknowledging || ids.length === 0) return
+    const reason = acknowledgeReason
+    if ([...reason].length > 500) {
+      showToast('Reason must be at most 500 characters', 'error')
+      return
+    }
+    const trigger = document.activeElement
+    acknowledging = true
+    let acknowledged = 0
+    let skipped = 0
+    let processed = 0
+    try {
+      for (let offset = 0; offset < ids.length; offset += acknowledgementBatchLimit) {
+        const batch = ids.slice(offset, offset + acknowledgementBatchLimit)
+        const result = await api.acknowledgeRuns(batch, reason)
+        acknowledged += result.acknowledged
+        skipped += result.skipped
+        processed += batch.length
+      }
+      selectedRunIds.clear()
+      acknowledgeReason = ''
+      showToast(acknowledgementMessage(acknowledged, skipped), 'success')
+      await loadData(true)
+    } catch (e) {
+      const result = processed > 0 ? ` ${acknowledgementMessage(acknowledged, skipped)}` : ''
+      showToast((e.message || 'Failed to acknowledge runs') + result, 'error')
+      if (processed > 0) await loadData(true)
+    } finally {
+      acknowledging = false
+      await tick()
+      if (trigger instanceof HTMLButtonElement && document.activeElement === document.body) {
+        if (trigger.isConnected && !trigger.disabled) trigger.focus()
+        else reviewFilter?.focus()
+      }
+    }
+  }
   let searchQuery = $state('')
   let pageSize = 20
   let visibleCount = $state(pageSize)
@@ -100,38 +161,62 @@
     } catch { /* keep whatever is already loaded */ }
   }
 
+  function applyReviewFilters() {
+    const [path, query] = getRawHash().split('?', 2)
+    if (path !== '/history') return
+    const params = new URLSearchParams(query)
+    const status = params.get('status')
+    selectedStatus = statusFilters.some(([value]) => value === status) ? status : 'all'
+    needsReview = params.get('review') === 'outstanding'
+  }
+
   onMount(() => {
+    applyReviewFilters()
+    window.addEventListener('hashchange', applyReviewFilters)
     api.getRunnerStatus().then(s => restoreFromStatus(s)).catch(() => {})
     loadData()
     loadTrend()
     loadAnomalies()
     const unsub = onWsMessage((msg) => {
       handleProgressMessage(msg)
-      if (msg.type === 'job_run_started' || msg.type === 'job_run_completed' || msg.type === 'import_completed') {
+      if (msg.type === 'job_run_started' || msg.type === 'job_run_completed' || msg.type === 'import_completed' || msg.type === 'job_runs_acknowledged') {
         loadData(true)
       }
     })
-    return unsub
+    return () => {
+      window.removeEventListener('hashchange', applyReviewFilters)
+      unsub()
+    }
   })
 
+  let dataRequestGeneration = 0
   async function loadData(silent = false) {
+    const generation = ++dataRequestGeneration
     if (!silent) loading = true
     try {
-      jobs = (await api.listJobs()) || []
+      const [loadedJobs, runs] = await Promise.all([api.listJobs(), api.getHistory(200)])
+      if (generation !== dataRequestGeneration) return
+      jobs = loadedJobs || []
       const names = new Map(jobs.map(job => [job.id, job.name]))
-      const runs = (await api.getHistory(200)) || []
-      allRuns = runs.map(run => ({ ...run, jobName: names.get(run.job_id) || `Job ${run.job_id}` }))
+      allRuns = (runs || []).map(run => ({ ...run, jobName: names.get(run.job_id) || `Job ${run.job_id}` }))
+      if (selectedRunIds.size > 0) {
+        const available = new Set(reviewableRuns.map(run => run.id))
+        for (const id of selectedRunIds) {
+          if (!available.has(id)) selectedRunIds.delete(id)
+        }
+      }
       error = ''
       autoExpandRecentFailures()
     } catch (e) {
-      error = e.message || 'Failed to load history'
+      if (generation === dataRequestGeneration) error = e.message || 'Failed to load history'
     } finally {
-      loading = false
+      if (generation === dataRequestGeneration) loading = false
     }
   }
 
   const filteredRuns = $derived(
     allRuns
+      .filter(r => !needsReview || runNeedsReview(r))
       .filter(r => selectedJob === 0 || r.job_id === selectedJob)
       .filter(r => selectedRunType === 'all' || (r.run_type || 'backup') === selectedRunType)
       .filter(r => {
@@ -149,6 +234,7 @@
       })
   )
 
+  const reviewableRuns = $derived(filteredRuns.filter(runNeedsReview))
   let paginatedRuns = $derived(filteredRuns.slice(0, visibleCount))
   let hasMore = $derived(filteredRuns.length > visibleCount)
 
@@ -263,7 +349,8 @@
 
   // Reset pagination when filters change
   $effect(() => {
-    selectedJob; selectedRunType; selectedStatus; searchQuery;
+    selectedJob; selectedRunType; selectedStatus; searchQuery; needsReview;
+    selectedRunIds.clear()
     visibleCount = pageSize
   })
 </script>
@@ -421,7 +508,7 @@
       <!-- Status filter pills -->
       <div role="group" aria-label="Filter by status" class="flex items-center gap-2 flex-wrap">
         <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted self-center">Status</span>
-        {#each [['all','All'], ['completed','Completed'], ['failed','Failed'], ['running','Running'], ['skipped','Skipped']] as [val, label] (val)}
+        {#each statusFilters as [val, label] (val)}
           <button type="button" onclick={() => selectedStatus = val}
             aria-pressed={selectedStatus === val}
             class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors {selectedStatus === val ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4'}">
@@ -429,6 +516,11 @@
           </button>
         {/each}
       </div>
+
+      <label class="flex items-center gap-2 min-h-8 text-sm text-text">
+        <input type="checkbox" bind:checked={needsReview} bind:this={reviewFilter} class="size-4 accent-vault" />
+        Needs review
+      </label>
 
       <!-- Run type filter -->
       <div class="flex items-center gap-1.5">
@@ -455,6 +547,21 @@
         {/each}
       </select>
     </div>
+
+    {#if !isReplicaMode() && reviewableRuns.length > 0}
+      <section aria-label="Run acknowledgement" class="flex flex-wrap items-center gap-3 mb-4">
+        <button type="button" class="btn btn-secondary" onclick={selectAllNeedingReview} disabled={acknowledging}>
+          Select all needing review ({reviewableRuns.length}) across filtered runs
+        </button>
+        <input type="text" bind:value={acknowledgeReason} disabled={acknowledging}
+          aria-label="Acknowledgement reason (optional)" placeholder="Reason (optional)"
+          class="px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text" />
+        <button type="button" class="btn btn-primary" onclick={() => acknowledgeRuns([...selectedRunIds])}
+          disabled={acknowledging || selectedRunIds.size === 0}>
+          Acknowledge selected
+        </button>
+      </section>
+    {/if}
 
     {#if filteredRuns.length === 0}
       <EmptyState title="No matching runs" description="Try adjusting your filters or search query.">
@@ -509,7 +616,7 @@
                 {@const icon = statusIcon(run.status)}
                 {@const anomalyCounts = runAnomalyCounts(run.id)}
                 {@const speed = runSpeed(run)}
-                {@const expandable = hasLogDetails(run)}
+                {@const expandable = hasLogDetails(run) || Boolean(run.acknowledged_at)}
                 <div class="bg-surface-2 border border-border rounded-xl p-4 hover:border-vault/30 transition-all">
                   <!-- With details to show, the run's name is the disclosure button and its
                        ::after stretches over this row, so the whole summary stays clickable
@@ -536,6 +643,22 @@
                           {:else}
                             <span class="text-sm font-medium text-text">{run.jobName}</span>
                             <span class="{statusBadge(run.status)} text-xs">{run.status}</span>
+                          {/if}
+                          {#if run.acknowledged_at}
+                            <span class="text-xs px-2 py-0.5 rounded-full bg-surface-3 text-text-muted">Acknowledged</span>
+                          {/if}
+                          {#if !isReplicaMode() && runNeedsReview(run)}
+                            <label class="relative z-10 flex items-center justify-center min-w-8 min-h-8">
+                              <input type="checkbox" class="size-4 accent-vault"
+                                aria-label={`Select run ${run.id} for acknowledgement`}
+                                checked={selectedRunIds.has(run.id)} disabled={acknowledging}
+                                onchange={(event) => event.currentTarget.checked
+                                  ? selectedRunIds.add(run.id) : selectedRunIds.delete(run.id)} />
+                            </label>
+                            <button type="button" class="relative z-10 btn btn-secondary"
+                              disabled={acknowledging} onclick={() => acknowledgeRuns([run.id])}>
+                              Acknowledge
+                            </button>
                           {/if}
                           {#if run.retry_attempt > 0}
                             <span
@@ -605,6 +728,17 @@
                   {#if expandedRunIds.has(run.id) && expandable}
                     {@const items = tryParseJSON(run.log)}
                     <div id="run-details-{run.id}" class="mt-3 pt-3 border-t border-border">
+                      {#if run.acknowledged_at}
+                        <dl class="mb-2 text-xs text-text-muted">
+                          <div><dt class="inline font-semibold">Acknowledged</dt> <dd class="inline">{formatDate(run.acknowledged_at)}</dd></div>
+                          {#if run.acknowledged_by}
+                            <div><dt class="inline font-semibold">By</dt> <dd class="inline">{run.acknowledged_by}</dd></div>
+                          {/if}
+                          {#if run.acknowledge_reason}
+                            <div><dt class="inline font-semibold">Reason</dt> <dd class="inline whitespace-pre-wrap break-words">{run.acknowledge_reason}</dd></div>
+                          {/if}
+                        </dl>
+                      {/if}
                       {#if Array.isArray(items)}
                         <p class="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">Per-Item Results</p>
                         <div class="space-y-1.5">
@@ -633,7 +767,7 @@
                             </div>
                           {/each}
                         </div>
-                      {:else}
+                      {:else if hasLogDetails(run)}
                         <pre class="text-xs text-text-dim font-mono whitespace-pre-wrap">{run.log}</pre>
                       {/if}
                     </div>

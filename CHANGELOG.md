@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Canonical domain glossary and retrospective architecture decisions, with source-linked implementation guidance.
 
+### Fixed
+
+- Acknowledge reviewed run warnings from History without removing backup or restore records. The Dashboard clears the reviewed warnings and updates its health score (#627).
+
 ### Changed
 
 - Revise the user guides and reference prose for ASD-STE100 Issue 9.

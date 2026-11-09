@@ -259,6 +259,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
     { id: 5, timestamp: '2026-10-06T12:20:00Z', level: 'debug', category: 'system', message: 'Verbose scheduler tick', details: 'pending=0' },
   ];
 
+  let healthSummary = options.healthSummary;
   let historyRuns: Record<string, unknown>[] = options.historyRuns ?? [
     {
       id: 901,
@@ -351,7 +352,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(options.healthSummary ?? {
+        body: JSON.stringify(healthSummary ?? {
           unraid_connected: true,
           server_version: '2026.09.01',
           degraded: false,
@@ -900,6 +901,35 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
         contentType: 'application/json',
         body: JSON.stringify(activityLogs),
       });
+    }
+
+    if (path.endsWith('/runs/ack') && method === 'POST') {
+      if (options.replica) {
+        return route.fulfill({ status: 403, json: { error: 'this is a read-only replica' } });
+      }
+      const { ids, reason } = request.postDataJSON() as { ids: number[]; reason?: string };
+      const unique = new Set(ids);
+      const changed = historyRuns.filter((run) => unique.has(Number(run.id)) && !run.acknowledged_at &&
+        ['failed', 'error', 'cancelled', 'skipped', 'partial'].includes(String(run.status)));
+      const changedIds = new Set(changed.map((run) => run.id));
+      historyRuns = historyRuns.map((run) => changedIds.has(run.id) ? {
+        ...run, acknowledged_at: '2026-10-07T12:00:00Z', acknowledged_by: 'api', acknowledge_reason: reason ?? '',
+      } : run);
+      if (healthSummary && changed.length > 0) {
+        const next = { ...healthSummary };
+        for (const status of ['failed', 'skipped', 'cancelled', 'partial']) {
+          const reviewed = changed.filter((run) => run.run_type !== 'restore' &&
+            (run.status === status || (status === 'failed' && run.status === 'error'))).length;
+          next[`outstanding_${status}`] = Math.max(0,
+            Number(next[`outstanding_${status}`] ?? next[`recent_${status}`] ?? 0) - reviewed);
+        }
+        const successes = Number(next.recent_success ?? 0);
+        const total = successes + Number(next.outstanding_failed) + Number(next.outstanding_skipped) + Number(next.outstanding_cancelled);
+        const outstandingRate = total ? Math.floor(successes * 100 / total) : 0;
+        next.health_score = Math.round(Number(next.protection_pct ?? 0) * 0.4 + outstandingRate * 0.6);
+        healthSummary = next;
+      }
+      return route.fulfill({ json: { acknowledged: changed.length, skipped: unique.size - changed.length } });
     }
 
     // History & Trends

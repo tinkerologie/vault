@@ -65,3 +65,54 @@ test.describe('Backup History & Run Inspector', () => {
     await expect(page.getByText('Deduplication savings 53%')).toBeVisible();
   });
 });
+
+test('can acknowledge one failed run without changing its outcome', async ({ page }) => {
+  await setupVaultMockApi(page);
+  await page.goto('/#/history?status=failed');
+  const rowAction = page.getByRole('button', { name: 'Acknowledge', exact: true });
+  await rowAction.click();
+  await expect(page.getByText('Acknowledged 1 run. Skipped 0.')).toBeVisible();
+  await expect(page.getByText('Acknowledged', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^VM Backups failed/ })).toBeVisible();
+  await expect(rowAction).toHaveCount(0);
+});
+
+test('replicas can review History but have no acknowledgement actions', async ({ page }) => {
+  await setupVaultMockApi(page, { replica: true });
+  await page.goto('/#/history?status=failed&review=outstanding');
+  await expect(page.getByText('Read-only replica', { exact: false }).first()).toBeVisible();
+  await expect(page.locator('main span').getByText('VM Backups', { exact: true })).toBeVisible();
+  await expect(page.getByText('failed', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Acknowledge/ })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: /Select run .* for acknowledgement/ })).toHaveCount(0);
+});
+
+test('updates review filters on same-page navigation and browser Back and Forward', async ({ page }) => {
+  await setupVaultMockApi(page, {
+    historyRuns: [
+      { id: 1, job_id: 1, status: 'failed', started_at: '2026-10-01T12:00:00Z' },
+      { id: 2, job_id: 2, status: 'cancelled', started_at: '2026-10-01T12:00:00Z' },
+    ],
+  });
+  await page.goto('/#/history?status=failed&review=outstanding');
+  const failed = page.getByRole('button', { name: 'Failed', exact: true });
+  const cancelled = page.getByRole('button', { name: 'Cancelled', exact: true });
+  const review = page.getByRole('checkbox', { name: 'Needs review' });
+  await expect(failed).toHaveAttribute('aria-pressed', 'true');
+  await expect(review).toBeChecked();
+  await page.getByRole('checkbox', { name: 'Select run 1 for acknowledgement' }).check();
+
+  await page.evaluate(() => { window.location.hash = '/history?status=cancelled'; });
+  await expect(cancelled).toHaveAttribute('aria-pressed', 'true');
+  await expect(review).not.toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Select run 2 for acknowledgement' })).toBeVisible();
+
+  await page.goBack();
+  await expect(failed).toHaveAttribute('aria-pressed', 'true');
+  await expect(review).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Select run 1 for acknowledgement' })).not.toBeChecked();
+
+  await page.goForward();
+  await expect(cancelled).toHaveAttribute('aria-pressed', 'true');
+  await expect(review).not.toBeChecked();
+});

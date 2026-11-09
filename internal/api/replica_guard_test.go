@@ -46,6 +46,7 @@ func TestReplicaGuards(t *testing.T) {
 		{http.MethodDelete, "/api/v1/storage/1?deleteFiles=true"},
 		{http.MethodDelete, "/api/v1/storage/1?force=true"},
 		{http.MethodDelete, "/api/v1/history"},
+		{http.MethodPost, "/api/v1/runs/ack"},
 		{http.MethodDelete, "/api/v1/activity"},
 		{http.MethodPost, "/api/v1/anomalies/ack-bulk"},
 		{http.MethodPost, "/api/v1/anomalies/1/ack"},
