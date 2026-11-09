@@ -121,16 +121,16 @@ func TestPLGPushRegeneratesOnNewMainWithoutRunningFetchedCode(t *testing.T) {
 }
 
 func TestCILintVersionIsPinned(t *testing.T) {
-	workflow := readRepoFile(t, ".github/workflows/ci.yml")
-	if strings.Contains(workflow, "version: latest") {
-		t.Error("ci.yml must not use a mutable tool version")
+	job := workflowJob(t, readRepoFile(t, ".github/workflows/ci.yml"), "test")
+	const install = "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@"
+	pin := regexp.MustCompile(`(?m)` + regexp.QuoteMeta(install) + `v\d+\.\d+\.\d+$`)
+	if got := strings.Count(job, install); got != 1 || !pin.MatchString(job) {
+		t.Fatal("the test job must install one exact golangci-lint version from Go modules")
 	}
-	pins := regexp.MustCompile(`(?m)golangci-lint-action@[0-9a-f]{40}[^\n]*\n(?:[^\n]*\n){0,3}?\s+version: (v\d+\.\d+\.\d+)$`).FindAllStringSubmatch(workflow, -1)
-	if got := strings.Count(workflow, "golangci-lint-action@"); got != 2 || len(pins) != got {
-		t.Fatalf("found %d exact lint versions for %d lint steps, want 2 of each", len(pins), got)
-	}
-	if pins[0][1] != pins[1][1] {
-		t.Errorf("lint versions differ: %s and %s", pins[0][1], pins[1][1])
+	assertOrder(t, job, install, "golangci-lint-action@")
+	lintSteps := regexp.MustCompile(`(?m)golangci-lint-action@[0-9a-f]{40}[^\n]*\n(?:[^\n]*\n){0,3}[ \t]+install-mode: none$`)
+	if got := strings.Count(job, "golangci-lint-action@"); got != 2 || len(lintSteps.FindAllString(job, -1)) != got {
+		t.Fatal("both pinned lint actions must reuse the installed binary without downloading another copy")
 	}
 }
 

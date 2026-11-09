@@ -73,10 +73,18 @@ jobs:
         # Mirror the canonical idiom from Makefile:65-67.
         run: mkdir -p internal/release && cp CHANGELOG.md internal/release/CHANGELOG.md
 
+      - name: Install pinned Go linter
+        # Use checksum-verified Go modules because release asset downloads
+        # returned HTTP 504. Build once on the runner for both lint passes.
+        run: |
+          export GOBIN="$RUNNER_TEMP/vault-ci-bin"
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+          echo "$GOBIN" >> "$GITHUB_PATH"
+
       - name: Run linter
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.15.0
+          install-mode: none
           args: --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0
 
       - name: Run Go tests with coverage
@@ -146,7 +154,7 @@ jobs:
         env:
           GOOS: windows
         with:
-          version: v2.15.0
+          install-mode: none
           args: --config .golangci.yml --max-issues-per-linter 0 --max-same-issues 0 ./internal/recovery/... ./internal/fsstat/... ./internal/safepath/... ./internal/storage/...
 
       - name: Upload Windows binary
