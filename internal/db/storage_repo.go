@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -23,8 +24,14 @@ func (d *DB) CreateStorageDestination(dest StorageDestination) (int64, error) {
 }
 
 func (d *DB) GetStorageDestination(id int64) (StorageDestination, error) {
+	return d.getStorageDestination(context.Background(), d, id)
+}
+
+// getStorageDestination uses q for the row read and only the in-memory key to
+// open its configuration. It can run on a transaction without using the pool.
+func (d *DB) getStorageDestination(ctx context.Context, q jobSQL, id int64) (StorageDestination, error) {
 	var dest StorageDestination
-	err := d.QueryRow(
+	err := q.QueryRowContext(ctx,
 		`SELECT id, name, type, config, COALESCE(dedup_enabled, 0),
 		last_health_check_at, COALESCE(last_health_check_status, ''), COALESCE(last_health_check_error, ''),
 		COALESCE(consecutive_failures, 0),

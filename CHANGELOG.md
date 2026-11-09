@@ -12,10 +12,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Save a Job and its items together so a failed item write leaves the prior Job and selection intact (#623).
 - Acknowledge reviewed run warnings from History without removing backup or restore records. The Dashboard clears the reviewed warnings and updates its health score (#627).
 
 ### Changed
 
+- Job create and update responses return the stored records, including timestamps and source ID. Creating a Job also saves the requested anomaly sensitivity.
 - Revise the user guides and reference prose for ASD-STE100 Issue 9.
 
 ## [v2026.11.00] - 2026-11-07

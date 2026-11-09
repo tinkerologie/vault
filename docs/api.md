@@ -65,6 +65,8 @@ The `recent_*` counts and `success_rate` include acknowledged backup runs. The `
 
 ## Jobs
 
+Create and update responses contain the Job and items read from the committed mutation. For an update, omit `items` or send `null` to keep the current selection. Send `[]` to clear it. Request validation can reject an invalid update before Vault checks if the Job exists.
+
 The job payload's `schedule`, `verify_schedule` and `full_backup_schedule` fields accept standard 5-field cron expressions (`minute hour day-of-month month day-of-week`). An empty `schedule` means manual-only for backups — the scheduler skips regular runs entirely. Similarly, an empty `verify_schedule` or `full_backup_schedule` disables that secondary schedule. Arbitrary expressions are accepted, including steps, ranges and lists, along with the `@daily`-style descriptors and Vault's `L` day-of-month token (last day of the month). An expression the scheduler cannot parse is rejected at create/update time rather than stored and silently never run.
 
 `full_backup_schedule` sets a separate schedule for full backups on an `incremental` or `differential` job. If `backup_type_chain` is `full`, Vault clears this field when you save. All runs for a full job are full backups.
@@ -74,10 +76,10 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | Method | Endpoint                                           | Description                                                                               |
 | ------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | GET    | `/jobs`                                            | List jobs                                                                                 |
-| POST   | `/jobs`                                            | Create job (response echoes the persisted items)                                          |
+| POST   | `/jobs`                                            | Create a Job and return the committed Job and items                                       |
 | GET    | `/jobs/next-runs`                                  | Next scheduled run for every job                                                          |
 | GET    | `/jobs/{id}`                                       | Get a job and its items                                                                   |
-| PUT    | `/jobs/{id}`                                       | Update a job (response echoes the persisted items)                                        |
+| PUT    | `/jobs/{id}`                                       | Update a Job and return the committed Job and items                                       |
 | DELETE | `/jobs/{id}`                                       | Delete a job                                                                              |
 | GET    | `/jobs/{id}/history`                               | Job run history (returns `[]` when empty)                                                 |
 | GET    | `/jobs/{id}/restore-points`                        | Restore points with chain-health annotations (returns `[]` when empty)                    |
