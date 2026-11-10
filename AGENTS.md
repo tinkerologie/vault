@@ -224,10 +224,10 @@ pushing the matching `v<contents-of-VERSION>` tag. For example, `VERSION` value
 `2026.07.10` uses heading `## [v2026.07.10] - 2026-07-24` and tag
 `v2026.07.10`.
 
-Before tagging, the `version` entity in `plugin/vault.plg` must match `VERSION`.
-The release workflow generates `<CHANGES>` from the promoted changelog section,
-replacing the previous release's notes. Missing or empty notes fail the release
-before publication. Do not edit `<CHANGES>` by hand.
+Before tagging, keep `plugin/vault.plg` on the previous published release.
+After the new bundle is available, the release workflow publishes its version,
+checksum, and generated `<CHANGES>` together. Missing or empty changelog notes
+fail the release before publication. Let the workflow update these manifest fields.
 
 ## Deployment Paths
 

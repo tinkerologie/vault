@@ -186,6 +186,19 @@ jobs:
           VERSION_VERSION: ${{ steps.version.outputs.version }}
         run: |
           cp plugin/vault.plg build/vault-validation.plg
+          # The public manifest still describes the previous published bundle.
+          # Prepare only this private copy for validating the upcoming notes.
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import os, re
+          path = Path("build/vault-validation.plg")
+          text, count = re.subn(r'(?m)^([ \t]*)<!ENTITY version\s+".*?">',
+                               lambda m: m[1] + '<!ENTITY version "' + os.environ["VERSION_VERSION"] + '">',
+                               path.read_text())
+          if count != 1:
+              raise SystemExit("Expected exactly one manifest version")
+          path.write_text(text)
+          PYTHON
           build/plgnotes update-plg --manifest build/vault-validation.plg \
             --notes build/RELEASE_NOTES_BASE.md --version "$VERSION_VERSION"
 
@@ -338,8 +351,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           # Kept outside the checkout so a retry reuses this copy and the helper built
-          # above, whatever a newer main contains. update-plg fails if the manifest
-          # version is not this release's, so a hash can never land on another version.
+          # above, whatever a newer main contains. Compare published versions on
+          # every retry so an older release cannot downgrade the public manifest.
           cat > "$RUNNER_TEMP/update-plg.sh" <<'SCRIPT'
           set -euo pipefail
           python3 <<'PY'
@@ -348,6 +361,24 @@ jobs:
           path = Path("plugin/vault.plg")
           text = path.read_text()
           sha = os.environ["CHECKSUM_SHA256"]
+          version = os.environ["VERSION_VERSION"]
+          def version_key(value):
+              match = re.fullmatch(r'(\d{4})\.(\d{2})\.(\d+)(?:-?(alpha|beta|rc)([0-9.]*))?', value)
+              if not match:
+                  raise SystemExit("Invalid release version: " + value)
+              suffix = tuple(int(n) for n in (match[5] or "").split(".") if n)
+              while suffix and suffix[-1] == 0:
+                  suffix = suffix[:-1]
+              return tuple(map(int, match.group(1, 2, 3))) + ({"alpha": 0, "beta": 1, "rc": 2, None: 3}[match[4]], suffix)
+          published = re.findall(r'(?m)^[ \t]*<!ENTITY version\s+"([^"\n]+)">', text)
+          if len(published) != 1:
+              raise SystemExit("Expected exactly one manifest version")
+          if version_key(published[0]) > version_key(version):
+              raise SystemExit("Release would downgrade the published manifest")
+          text, count = re.subn(r'(?m)^([ \t]*)<!ENTITY version\s+".*?">',
+                               lambda m: m[1] + '<!ENTITY version   "' + version + '">', text)
+          if count != 1:
+              raise SystemExit("Expected exactly one manifest version")
           # Preserve original leading whitespace via backreference (\1) so
           # the workflow never drifts the indentation in vault.plg.
           text = re.sub(r'(?m)^([ \t]*)<!ENTITY bundle\s+".*?">',
@@ -366,10 +397,10 @@ jobs:
           grep "ENTITY sha256" plugin/vault.plg
 
           if git diff --quiet plugin/vault.plg; then
-            echo "PLG checksum and release notes already published"
+            echo "PLG version, checksum and release notes already published"
           else
             git add plugin/vault.plg
-            git commit -m "chore: update PLG SHA256 and release notes for v${VERSION_VERSION} [skip ci]"
+            git commit -m "chore: publish PLG version, SHA256 and release notes for v${VERSION_VERSION} [skip ci]"
           fi
           SCRIPT
 

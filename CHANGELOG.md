@@ -6,12 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.11.01] - 2026-11-10
+
 ### Added
 
 - Canonical domain glossary and retrospective architecture decisions, with source-linked implementation guidance.
 
 ### Fixed
 
+- Publish the plugin version, checksum, and release notes together after the release package is available, so updates keep working during publication.
 - Keep screen-reader focus on page headings after navigation and reserve the visible focus ring for keyboard controls.
 - Wait for active HTTP requests, WebSockets, mounts, and daemon workers before closing Vault resources during shutdown (#624).
 - Save a Job and its items together so a failed item write leaves the prior Job and selection intact (#623).
