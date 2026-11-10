@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.11.01] - 2026-11-10
+
 ### Added
 
 - Canonical domain glossary and retrospective architecture decisions, with source-linked implementation guidance.
