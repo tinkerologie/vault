@@ -95,8 +95,8 @@ func TestReleaseTokenNeverMeetsReleaseRefCode(t *testing.T) {
 }
 
 // A PR merging while publish-plg runs must not lose the release's PLG update.
-// A retry regenerates it on the new main, so a version bump fails the helper's
-// version check instead of pairing the new version with this release's hash.
+// A retry regenerates it on the new main; its published-version guard rejects
+// downgrades instead of pairing another version with this release's hash.
 // Nothing fetched is run, and the regeneration never sees the token.
 func TestPLGPushRegeneratesOnNewMainWithoutRunningFetchedCode(t *testing.T) {
 	publish := workflowJob(t, readRepoFile(t, ".github/workflows/release.yml"), "publish-plg")
