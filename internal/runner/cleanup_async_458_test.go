@@ -107,6 +107,7 @@ func TestCleanupJobStorageAsyncDedupLastJobB458(t *testing.T) {
 	r, d, _ := setupTestRunner(t)
 	r.serverKey = testServerKey()
 	storageDir := t.TempDir()
+	t.Cleanup(r.WaitForBackgroundWork)
 	dest, jobID := dedupBackup(t, r, d, storageDir)
 	rps, _ := d.ListRestorePoints(jobID)
 	var paths []string
@@ -116,9 +117,10 @@ func TestCleanupJobStorageAsyncDedupLastJobB458(t *testing.T) {
 	if err := d.DeleteJob(jobID); err != nil {
 		t.Fatalf("DeleteJob: %v", err)
 	}
-	b458RunAsync(t, func() {
-		r.CleanupJobStorageAsync(jobID, "escrow", dest, paths)
-	})
+	// The backup started tracked work outside synctest. Keep cleanup in the
+	// same context and join all Runner workers before checking its effects.
+	r.CleanupJobStorageAsync(jobID, "escrow", dest, paths)
+	r.WaitForBackgroundWork()
 	if _, err := os.Stat(filepath.Join(storageDir, "_vault", "repo.json")); !os.IsNotExist(err) {
 		t.Fatalf("repo.json should be removed for the last dedup job, err=%v", err)
 	}
@@ -131,6 +133,7 @@ func TestCleanupJobStorageAsyncDedupSharedRepoRunsGCB458(t *testing.T) {
 	r, d, _ := setupTestRunner(t)
 	r.serverKey = testServerKey()
 	storageDir := t.TempDir()
+	t.Cleanup(r.WaitForBackgroundWork)
 	dest, jobID := dedupBackup(t, r, d, storageDir)
 	// A second job still on the destination keeps the repo alive, so the
 	// cleanup must run GC instead of removing the repository.
@@ -145,9 +148,10 @@ func TestCleanupJobStorageAsyncDedupSharedRepoRunsGCB458(t *testing.T) {
 	if err := d.DeleteJob(jobID); err != nil {
 		t.Fatalf("DeleteJob: %v", err)
 	}
-	b458RunAsync(t, func() {
-		r.CleanupJobStorageAsync(jobID, "escrow", dest, paths)
-	})
+	// The backup started tracked work outside synctest. Keep cleanup in the
+	// same context and join all Runner workers before checking its effects.
+	r.CleanupJobStorageAsync(jobID, "escrow", dest, paths)
+	r.WaitForBackgroundWork()
 	if _, err := os.Stat(filepath.Join(storageDir, "_vault", "repo.json")); err != nil {
 		t.Fatalf("repo.json must survive while other jobs share the repo: %v", err)
 	}
