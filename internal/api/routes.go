@@ -415,6 +415,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get(restoreRequestRoute, requests.Get)
 			r.Post(withdrawRequestRoute, requests.Withdraw)
 			r.With(LocalOnly, ExtendWriteDeadline(handlers.RestoreApprovalWriteTimeout)).Post(restoreRequestRoute+"/approve", requests.Approve)
+			r.With(LocalOnly, ExtendWriteDeadline(handlers.RestoreApprovalWriteTimeout)).Post(restoreRequestRoute+"/review", requests.ReviewMetadata)
 			r.With(LocalOnly).Post("/restore-runs/{runID}/stop", requests.StopRun)
 			s.mcp = mcpserver.New(s.db, s.runner, intake, mcpserver.Config{
 				Version: s.config.Version, ReadOnly: s.config.ReadOnly, RestoreRequests: s.restoreRequests,

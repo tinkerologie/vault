@@ -52,10 +52,10 @@ $action = $_POST['action'] ?? '';
 $id = $_POST['id'] ?? '';
 $digest = $_POST['review_digest'] ?? '';
 $passphrase = $_POST['passphrase'] ?? '';
-if ($action === 'approve' && is_string($id) && preg_match('/\A[a-f0-9]{32}\z/', $id) === 1 &&
+if (in_array($action, ['approve', 'review'], true) && is_string($id) && preg_match('/\A[a-f0-9]{32}\z/', $id) === 1 &&
     is_string($digest) && preg_match('/\A[a-f0-9]{64}\z/', $digest) === 1 &&
     is_string($passphrase) && strlen($passphrase) <= 1024) {
-    $route = '/api/v1/restore-requests/' . $id . '/approve';
+    $route = '/api/v1/restore-requests/' . $id . '/' . $action;
 } elseif ($action === 'stop' && is_string($id) && preg_match('/\A[1-9][0-9]{0,18}\z/', $id) === 1 &&
     $digest === '' && $passphrase === '') {
     $route = '/api/v1/restore-runs/' . $id . '/stop';
@@ -91,7 +91,7 @@ try {
     vault_restore_request_error(400, 'Invalid Restore Request action');
 }
 unset($key, $passphrase, $payload, $_POST['passphrase']);
-if ($action === 'approve') {
+if ($action !== 'stop') {
     set_time_limit(VAULT_HTTP_TIMEOUT_CONTENTS + 10);
 }
 $result = vault_http_request('POST', $route, $envelope);

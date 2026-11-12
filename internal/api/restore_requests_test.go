@@ -946,7 +946,7 @@ func TestRestoreRequestRetriesReuseTheOriginalReviewAfterEvidenceChanges(t *test
 		t.Fatalf("updated verification evidence: %d %s", freshEvidence.Code, freshEvidence.Body)
 	}
 
-	body := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"archive","write_mode":"merge","destination":%q}`, job, point, target)
+	body := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"archive","item_type":"folder","write_mode":"merge","destination":%q}`, job, point, target)
 	w := callRestoreRequest(srv, http.MethodPost, restoreRequestsPath, remotePeer, key.Key, body)
 	var reused restorerequest.View
 	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &reused) != nil || !reused.Reused ||

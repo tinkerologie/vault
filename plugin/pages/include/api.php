@@ -273,7 +273,7 @@ function vault_is_long_request($method, $path) {
     $method = strtoupper((string) $method);
     return ($method === 'GET' && preg_match('#^/api/v1/jobs/[^/]+/restore-points/[^/]+/contents$#', $route) === 1)
         || ($method === 'POST' && $route === '/api/v1/storage/dedup-keys/rewrap')
-        || ($method === 'POST' && preg_match('#^/api/v1/restore-requests/[a-f0-9]{32}/approve$#', $route) === 1);
+        || ($method === 'POST' && preg_match('#^/api/v1/restore-requests/[a-f0-9]{32}/(approve|review)$#', $route) === 1);
 }
 
 // Returns the cURL CURLOPT_TIMEOUT (seconds) for a daemon request.

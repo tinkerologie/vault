@@ -227,15 +227,13 @@ func legacyVolumeIndex(entry volumeManifestEntry, entryFound, manifestPresent bo
 // never the current loop position: falling back to the loop position would
 // reintroduce the very mis-pairing #352 fixes, since that position is exactly
 // what a container recreate can shift.
-func resolveVolumeArchive(sourceDir, manifestArchive, source string, legacyIndex int) (string, error) {
+func volumeArchiveCandidates(manifestArchive, source string, legacyIndex int) []string {
 	bases := make([]string, 0, 3)
 	if safeVolumeArchiveName(manifestArchive) {
 		// Normalise away the compression suffix: a chain merge re-tars the
 		// overlay under the plain base name, so the recorded ".tar.zst" may
 		// no longer exist while ".tar" does.
 		bases = append(bases, TarBaseName(manifestArchive))
-	} else if manifestArchive != "" {
-		log.Printf("engine: restore: ignoring unsafe volume archive name %q in volumes.json", manifestArchive)
 	}
 	if source != "" {
 		bases = append(bases, volumeArchiveBase(source))
@@ -243,6 +241,14 @@ func resolveVolumeArchive(sourceDir, manifestArchive, source string, legacyIndex
 	if legacyIndex >= 0 {
 		bases = append(bases, fmt.Sprintf("volume_%d.tar", legacyIndex))
 	}
+	return bases
+}
+
+func resolveVolumeArchive(sourceDir, manifestArchive, source string, legacyIndex int) (string, error) {
+	if manifestArchive != "" && !safeVolumeArchiveName(manifestArchive) {
+		log.Printf("engine: restore: ignoring unsafe volume archive name in volumes.json")
+	}
+	bases := volumeArchiveCandidates(manifestArchive, source, legacyIndex)
 	if len(bases) == 0 {
 		return "", fmt.Errorf("no archive name could be resolved for volume %s in %s", source, sourceDir)
 	}
@@ -1703,6 +1709,21 @@ func chunkedPrevBySource(parent *dedup.Manifest, mounts []container.MountPoint, 
 // If item.Settings["restore_destination"] is set, volumes are extracted
 // under that base directory instead of their original paths.
 func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
+	if reviewed, ok := reviewedContainerFrom(ctx); ok {
+		metadata, err := readStagedContainerMetadata(sourceDir)
+		if err != nil {
+			return err
+		}
+		destination, _ := item.Settings["restore_destination"].(string)
+		clean, _ := item.Settings[SettingCleanDestination].(bool)
+		fresh, err := h.ReviewClassicRestore(ctx, item, []ContainerBackupMetadata{metadata}, destination, clean)
+		if err != nil {
+			return err
+		}
+		if !reviewed.review.matches(fresh) {
+			return ErrContainerReviewChanged
+		}
+	}
 
 	// The image archive is located first so a backup without one still fails
 	// with that error, but nothing reaches Docker until the config is approved:
@@ -1730,6 +1751,11 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	if err := enforceRestorePrivileges(ctx, item, inspect); err != nil {
 		return err
 	}
+	if reviewed, ok := reviewedContainerFrom(ctx); ok {
+		if err := validateReviewedContainerArchives(ctx, sourceDir, inspect, reviewed.review); err != nil {
+			return err
+		}
+	}
 	ApprovalsSettled(ctx)
 
 	// Step 2: Load image.
@@ -1752,8 +1778,19 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		return fmt.Errorf("loading image: %w", err)
 	}
 	// Drain the response to ensure the daemon completes the load.
-	_, _ = io.Copy(io.Discard, resp)
-	_ = resp.Close()
+	if _, reviewed := reviewedContainerFrom(ctx); reviewed {
+		loadErr := checkContainerImageLoad(resp)
+		_ = resp.Close()
+		if loadErr != nil {
+			return fmt.Errorf("loading the reviewed image: %w", loadErr)
+		}
+		if err := h.checkReviewedClassicImage(ctx, inspect); err != nil {
+			return err
+		}
+	} else {
+		_, _ = io.Copy(io.Discard, resp)
+		_ = resp.Close()
+	}
 
 	// Check for alternate restore destination.
 	restoreDest, _ := item.Settings["restore_destination"].(string)
@@ -1816,6 +1853,13 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		}
 	}
 
+	if err := checkReviewedContainerPaths(ctx, inspect, restoreDest); err != nil {
+		return err
+	}
+	if err := h.stopReviewedContainer(ctx); err != nil {
+		return err
+	}
+
 	// One counter for every volume extracted (#456).
 	ctx, _ = ensureItemProgress(ctx, item.Name, PhaseProcessing, nil)
 	for i, mount := range inspect.Mounts {
@@ -1872,6 +1916,9 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		if err != nil {
 			return err
 		}
+		if err := checkReviewedVolumeTarget(ctx, mount.Destination, normalizedTargetPath); err != nil {
+			return err
+		}
 		targetPath = normalizedTargetPath
 
 		// The manifest records what this mount was: a file-based bind mount
@@ -1923,9 +1970,10 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 // (tar-on-disk) and dedup-chunked restore paths so the two share one
 // container-recreation pipeline.
 type restoreInspect struct {
-	ID     string `json:"Id"`
-	Name   string `json:"Name"`
-	Config struct {
+	ID      string `json:"Id"`
+	ImageID string `json:"Image"`
+	Name    string `json:"Name"`
+	Config  struct {
 		Hostname     string            `json:"Hostname"`
 		Domainname   string            `json:"Domainname"`
 		User         string            `json:"User"`
@@ -2005,6 +2053,33 @@ func (ri restoreInspect) mountInfos() []mountInfo {
 	return out
 }
 
+func containerRestoreBinds(binds []string, restoreDest string) ([]string, []volumePathRewrite, error) {
+	// If restoring to an alternate destination, rewrite bind source paths.
+	// The pairs are kept so the Unraid template can be rewritten to the very
+	// same paths — the binds are the single source of truth for the remap,
+	// and the two drifting apart is what issue #336 reported.
+	var templateRewrites []volumePathRewrite
+	if restoreDest != "" {
+		rewritten := make([]string, 0, len(binds))
+		for _, bind := range binds {
+			parts := strings.SplitN(bind, ":", 2)
+			if len(parts) == 2 {
+				sourceName, err := normalizeRestoreComponent(filepath.Base(parts[0]))
+				if err != nil {
+					return nil, nil, err
+				}
+				newSource := filepath.Join(restoreDest, sourceName)
+				rewritten = append(rewritten, newSource+":"+parts[1])
+				templateRewrites = append(templateRewrites, volumePathRewrite{Old: parts[0], New: newSource})
+			} else {
+				rewritten = append(rewritten, bind)
+			}
+		}
+		binds = rewritten
+	}
+	return binds, templateRewrites, nil
+}
+
 // recreateAndStartContainer is recreateAndStartContainerID for callers that
 // do not need the new container's ID.
 func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item BackupItem, inspect restoreInspect, restoreDest, sourceDir string, progress ProgressFunc) error {
@@ -2045,7 +2120,19 @@ func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item
 	}
 
 	// Remove existing container with the same name if present.
-	if existResult, err := h.cli.ContainerInspect(ctx, containerName, client.ContainerInspectOptions{}); err == nil {
+	if reviewed, ok := reviewedContainerFrom(ctx); ok {
+		if err := checkReviewedContainerPaths(ctx, inspect, restoreDest); err != nil {
+			return "", err
+		}
+		if inspect.pinnedImage == "" {
+			if err := h.checkReviewedClassicImage(ctx, inspect); err != nil {
+				return "", err
+			}
+		}
+		if err := h.removeReviewedContainer(ctx, reviewed); err != nil {
+			return "", err
+		}
+	} else if existResult, err := h.cli.ContainerInspect(ctx, containerName, client.ContainerInspectOptions{}); err == nil {
 		existing := existResult.Container
 		if existing.State != nil && existing.State.Running {
 			_, _ = h.cli.ContainerStop(ctx, existing.ID, client.ContainerStopOptions{})
@@ -2083,29 +2170,9 @@ func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item
 	}
 
 	// Build host config.
-	binds := inspect.HostConfig.Binds
-	// If restoring to an alternate destination, rewrite bind source paths.
-	// The pairs are kept so the Unraid template can be rewritten to the very
-	// same paths — the binds are the single source of truth for the remap,
-	// and the two drifting apart is what issue #336 reported.
-	var templateRewrites []volumePathRewrite
-	if restoreDest != "" {
-		rewritten := make([]string, 0, len(binds))
-		for _, bind := range binds {
-			parts := strings.SplitN(bind, ":", 2)
-			if len(parts) == 2 {
-				sourceName, err := normalizeRestoreComponent(filepath.Base(parts[0]))
-				if err != nil {
-					return "", err
-				}
-				newSource := filepath.Join(restoreDest, sourceName)
-				rewritten = append(rewritten, newSource+":"+parts[1])
-				templateRewrites = append(templateRewrites, volumePathRewrite{Old: parts[0], New: newSource})
-			} else {
-				rewritten = append(rewritten, bind)
-			}
-		}
-		binds = rewritten
+	binds, templateRewrites, err := containerRestoreBinds(inspect.HostConfig.Binds, restoreDest)
+	if err != nil {
+		return "", err
 	}
 
 	// Convert the inspected PortBindings (raw `"<port>/<proto>": [{HostIp, HostPort}]`
@@ -2220,7 +2287,7 @@ func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item
 	//
 	// A pinned chunked restore skips the pull: the digest pull already set
 	// RepoDigests, and pulling the tag would move it off the backup-time image.
-	if inspect.pinnedImage == "" {
+	if _, reviewed := reviewedContainerFrom(ctx); !reviewed && inspect.pinnedImage == "" {
 		_ = populateRepoDigestsViaPull(ctx, h.cli, inspect.Config.Image)
 	}
 	if sourceDir != "" {
@@ -2248,8 +2315,10 @@ func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item
 	if inspect.State.Running {
 		progress(item.Name, 90, "starting container")
 		if _, err := h.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+			recordContainerCheck(ctx, ContainerStartFailed)
 			return created.ID, fmt.Errorf("starting restored container: %w", err)
 		}
+		recordContainerCheck(ctx, ContainerStarted)
 
 		// Step 7: reload a logical database dump, if the backup requested it.
 		//
@@ -2268,17 +2337,22 @@ func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item
 			if err := h.waitForDatabaseReady(ctx, created.ID, inspect.Config.Image, inspect.Config.Env); err != nil {
 				log.Printf("engine: %s: WARNING database did not become ready, dump not reloaded (the file-level restore stands): %v", item.Name, err)
 				dumpReason = "the database did not become ready"
-			} else if err := h.restoreDatabase(ctx, created.ID, item.Name, inspect.Config.Image, inspect.Config.Env, pendingDump); err != nil {
-				// Fatal, per the invariant above. The reload has already
-				// begun executing the dump's DROP/replace statements against
-				// the volume-restored server, so the file-level result is no
-				// longer an intact fallback to "stand on". A timeout, SQL
-				// error, or full disk part-way through leaves tables dropped
-				// and only partly recreated; returning nil here would report
-				// that as a completed restore.
-				return created.ID, fmt.Errorf("reloading database dump for %s: %w (the database is partially reloaded — "+
-					"its contents are not the restored state and should not be relied on)", item.Name, err)
+				recordContainerCheck(ctx, ContainerDatabaseNotReady)
 			} else {
+				recordContainerCheck(ctx, ContainerDatabaseReady)
+				if err := h.restoreDatabase(ctx, created.ID, item.Name, inspect.Config.Image, inspect.Config.Env, pendingDump); err != nil {
+					// Fatal, per the invariant above. The reload has already
+					// begun executing the dump's DROP/replace statements against
+					// the volume-restored server, so the file-level result is no
+					// longer an intact fallback to "stand on". A timeout, SQL
+					// error, or full disk part-way through leaves tables dropped
+					// and only partly recreated; returning nil here would report
+					// that as a completed restore.
+					recordContainerCheck(ctx, ContainerDatabaseReplayFailed)
+					return created.ID, fmt.Errorf("reloading database dump for %s: %w (the database is partially reloaded — "+
+						"its contents are not the restored state and should not be relied on)", item.Name, err)
+				}
+				recordContainerCheck(ctx, ContainerDatabaseReplayed)
 				// Reloaded successfully; nothing left to preserve.
 				pendingDump = ""
 			}
@@ -2852,13 +2926,35 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 // in-place restore). When set, volumes are extracted under
 // destPath/<volume-name> rather than their original bind sources, matching
 // the bind-mount rewrite recreateAndStartContainer applies.
-func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) (retErr error) {
+func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
+	if repo == nil {
+		return fmt.Errorf("container: dedup repo is nil")
+	}
+	return h.RestorePreparedChunked(ctx, item, repo, manifestID, destPath, progress)
+}
+
+func (h *ContainerHandler) RestorePreparedChunked(ctx context.Context, item BackupItem, repo ContainerRestoreRepository, manifestID dedup.ID, destPath string, progress ProgressFunc) (retErr error) {
 	if repo == nil {
 		return fmt.Errorf("container: dedup repo is nil")
 	}
 	m, err := repo.GetManifest(manifestID)
 	if err != nil {
 		return err
+	}
+
+	if reviewed, ok := reviewedContainerFrom(ctx); ok {
+		destination := destPath
+		if destination == "" {
+			destination, _ = item.Settings["restore_destination"].(string)
+		}
+		clean, _ := item.Settings[SettingCleanDestination].(bool)
+		fresh, err := h.ReviewChunkedRestore(ctx, item, m, repo, destination, clean)
+		if err != nil {
+			return err
+		}
+		if !reviewed.review.matches(fresh) {
+			return ErrContainerReviewChanged
+		}
 	}
 
 	// 1. Inspect blob — required.
@@ -2948,6 +3044,13 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 		return err
 	}
 
+	if err := checkReviewedContainerPaths(ctx, inspect, restoreDest); err != nil {
+		return err
+	}
+	if err := h.stopReviewedContainer(ctx); err != nil {
+		return err
+	}
+
 	// 4. Restore volumes. Each __vol__<dest> entry's single chunk ID is a
 	//    sub-manifest ID — restoreChunkedVolumes routes each to the correct
 	//    target (original source or custom dest).
@@ -2995,7 +3098,7 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 // (mirroring classic Restore and recreateAndStartContainer's bind rewrite).
 // The function needs no Docker client — it delegates file extraction to
 // FolderHandler.RestoreChunked — making it testable without a Docker mock.
-func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, selection []string, clean bool, progress ProgressFunc) error {
+func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo ContainerRestoreRepository, inspect restoreInspect, restoreDest string, selection []string, clean bool, progress ProgressFunc) error {
 	// One counter for every volume, under the container's name (#456).
 	ctx, _ = ensureItemProgress(ctx, m.Item, PhaseProcessing, nil)
 	if err := checkVolumeTargetCollisions(restoreDest, inspect.mountInfos()); err != nil {
@@ -3066,6 +3169,9 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		if err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}
+		if err := checkReviewedVolumeTarget(ctx, dest, normalizedSrc); err != nil {
+			return err
+		}
 		src = normalizedSrc
 		if err := mkdirRestored(src, 0o750); err != nil {
 			return fmt.Errorf("mkdir volume %s: %w", src, err)
@@ -3118,6 +3224,15 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		if err != nil {
 			return fmt.Errorf("restore volume file %s: %w", dest, err)
 		}
+		if _, reviewed := reviewedContainerFrom(ctx); reviewed {
+			resolved, err := normalizeRestorePath(target)
+			if err != nil {
+				return err
+			}
+			if err := checkReviewedVolumeTarget(ctx, dest, resolved); err != nil {
+				return err
+			}
+		}
 		if err := restoreChunkedVolumeFile(repo, v, target); err != nil {
 			return fmt.Errorf("restore volume file %s: %w", dest, err)
 		}
@@ -3137,7 +3252,7 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 // The parent directory is created first: a file mount's host path need not
 // exist yet on a restore to a fresh system, and Docker would otherwise
 // materialise a directory in its place when the container starts.
-func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, target string) error {
+func restoreChunkedVolumeFile(repo ContainerRestoreRepository, entry dedup.ManifestEntry, target string) error {
 	parentDir := filepath.Dir(target)
 	if !restorePathSafe(parentDir) || strings.Contains(parentDir, "../") || strings.Contains(parentDir, "..\\") {
 		return fmt.Errorf("suspicious file mount parent directory %q", parentDir)
@@ -3202,7 +3317,7 @@ func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, targe
 // template — into one temporary directory shaped like a classic backup's
 // source directory, so the shared restore path finds them with no
 // special-casing. Returns an empty path when the manifest carries neither.
-func writeChunkedRestoreSidecars(repo *dedup.Repo, m dedup.Manifest) (string, func(), error) {
+func writeChunkedRestoreSidecars(repo ContainerRestoreRepository, m dedup.Manifest) (string, func(), error) {
 	dumpEntry, hasDump := m.Files[ContainerDBDumpKey]
 	hasDump = hasDump && len(dumpEntry.Chunks) > 0
 	templateEntry, hasTemplate := m.Files[containerTemplateKey]
@@ -3245,7 +3360,7 @@ func writeChunkedRestoreSidecars(repo *dedup.Repo, m dedup.Manifest) (string, fu
 }
 
 // writeChunkedEntryToFile reassembles one manifest entry's chunks into path.
-func writeChunkedEntryToFile(repo *dedup.Repo, entry dedup.ManifestEntry, path string) error {
+func writeChunkedEntryToFile(repo ContainerRestoreRepository, entry dedup.ManifestEntry, path string) error {
 	f, err := os.Create(path) // #nosec G304 — path is inside a vault-created temp directory
 	if err != nil {
 		return err

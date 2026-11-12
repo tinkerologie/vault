@@ -85,7 +85,11 @@ func ValidateStagedFolder(ctx context.Context, dir, dest string) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.Open(name) // #nosec G304 -- the name came from a fixed filename in private restore staging
+	return validateStagedVolumeArchive(ctx, name, dest)
+}
+
+func validateStagedVolumeArchive(ctx context.Context, name, dest string) error {
+	file, err := os.Open(name) // #nosec G304 -- the name came from a validated filename in private restore staging
 	if err != nil {
 		return err
 	}

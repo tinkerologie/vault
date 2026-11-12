@@ -1,4 +1,4 @@
-import { buildApiRequest, buildRestoreApprovalRequest, buildRestoreStopRequest, isProxyMode } from './runtime-config.js'
+import { buildApiRequest, buildRestoreApprovalRequest, buildRestoreReviewRequest, buildRestoreStopRequest, isProxyMode } from './runtime-config.js'
 import { markAuthRequired } from './auth.svelte.js'
 
 /** @type {boolean} */
@@ -256,6 +256,9 @@ export const api = {
     return request('GET', `/restore-requests?${params}`)
   },
   getRestoreRequest: (id) => request('GET', `/restore-requests/${encodeURIComponent(id)}`),
+  reviewRestoreRequestMetadata: (id, reviewDigest, passphrase) => request('POST', id, { reviewDigest, passphrase }, {
+    buildRequest: buildRestoreReviewRequest, timeoutMs: LONG_REQUEST_TIMEOUT_MS,
+  }),
   approveRestoreRequest: (id, reviewDigest, passphrase) => request('POST', id, { reviewDigest, passphrase }, {
     buildRequest: buildRestoreApprovalRequest, timeoutMs: LONG_REQUEST_TIMEOUT_MS,
   }),
