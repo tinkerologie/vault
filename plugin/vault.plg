@@ -8,7 +8,7 @@
     <!ENTITY pluginURL "https://raw.githubusercontent.com/tinkerologie/&name;/main/plugin/vault.plg">
     <!ENTITY bundle    "&name;-&version;.txz">
     <!ENTITY bundleURL "&gitURL;/releases/download/v&version;/&bundle;">
-    <!ENTITY sha256      "49d6c10d944767ff58927667b48061ad794c737681d74a71109af3b956917839">
+    <!ENTITY sha256      "3e7a15c65cef2aa614aa9b14c969e521923fb078c34583b23ce758b4b1dfd50d">
     <!ENTITY support   "https://forums.unraid.net/topic/197786-plugin-vault-backup-manager">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;"
@@ -18,25 +18,12 @@
         readme="&gitURL;#readme">
 
 <CHANGES><![CDATA[
-## v2026.11.01
-
-### Added
-
-- Canonical domain glossary and retrospective architecture decisions, with source-linked implementation guidance.
+## v2026.11.02
 
 ### Fixed
 
-- Publish the plugin version, checksum, and release notes together after the release package is available, so updates keep working during publication.
-- Keep screen-reader focus on page headings after navigation and reserve the visible focus ring for keyboard controls.
-- Wait for active HTTP requests, WebSockets, mounts, and daemon workers before closing Vault resources during shutdown (#624).
-- Save a Job and its items together so a failed item write leaves the prior Job and selection intact (#623).
-- Acknowledge reviewed run warnings from History without removing backup or restore records. The Dashboard clears the reviewed warnings and updates its health score (#627).
-- Remove deleted or excluded files from classic incremental folder and plugin restores even when the restored files retain old timestamps. Only prune files that the replay wrote.
-
-### Changed
-
-- Job create and update responses return the stored records, including timestamps and source ID. Creating a Job also saves the requested anomaly sensitivity.
-- Revise the user guides and reference prose for ASD-STE100 Issue 9.
+- Include committed SQLite WAL changes in Destination Database Backups. Report export failures separately and keep the previous latest copy when snapshot creation fails (#648).
+- Preserve static IPv6 addresses, network aliases, gateway priorities, and the configured DockerMan MAC in classic and chunked container restores (#649).
 ]]></CHANGES>
 
 <!-- Prepare persistent plugin storage and prune stale cached bundles -->
