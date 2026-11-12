@@ -4,7 +4,7 @@ status: accepted
 
 # Require operator approval for MCP restores
 
-Assistants need to inspect what Vault can recover and follow a Restore to its outcome. The current MCP `restore_item` tool starts an untracked restore and asks for approval only for certain container exceptions. The shared API Key also authorizes direct restores through REST. An approval prompt in an assistant client cannot enforce the boundary in Vault.
+Assistants need to inspect what Vault can recover and follow a Restore to its outcome. Before this change, the MCP `restore_item` tool started an untracked restore and asked for approval only for certain container exceptions. The shared API Key also authorizes direct restores through REST. An approval prompt in an assistant client cannot enforce the boundary in Vault.
 
 ## Decision
 
@@ -35,6 +35,6 @@ Assistants need to inspect what Vault can recover and follow a Restore to its ou
 
 Exercise the full assistant request, operator approval, and tracked result flow on disposable Unraid workloads for each supported type. Compare restored folder contents, check that the restored container application works, and boot the restored VM before releasing the feature.
 
-The decision is accepted for the planned feature. Implementation is pending.
+All MCP restore callers use the Restore Request ledger. Complete the disposable Unraid drills and verify the native approval action before release.
 
 Sources: [API authentication](../../internal/api/middleware.go), [MCP tools](../../internal/mcp/server.go), [Unraid proxy](../../plugin/pages/include/proxy.php), [tracked restore](../../internal/runner/runner.go).

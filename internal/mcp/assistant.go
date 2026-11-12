@@ -75,9 +75,12 @@ func (s *MCPServer) assistantTransport(keyID int64, digest, grant string, permit
 	stopSubscriptionsOnShutdown(server, stop)
 	registerRecoveryCatalog(server, s.db)
 	registerRecoveryEvidence(server, s.db)
-	if grant != "" && s.config.RestoreRequests != nil {
+	canRequest := grant != "" && s.config.RestoreRequests != nil
+	if canRequest {
 		registerRestoreRequests(server, s.config.RestoreRequests)
+		registerLegacyRestoreItem(server, s.config.RestoreRequests)
 	}
+	guardRestoreToolCalls(server, canRequest)
 	entry := &assistantTransport{
 		digest: digest, grant: grant,
 		server: server,

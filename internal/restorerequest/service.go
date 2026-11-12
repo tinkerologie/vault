@@ -34,9 +34,19 @@ var (
 	ErrLimit      = errors.New("restore request limit reached: follow an existing pending request, withdraw one to free a slot, or retry after the rolling hour")
 )
 
+// LegacyMCPCaller is set by the authenticated MCP route for clients without
+// an Assistant Key. The legacy identities are used only to submit a request.
+type LegacyMCPCaller uint8
+
+const (
+	LegacyMCPAPIKey LegacyMCPCaller = iota + 1
+	LegacyMCPLocal
+)
+
 type Principal struct {
 	AssistantDigest string
 	LocalReview     bool
+	LegacyMCP       LegacyMCPCaller
 }
 
 type principalKey struct{}
@@ -137,7 +147,30 @@ func (s *Service) assistant(ctx context.Context, principal Principal) (db.Assist
 }
 
 func (s *Service) Submit(ctx context.Context, principal Principal, input Input) (View, error) {
-	if _, err := s.assistant(ctx, principal); err != nil {
+	return s.submit(ctx, principal, input, false)
+}
+
+func (s *Service) SubmitLegacyMCP(ctx context.Context, principal Principal, input Input) (View, error) {
+	return s.submit(ctx, principal, input, true)
+}
+
+func (s *Service) submissionOwner(ctx context.Context, principal Principal, legacyMCP bool) (digest, name string, err error) {
+	if legacyMCP && principal.AssistantDigest == "" {
+		// Reserved identities cannot match a hexadecimal Assistant Key digest.
+		switch principal.LegacyMCP {
+		case LegacyMCPAPIKey:
+			return "mcp:api-key", "MCP API Key", nil
+		case LegacyMCPLocal:
+			return "mcp:local", "Host-local MCP", nil
+		}
+	}
+	key, err := s.assistant(ctx, principal)
+	return principal.AssistantDigest, key.Name, err
+}
+
+func (s *Service) submit(ctx context.Context, principal Principal, input Input, legacyMCP bool) (View, error) {
+	owner, _, err := s.submissionOwner(ctx, principal, legacyMCP)
+	if err != nil {
 		return View{}, err
 	}
 	normalized := normalizedSubmission(input)
@@ -153,9 +186,12 @@ func (s *Service) Submit(ctx context.Context, principal Principal, input Input) 
 		}
 	}
 
-	pending, err := s.db.PendingRestoreRequest(ctx, principal.AssistantDigest, s.now(), string(submission), string(rawSubmission))
+	pending, err := s.db.PendingRestoreRequest(ctx, owner, s.now(), string(submission), string(rawSubmission))
 	if err == nil {
 		result, err := view(pending, false, "")
+		if err == nil && legacyMCP && result.ManualRestoreRequired {
+			return View{}, manualContainerRestore
+		}
 		result.Reused = true
 		return result, err
 	}
@@ -167,6 +203,9 @@ func (s *Service) Submit(ctx context.Context, principal Principal, input Input) 
 	if err != nil {
 		return View{}, err
 	}
+	if legacyMCP && op.ManualRestoreRequired {
+		return View{}, manualContainerRestore
+	}
 	operation, err := json.Marshal(op)
 	if err != nil {
 		return View{}, err
@@ -175,7 +214,7 @@ func (s *Service) Submit(ctx context.Context, principal Principal, input Input) 
 		return View{}, ErrBusy
 	}
 	defer s.maintenance.Unlock()
-	key, err := s.assistant(ctx, principal)
+	_, name, err := s.submissionOwner(ctx, principal, legacyMCP)
 	if err != nil {
 		return View{}, err
 	}
@@ -183,8 +222,8 @@ func (s *Service) Submit(ctx context.Context, principal Principal, input Input) 
 	rand.Read(id[:])
 	now := s.now().UTC()
 	request := db.RestoreRequest{
-		ID: hex.EncodeToString(id[:]), OwnerDigest: principal.AssistantDigest,
-		RequesterName: key.Name, Operation: operation, Status: "pending", CreatedAt: now, ExpiresAt: now.Add(approvalWindow),
+		ID: hex.EncodeToString(id[:]), OwnerDigest: owner,
+		RequesterName: name, Operation: operation, Status: "pending", CreatedAt: now, ExpiresAt: now.Add(approvalWindow),
 	}
 	record, created, err := s.db.AdmitRestoreRequest(ctx, request, string(submission), string(rawSubmission), maxPendingPerKey, maxRecentPerKey, now.Add(-submissionWindow))
 	if errors.Is(err, db.ErrRestoreRequestLimit) {
@@ -194,6 +233,9 @@ func (s *Service) Submit(ctx context.Context, principal Principal, input Input) 
 		return View{}, err
 	}
 	result, err := view(record, false, s.flushChange(created))
+	if err == nil && legacyMCP && result.ManualRestoreRequired {
+		return View{}, manualContainerRestore
+	}
 	result.Reused = !created
 	return result, err
 }

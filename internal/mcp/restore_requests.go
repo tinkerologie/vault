@@ -11,12 +11,14 @@ import (
 	"github.com/tinkerologie/vault/internal/restorerequest"
 )
 
+const submitRestoreRequestTool = "submit_restore_request"
+
 func registerRestoreRequests(server *mcp.Server, service *restorerequest.Service) {
 	type requestID struct {
 		ID string `json:"id" jsonschema:"Restore Request ID"`
 	}
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "submit_restore_request",
+		Name:        submitRestoreRequestTool,
 		Description: "Prepare a Restore Request for one whole Backup Item for operator review",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input restorerequest.Input) (*mcp.CallToolResult, restorerequest.View, error) {
 		result, err := service.Submit(ctx, restorerequest.PrincipalFrom(ctx), input)

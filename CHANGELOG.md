@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Review and approve Docker Restore Requests in Unraid, including saved image and volume effects, and follow container startup and database replay outcomes (#644).
 - Review and approve VM Restore Requests with the required checkpoint chain and disk, firmware and domain effects. Tracked VM Restore Runs show measured guest readiness outcomes (#645).
 
+### Changed
+
+- The MCP `restore_item` tool now prepares a pending Restore Request and returns a review link. A signed-in Unraid operator must approve it before Vault restores the selected folder, Docker container, or VM (#646).
+
 ## [v2026.11.02] - 2026-11-12
 
 ### Fixed

@@ -38,8 +38,6 @@ type MCPServer struct {
 	assistants       map[int64]*assistantTransport
 	assistantStop    context.Context
 	assistantsClosed bool
-	// startRestore starts a restore_item restore; tests stand in for the runner.
-	startRestore func(ctx context.Context, rp db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...runner.RestoreItemOptions) error
 }
 
 // Config controls MCP metadata exposed to clients.
@@ -67,7 +65,6 @@ func New(database *db.DB, r *runner.Runner, intake *jobintake.Intake, configs ..
 		assistants:    make(map[int64]*assistantTransport),
 		assistantStop: context.Background(),
 	}
-	s.startRestore = r.StartRestoreItem
 
 	mcpSrv := mcp.NewServer(
 		&mcp.Implementation{
@@ -175,7 +172,8 @@ func (s *MCPServer) registerTools() {
 	registerRecoveryCatalog(s.server, s.db)
 	registerRecoveryEvidence(s.server, s.db)
 	s.addListRestorePointsTool()
-	s.addRestoreItemTool()
+	registerLegacyRestoreItem(s.server, s.config.RestoreRequests)
+	guardRestoreToolCalls(s.server, true)
 
 	// Replication tools
 	s.addListReplicationTool()
@@ -541,55 +539,6 @@ func (s *MCPServer) addListRestorePointsTool() {
 			return nil, nil, fmt.Errorf("listing restore points: %w", err)
 		}
 		r, _ := textResult(runner.AnnotateRestorePoints(job, rps))
-		return r, nil, nil
-	})
-}
-
-type restoreItemInput struct {
-	RestorePointID int64  `json:"restore_point_id"`
-	JobID          int64  `json:"job_id"`
-	ItemName       string `json:"item_name"`
-	ItemType       string `json:"item_type"`
-	Destination    string `json:"destination,omitempty"`
-	Passphrase     string `json:"passphrase,omitempty"`
-	// CleanDestination mirrors the API's clean_destination: omitted means
-	// the destination is replaced, false merges the restore into whatever
-	// is already there.
-	CleanDestination *bool `json:"clean_destination,omitempty"`
-}
-
-// options maps the tool input onto the runner's restore options. It has no
-// approvals to carry: container restores that need one are approved in the UI.
-func (in restoreItemInput) options() runner.RestoreItemOptions {
-	return runner.RestoreItemOptions{CleanDestination: in.CleanDestination}
-}
-
-func (s *MCPServer) addRestoreItemTool() {
-	mcp.AddTool(s.server, &mcp.Tool{
-		Name:        "restore_item",
-		Description: "Restore an item from a specific restore point. The destination is replaced by default; pass clean_destination=false to merge into its existing contents instead. The call returns once the restore is past its approval checks, and the restore then carries on in the background. A container restore that needs approval (host-level access from an imported or replicated backup, or a backed-up image digest that is missing or cannot be obtained) is refused with an error and nothing is changed: it cannot be approved here, and the user must approve it in the Vault UI's Restore wizard under Container approvals.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input restoreItemInput) (*mcp.CallToolResult, any, error) {
-		rps, err := s.db.ListRestorePoints(input.JobID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("listing restore points: %w", err)
-		}
-		var found *db.RestorePoint
-		for i := range rps {
-			if rps[i].ID == input.RestorePointID {
-				found = &rps[i]
-				break
-			}
-		}
-		if found == nil {
-			return nil, nil, fmt.Errorf("restore point %d not found", input.RestorePointID)
-		}
-		// The approval checks run before this returns, so a refusal reaches
-		// the caller rather than only the log (#601).
-		if err := s.startRestore(ctx, *found, input.ItemName, input.ItemType, input.Destination, input.Passphrase,
-			input.options()); err != nil {
-			return nil, nil, err
-		}
-		r, _ := textResult(map[string]any{"message": "restore started"})
 		return r, nil, nil
 	})
 }

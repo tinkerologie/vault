@@ -75,6 +75,28 @@ func TestListTools(t *testing.T) {
 	got := make(map[string]bool)
 	for _, tool := range result.Tools {
 		got[tool.Name] = true
+		if tool.Name != "restore_item" {
+			continue
+		}
+		var schema struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		data, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, &schema); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"job_id", "restore_point_id", "item_name", "item_type", "destination", "clean_destination"}
+		for _, field := range want {
+			if _, ok := schema.Properties[field]; !ok {
+				t.Errorf("restore_item input schema is missing %q", field)
+			}
+		}
+		if len(schema.Properties) != len(want) {
+			t.Errorf("unexpected restore_item input fields: %s", data)
+		}
 	}
 
 	for _, name := range expected {

@@ -201,12 +201,26 @@ func TestVMRestoreRequestTracksOutcomeAfterApproval(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			input := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"guest","item_type":"vm","write_mode":"replace"}`, job, point)
+			t.Cleanup(server.mcp.Close)
+			client := legacyMCPClient(t, server, loopbackPeer, assistant.Key)
+			args := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"guest","item_type":"vm"}`, job, point)
+			legacy, toolError, body := legacyMCPRestore(t, client, args)
+			if toolError || legacy.ID == "" || legacy.Status != "pending" || legacy.Reused || !legacy.Eligible ||
+				legacy.ReviewLink == "" || legacy.RunID != 0 || legacy.VM != nil || strings.Contains(body, target) {
+				t.Fatalf("restore_item did not prepare an eligible VM operation: %s", body)
+			}
+			input := strings.TrimSuffix(args, "}") + `,"write_mode":"replace"}`
 			submission := callRestoreRequest(server, http.MethodPost, restoreRequestsPath, remotePeer, assistant.Key, input)
 			var submitted restorerequest.View
-			if submission.Code != http.StatusCreated || json.Unmarshal(submission.Body.Bytes(), &submitted) != nil || !submitted.Eligible ||
-				submitted.VM != nil || strings.Contains(submission.Body.String(), target) {
-				t.Fatalf("submit VM: %d %s", submission.Code, submission.Body)
+			if submission.Code != http.StatusOK || json.Unmarshal(submission.Body.Bytes(), &submitted) != nil ||
+				!submitted.Reused || submitted.ID != legacy.ID || submitted.ReviewLink != legacy.ReviewLink {
+				t.Fatalf("REST did not reuse the same operation: %d %s", submission.Code, submission.Body)
+			}
+			if server.Runner().Status().Active {
+				t.Fatal("restore_item started a VM restore")
+			}
+			if _, err := os.Stat(target); !os.IsNotExist(err) {
+				t.Fatalf("restore_item wrote to the VM target: %v", err)
 			}
 			path := restoreRequestsPath + "/" + submitted.ID
 			response := callRestoreRequest(server, http.MethodGet, path, loopbackPeer, "", "")

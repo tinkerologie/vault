@@ -184,7 +184,7 @@ func TestAssistantMCPExposesOnlyRecoveryInspection(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(body, `"isError":true`) {
 		t.Errorf("MCP invalid catalog limit = %d: %s", status, body)
 	}
-	for _, tool := range []string{"restore_item", "delete_job", "run_job", "list_storage_files"} {
+	for _, tool := range []string{"delete_job", "run_job", "list_storage_files"} {
 		status, body = mcp.post(fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":%q,"arguments":{}}}`, tool))
 		if status != http.StatusOK || !strings.Contains(body, `"error"`) {
 			t.Errorf("scoped tools/call %s = %d: %s", tool, status, body)

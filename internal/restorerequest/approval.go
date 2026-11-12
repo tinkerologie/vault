@@ -20,6 +20,8 @@ var (
 	ErrRequestTerminal     = errors.New("this Restore Request cannot start")
 )
 
+const manualContainerRestore = Invalid("this container needs an override in the manual Restore wizard")
+
 func reviewDigest(operation json.RawMessage) string {
 	sum := sha256.Sum256(operation)
 	return hex.EncodeToString(sum[:])
@@ -69,7 +71,7 @@ func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase 
 				return approved, Invalid("unlock the saved backup configuration in Vault before approving")
 			}
 			if stored.ManualRestoreRequired {
-				return approved, Invalid("this container needs an override in the manual Restore wizard")
+				return approved, manualContainerRestore
 			}
 			return approved, Invalid("the reviewed operation is ineligible for approval")
 		}

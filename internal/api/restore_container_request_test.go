@@ -52,6 +52,60 @@ func TestRestoreRequestReviewsSavedContainerEffects(t *testing.T) {
 	}
 }
 
+func TestLegacyMCPRestorePreparesDockerContainerAndRefusesOverride(t *testing.T) {
+	for _, imported := range []bool{false, true} {
+		t.Run(fmt.Sprintf("imported=%t", imported), func(t *testing.T) {
+			database := testDB(t)
+			admin := setTestAPIKey(t, database)
+			calls := fakeContainerRestoreDaemon(t)
+			server := NewServer(database, ServerConfig{})
+			t.Cleanup(server.mcp.Close)
+			extra := ""
+			if imported {
+				extra = `,"HostConfig":{"Privileged":true}`
+			}
+			job, point, _ := containerRequestFixture(t, database, extra, imported)
+			client := legacyMCPClient(t, server, remotePeer, admin)
+			args := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_type":"container","item_name":"web"}`, job, point)
+			view, toolError, body := legacyMCPRestore(t, client, args)
+			if imported {
+				if !toolError || !strings.Contains(body, "manual Restore wizard") {
+					t.Fatalf("imported host privileges were not refused: %s", body)
+				}
+				w := callRestoreRequest(server, http.MethodGet, restoreRequestsPath, loopbackPeer, "", "")
+				if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"requests":[]`) {
+					t.Fatalf("refused override stored a request: %d %s", w.Code, w.Body)
+				}
+			} else if toolError || !view.Eligible || view.ID == "" || view.Status != "pending" ||
+				view.WriteMode != "replace" || view.ReviewLink == "" || view.RunID != 0 || strings.Contains(body, "fixture/web:backup") {
+				t.Fatalf("restore_item container request: %s", body)
+			}
+			if server.Runner().Status().Active || len(calls()) != 0 {
+				t.Fatalf("restore_item mutated Docker: %v", calls())
+			}
+		})
+	}
+}
+
+func TestManualRESTRestoreStillAcceptsExplicitContainerOverride(t *testing.T) {
+	database := testDB(t)
+	admin := setTestAPIKey(t, database)
+	calls := fakeContainerRestoreDaemon(t)
+	server := NewServer(database, ServerConfig{})
+	job, point, _ := containerRequestFixture(t, database, `,"HostConfig":{"Privileged":true}`, true)
+	path := fmt.Sprintf("/api/v1/jobs/%d/restore", job)
+	body := fmt.Sprintf(`{"restore_point_id":%d,"item_type":"container","item_name":"web","allow_host_privileges":true}`, point)
+	if response := callRestoreRequest(server, http.MethodPost, path, remotePeer, admin, body); response.Code != http.StatusAccepted {
+		t.Fatalf("manual container restore: %d %s", response.Code, response.Body)
+	}
+	if err := server.Runner().Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"image_load", "stop", "remove", "create", "start"}; !slices.Equal(calls(), want) {
+		t.Fatalf("manual override did not restore the container: got %v, want %v", calls(), want)
+	}
+}
+
 func containerRequestFixture(t *testing.T, database *db.DB, inspectExtra string, imported bool) (int64, int64, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -395,6 +449,13 @@ func TestContainerRequestUsesRecordedDedupImageDigest(t *testing.T) {
 			if !pinned {
 				if review.Eligible || !review.ManualRestoreRequired || len(calls()) != 0 {
 					t.Fatalf("a digest from another repository can pass review: %+v, calls %v", review, calls())
+				}
+				t.Cleanup(server.mcp.Close)
+				client := legacyMCPClient(t, server, remotePeer, assistant.Key)
+				args := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_type":"container","item_name":"web"}`, jobID, point)
+				_, toolError, body := legacyMCPRestore(t, client, args)
+				if !toolError || !strings.Contains(body, "manual Restore wizard") || len(calls()) != 0 {
+					t.Fatalf("restore_item accepted an existing request requiring an image override: %s, calls %v", body, calls())
 				}
 				return
 			}

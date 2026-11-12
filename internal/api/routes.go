@@ -438,7 +438,15 @@ func (s *Server) setupRoutes() *chi.Mux {
 					})
 					return
 				}
-				adminMCP.ServeHTTP(w, r)
+				ctx := r.Context()
+				requester := restorerequest.PrincipalFrom(ctx)
+				switch p.level {
+				case accessAPIKey:
+					requester.LegacyMCP = restorerequest.LegacyMCPAPIKey
+				case accessLocal:
+					requester.LegacyMCP = restorerequest.LegacyMCPLocal
+				}
+				adminMCP.ServeHTTP(w, r.WithContext(restorerequest.WithPrincipal(ctx, requester)))
 			}
 			r.HandleFunc("/mcp", mcpHandler)
 			r.HandleFunc("/mcp/*", mcpHandler)

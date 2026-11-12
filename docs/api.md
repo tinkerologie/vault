@@ -24,7 +24,7 @@ The access rules apply to every API route, including `/health`.
 | Anyone else, including an MCP bridge or script on another machine         | Send the API key. Vault returns `401` until a key exists                                        |
 | A web page on another origin, on any method and from any address          | Vault returns `403` for origins outside the allowlist. Send the API key from a permitted origin |
 
-Send an [Assistant Key](mcp.md#assistant-keys) in the same header to read the recovery catalog and Backup Item evidence. The key limits access on remote connections, loopback connections and SSH tunnels. Vault returns `401` for an invalid or revoked key and `403` for operations outside its permissions. Connect directly to the daemon. The Unraid plugin proxy refuses Assistant Key headers.
+Send an [Assistant Key](mcp.md#assistant-keys) in the same header to read the recovery catalog and Backup Item evidence. The key limits access on remote connections, loopback connections and SSH tunnels. Vault checks an Assistant Key before granting access based on the connection address. Vault returns `401` for an invalid or revoked key and `403` for operations outside its permissions. Connect directly to the daemon. The Unraid plugin proxy refuses Assistant Key headers.
 
 A local request must come from an address on the Vault host. Its `Host` header must contain an IP address, `localhost`, or the Vault host name. A domain that points to `127.0.0.1` does not get local access. This prevents DNS rebinding.
 
@@ -96,7 +96,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | POST   | `/jobs/{id}/restore`                               | Start a restore. Set `destination` to an absolute path or, for a ZFS item, a dataset name |
 | GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                            |
 
-A Restore Request run uses the [exact-run stop action](#folder-restore-requests).
+A Restore Request run uses the [exact-run stop action](#restore-requests).
 
 ## Storage
 
@@ -278,11 +278,11 @@ Evidence for a selected point lists its Backup Chain from oldest to newest. Each
 
 Verification shows the latest recorded mode, status and times, plus any backup-time Verification flag. Missing prerequisites and known unusable artifacts prevent approval eligibility. Unavailable artifact evidence or a failed Verification produces a warning. If the required folder archive is available but its replay index or final listing is unavailable, Vault reports `folder_replay_evidence_unavailable`. The folder remains eligible and replay pruning may be skipped. Storage probes check metadata without reading backup payloads.
 
-### Restore approvals (`/jobs/{id}/restore`)
+### Manual container restore overrides (`/jobs/{id}/restore`)
 
 Two optional Boolean fields give approval for a container restore. Both default to `false` and apply to all items in the request.
 
-The MCP `restore_item` tool has no approval fields. The tool waits for the approval checks before it reports that the restore started. If approval is necessary, the tool returns an error. To give approval, open **Restore** → **Container approvals** in Vault.
+For a container that needs an override, open **Restore** → **Container approvals** in the manual wizard. The [MCP request tool](mcp.md#migrate-restore_item-clients) and the Assistant Key REST endpoints refuse these fields.
 
 - `allow_host_privileges` — restore host-level settings (privileged mode, host network, IPC or PID, added capabilities, devices, host paths outside `/mnt`) from a backup this server did not make: imported or replicated.
 - `allow_unpinned_image` — for a deduplicated container backup whose recorded image digest is missing or cannot be pulled, use the image the tag points to now.
@@ -328,9 +328,11 @@ In daemon mode, use `PATCH /settings/assistant-keys/{id}` from the Vault host wi
 | GET    | `/restore-requests`               | Vault host operator review                                         |
 | GET    | `/restore-requests/{id}`          | Owning Assistant Key with permission or Vault host operator review |
 | POST   | `/restore-requests/{id}/withdraw` | Owning Assistant Key with permission                               |
+| POST   | `/restore-requests/{id}/review`   | Signed-in Unraid operator via the native Vault action              |
+| POST   | `/restore-requests/{id}/approve`  | Signed-in Unraid operator via the native Vault action              |
 | POST   | `/restore-runs/{runID}/stop`      | Signed-in Unraid operator via the native Vault action              |
 
-To submit, send positive `job_id` and `restore_point_id` values, the exact folder `item_name`, and `write_mode` of `replace` or `merge`. Omit `destination` to review the configured original location, or supply a path allowed by the alternate location policy. The request covers one whole folder. Vault returns `201` with a pending `id`, `review_link`, evidence, effects, and eligibility. The link opens the review in the Unraid UI and carries no authorization. Submission performs no restore. A signed-in Unraid operator can select **Approve and run** in the review. Vault verifies the native Unraid session and the reviewed operation before it admits the run. Enter any required Backup Passphrase in the review. The general API proxy and standalone Vault interface cannot approve a request.
+To submit, send positive `job_id` and `restore_point_id` values, the exact `item_name`, and `write_mode` of `replace` or `merge`. Send `item_type` of `folder`, `container`, or `vm`. The default is `folder`. Omit `destination` to review the configured original location, or supply a path allowed by the alternate location policy. The request covers one whole item. Vault returns `201` with a pending `id`, `review_link`, evidence, effects, and eligibility. The link opens the review in the Unraid UI and carries no authorization. Submission performs no restore. A signed-in Unraid operator can select **Approve and run** in the review. The native Unraid action issues server-side operator proof. The daemon checks the proof and the reviewed operation before it admits the run. Enter any required Backup Passphrase in the review. The general API proxy and standalone Vault interface cannot approve a request.
 
 An exact repeat of a pending submission returns `200` with `reused: true`, the existing ID, captured review and original expiry. The response reports the working ledger. Check the initial submission for any flash persistence warning. Withdraw the pending request and submit again to capture a new review. Each Assistant Key can hold five unexpired pending requests and submit six new requests per rolling hour. Withdrawn requests count towards the rolling limit. When a new operation exceeds either limit, Vault returns `429`. Follow a pending request, withdraw one to free a pending slot, or retry after the rolling window.
 
@@ -338,7 +340,7 @@ During classic Backup Chain replay, Vault can remove earlier writes that the fin
 
 Vault retains requests after withdrawal or expiry. The review window is 24 hours from creation. At the exact expiry time, a pending request becomes expired even if withdrawal arrives first. Repeated withdrawal returns the recorded state. If flash persistence failed, the warning stays visible until Vault confirms the withdrawal is saved. A repeated withdrawal can retry the flash write at most once per minute. List defaults to `status=pending`. Use `status=withdrawn,expired,invalidated,completed,failed,interrupted,cancelled` to see terminal requests, and pass `next_before` from the result as `before` for the next page. The default `limit` is 50, with a maximum of 200.
 
-Vault returns `400` for invalid inputs or a folder known to be absent, `403` for insufficient permission, and `404` for unknown or non-owned requests. A database maintenance conflict returns `409`. A committed change with a failed hybrid flash flush includes `persistence_warning`. Assistant responses omit resolved paths, raw point metadata, credentials, and internal source identifiers. The operator review includes the resolved target path. The submission schema has no passphrase or file-selection field.
+Vault returns `400` for invalid inputs or an item known to be absent, `403` for insufficient permission, and `404` for unknown or non-owned requests. A database maintenance conflict returns `409`. A committed change with a failed hybrid flash flush includes `persistence_warning`. Assistant responses omit resolved paths, raw point metadata, credentials, and internal source identifiers. The operator review includes the resolved target path. Enter any required Backup Passphrase in Vault. Use the manual Restore wizard for selected-file restores and explicit container overrides.
 
 An approved request includes a stable `run_id` and a `run` summary with status, item counts, live progress when available, and readiness checks. Folder application health is `unchecked`. The operator view also shows the verified approval time and Unraid account name when present. A busy Runner leaves the request pending. A change to the reviewed source or write effects invalidates the request. A repeated approval returns the existing Restore Run. After a restart, an unfinished run is marked interrupted. Prepare a new request to retry.
 

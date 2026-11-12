@@ -24,19 +24,20 @@ The catalog lists Jobs, Restore Points, recorded parent links and recorded backu
 
 Use `find_restore_points` with the exact `item_name` and `item_type` (`folder`, `container` or `vm`). Use `get_recovery_evidence` with those same fields and a `restore_point_id` to check the required Backup Chain, artifact metadata and Verification for a candidate. Both tools return the same structured evidence as the [REST endpoints](api.md#backup-item-evidence).
 
-An operator can enable **Allow Restore Requests** for a key in Settings. Reconnect the MCP client after changing permission. The additional tools use the key on every call.
+An operator can enable **Allow Restore Requests** for a key in Settings. Reconnect the MCP client after changing permission. Vault checks the key on each call.
 
-| Tool                       | Input                                                                                                               | Result                                                                        |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `submit_restore_request`   | `job_id`, `restore_point_id`, exact folder `item_name`, `write_mode` (`replace` or `merge`), optional `destination` | Pending request, review link, evidence and write effects                      |
-| `get_restore_request`      | `id`                                                                                                                | Redacted request, linked Restore Run, and recorded outcome for the owning key |
-| `withdraw_restore_request` | `id`                                                                                                                | Recorded state after attempting to withdraw the owning key's pending request  |
+| Tool                       | Input                                                                                                                        | Result                                                                       |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `submit_restore_request`   | `job_id`, `restore_point_id`, exact `item_name`, `write_mode` (`replace` or `merge`), optional `item_type` and `destination` | Pending request, review link, evidence and write effects                     |
+| `restore_item`             | [Legacy request fields](#migrate-restore_item-clients)                                                                       | The same pending request response                                            |
+| `get_restore_request`      | `id`                                                                                                                         | Redacted request, linked Restore Run and recorded outcome for the owning key |
+| `withdraw_restore_request` | `id`                                                                                                                         | Recorded state after attempting to withdraw the owning key's pending request |
 
-A request covers one whole folder and expires after 24 hours. Submission performs no restore. Open the review link on the Unraid host to inspect the request. The link carries no authorization. A missing request and another key's request both return a tool error. See the [REST contract](api.md#folder-restore-requests) for state and error details.
+A request covers one whole folder, Docker container, or VM and expires after 24 hours. Use `folder`, `container`, or `vm` for `item_type`. The default type for `submit_restore_request` is `folder`. Use `replace` for VMs. A missing request and another key's request both return a tool error. See the [REST contract](api.md#restore-requests) for state and error details.
 
 An exact repeat returns the existing pending ID and `reused: true`. Each key can hold five unexpired pending requests and submit six new requests per rolling hour. Vault returns a tool error when a new operation reaches either limit. Withdraw a pending request to free a pending slot, or retry after the rolling window.
 
-After the operator approves and the Runner admits the request, use `get_restore_request` to follow the same `run_id` to its recorded outcome. Only a signed-in Unraid operator can stop that run. If the stop takes effect, the tool reports `cancelled` and the stop request time. Vault reports item counts and readiness checks and labels application health as `unchecked`. The tool accepts the request ID and only the owning Assistant Key can read the result. Existing administrator `restore_item` behavior changes in [#646](https://github.com/tinkerologie/vault/issues/646).
+After the operator approves and the Runner admits the request, use `get_restore_request` to follow the same `run_id` to its recorded outcome. Only a signed-in Unraid operator can stop that run. If the stop takes effect, the tool reports `cancelled` and the stop request time. Vault reports item counts and readiness checks and labels application health as `unchecked`.
 
 ## Configuration
 
@@ -104,7 +105,7 @@ with the same header through `mcp-remote`.
 
 ## Available Tools
 
-The tools below are available to local and administrator clients. For settings, encryption, recovery planning and storage import, use the [REST API](api.md).
+Vault offers 34 tools to host-local and administrator clients. Assistant Keys expose three inspection tools and four more tools when **Allow Restore Requests** is enabled. For settings, encryption, recovery planning and storage import, use the [REST API](api.md).
 
 ### Jobs
 
@@ -157,17 +158,19 @@ The tools below are available to local and administrator clients. For settings, 
 | `find_restore_points`   | Find Restore Points across Jobs and check recorded Backup Item membership                                     |
 | `get_recovery_evidence` | Inspect recorded membership, the required Backup Chain, storage metadata and Verification for one Backup Item |
 | `list_restore_points`   | List restore points for a job                                                                                 |
-| `restore_item`          | Restore a backup item                                                                                         |
+| `restore_item`          | Prepare one Restore Request for operator approval                                                             |
 
-`restore_item` returns after the restore passes the approval checks. The restore continues in the background.
+#### Migrate `restore_item` clients
 
-If approval is necessary for host access or a replacement image, the tool returns an error before it changes data. To give approval, use **Container approvals** in the Restore wizard. An error before the approval checks also returns to the client.
+Keep sending `job_id`, `restore_point_id`, `item_type` and the exact `item_name`. Omit `destination` to use the original location. The default `clean_destination` value is `true`. Send `false` to request a merge where the item type permits it. Submit each item in a separate request.
 
-Vault refuses the tool call while a backup, restore, garbage collection, or orphan deletion is active. Vault also refuses it while the daemon shuts down. Vault does not queue the request. Retry after the other operation completes or the daemon restarts. After the restore starts, Vault waits for it to finish before it starts another backup or restore.
+Read `id`, `status: pending`, `review_link`, `expires_at` and `eligible_for_approval` from the result. Show the review link to the operator. Resolve the relative link against the Unraid web UI origin. The link carries no authorization. The same response applies to the global API Key, host-local MCP and a permitted Assistant Key.
 
-An MCP restore does not appear in `get_runner_status` or in run history. You cannot cancel it. The daemon log records the result. If you enable notifications, `get_activity_log` also shows "Restore completed" or "Restore failed". To use progress, history, and cancellation, use the Restore wizard or `POST /jobs/{id}/restore`.
+The signed-in operator opens the link in Unraid or selects the request under **Restore** → **Pending Restore Requests**. The operator reviews the evidence and write effects, enters the Backup Passphrase in Vault when necessary and selects **Approve and run**. A busy Runner leaves the request pending. The run starts only after Vault verifies the operator's approval and admits the exact reviewed operation.
 
-For a deduplicated container restore, the call can take as long as pulling the backed-up image. For a classic container restore from an imported or replicated backup, it can take as long as downloading the backup.
+Remove `passphrase` and any container override fields from client calls. For a container that requires an override, open **Container approvals** in the manual Restore wizard. Use the manual wizard for plugin, ZFS and selected-file restores.
+
+Follow legacy requests in Unraid through the review link or **History**. To follow or withdraw requests from MCP, configure an Assistant Key with **Allow Restore Requests**, submit with that key and use `get_restore_request` or `withdraw_restore_request` with the returned ID.
 
 ### Replication
 
@@ -176,6 +179,14 @@ For a deduplicated container restore, the call can take as long as pulling the b
 | `list_replication`   | List replication sources    |
 | `get_replication`    | Get a replication source    |
 | `delete_replication` | Delete a replication source |
+
+### Anomalies
+
+| Tool                  | Description             |
+| --------------------- | ----------------------- |
+| `list_anomalies`      | List recorded anomalies |
+| `get_anomaly`         | Read one anomaly        |
+| `acknowledge_anomaly` | Acknowledge one anomaly |
 
 ## REST-Only Endpoints
 

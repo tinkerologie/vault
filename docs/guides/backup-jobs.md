@@ -22,12 +22,6 @@ Select the items to include in this job. Vault lists items from your server.
 | **Folders**          | Any arbitrary path on your server (e.g. `/mnt/user/appdata`, `/boot/config`)                         |
 | **Plugins**          | Installed Unraid plugins                                                                             |
 
-#### VM Restore Requests
-
-A VM Restore Request shows the disks and NVRAM Vault will write and the domain definition Vault will create. The required chain starts at the VM's recorded full backup. Each required disk layer must be available before Vault stops or removes an existing domain. An alternate directory changes the disk and NVRAM paths for the same VM identity.
-
-Vault checks the reviewed source and destination effects before execution. Libvirt actions and disk writes occur separately and can leave a partially restored VM if they fail or are interrupted. History shows whether Vault started the VM and which configured readiness checks ran. Application health stays unchecked.
-
 #### Notes on containers
 
 - Vault backs up the container image, its XML template, and the included host paths.
@@ -301,6 +295,20 @@ To delete a specific backup without touching the job or other restore points:
 This removes both the backup files from storage and the restore point record from the database.
 
 ---
+
+## Review a Restore Request
+
+A Restore Request covers one whole folder, Docker container, or VM from one Restore Point. When an assistant gives you a review link, open it while signed in to Unraid. You can also find the request under **Restore** → **Pending Restore Requests**.
+
+Check the selected Backup Item, Restore Point, Backup Chain, destination and write effects. Enter the Backup Passphrase in Vault if the review asks for it. Select **Approve and run** to start the reviewed operation. If the Runner is busy, retry approval when it becomes available. Follow the linked Restore Run in the request or in **History**.
+
+Use the manual Restore wizard for a container that needs **Container approvals**, for a plugin or ZFS dataset, or to restore selected files. See the [MCP migration guide](../mcp.md#migrate-restore_item-clients) for updates to existing assistant clients.
+
+### VM Restore Requests
+
+A VM Restore Request shows the disks and NVRAM Vault will write and the domain definition Vault will create. The required chain starts at the VM's recorded full backup. Each required disk layer must be available before Vault stops or removes an existing domain. An alternate directory changes the disk and NVRAM paths for the same VM identity.
+
+Vault checks the reviewed source and destination effects before execution. Libvirt actions and disk writes occur separately and can leave a partially restored VM if they fail or are interrupted. History shows whether Vault started the VM and which configured readiness checks ran. Application health stays unchecked.
 
 ## Stop an approved Restore Run
 
