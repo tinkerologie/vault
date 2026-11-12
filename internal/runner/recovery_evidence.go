@@ -243,6 +243,9 @@ func probeRecoveryArtifacts(ctx context.Context, database *db.DB, jobID int64, p
 	default:
 		return nil
 	}
+	// The caller may populate response steps as soon as the deadline expires
+	// while a legacy provider is still returning from its last operation.
+	steps = slices.Clone(steps)
 	updates := make(chan stepProbeResult, len(steps))
 	go func() {
 		defer func() { <-recoveryProbeSlots }()

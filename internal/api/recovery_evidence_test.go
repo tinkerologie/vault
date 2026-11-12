@@ -442,3 +442,54 @@ func TestAssistantCatalogAndEvidenceBoundLongChains(t *testing.T) {
 		t.Errorf("evidence exceeded the Backup Chain limit: %+v", result.Chain)
 	}
 }
+
+func TestRecoveryEvidenceKeepsKnownFailureAfterStorageTimeout(t *testing.T) {
+	d := testDB(t)
+	objectStore := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.Method != http.MethodGet || r.URL.Path != "/fixture" || q.Get("list-type") != "2" {
+			t.Errorf("unexpected storage operation %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		switch q.Get("prefix") {
+		case "job/full/archive/":
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte(`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+				<IsTruncated>false</IsTruncated></ListBucketResult>`))
+		case "job/incremental/archive/":
+			<-r.Context().Done()
+		default:
+			t.Errorf("unexpected prefix %s", q.Get("prefix"))
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer objectStore.Close()
+	config, err := json.Marshal(map[string]any{
+		"bucket": "fixture", "region": "us-east-1", "endpoint": objectStore.URL,
+		"access_key": "fixture-private-key", "secret_key": "fixture-private-secret", "force_path_style": true,
+	})
+	config = requireFixture(t, config, err)
+	dest, err := d.CreateStorageDestination(db.StorageDestination{Name: "Slow S3 fixture", Type: "s3", Config: string(config)})
+	dest = requireFixture(t, dest, err)
+	job, err := d.CreateJob(db.Job{Name: "Job", StorageDestID: dest})
+	job = requireFixture(t, job, err)
+	const metadata = `{"item_sizes":{"archive":1024}}`
+	full := evidencePoint(t, d, job, 0, "full", "job/full", metadata)
+	point := evidencePoint(t, d, job, full, "incremental", "job/incremental", metadata)
+	srv := NewServer(d, ServerConfig{})
+	key := issueAssistantKey(t, srv, "Slow storage reader")
+	path := fmt.Sprintf("/api/v1/recovery/restore-points/%d/evidence%s", point, evidenceQuery)
+	w := serve(srv, boundaryRequest(http.MethodGet, path, remotePeer, daemonHost, map[string]string{"X-API-Key": key.Key}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var result runner.RecoveryEvidence
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Chain.Steps) != 2 || result.Chain.Steps[0].Artifacts != "missing" ||
+		result.Chain.Steps[1].Artifacts != "unknown" || result.EligibleForApproval {
+		t.Fatalf("a timeout obscured a proven missing artifact: %s", w.Body.String())
+	}
+}
