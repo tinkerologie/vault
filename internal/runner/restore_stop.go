@@ -24,21 +24,24 @@ func (r *Runner) publishRestoreCancellation(status *RunStatus, cancel context.Ca
 	r.setRunStatus(status)
 }
 
-// StopRestoreRun signals only the active approved restore with this run ID.
+// StopRestoreRun records and signals a stop for the exact active approved run.
 // The worker records the actual outcome when the engine returns.
-func (r *Runner) StopRestoreRun(runID int64, operator string) bool {
+func (r *Runner) StopRestoreRun(ctx context.Context, runID int64, operator string) (bool, error) {
 	r.cancelMu.Lock()
 	if r.cancelFn == nil || r.cancellingRunID != runID || r.cancellingRestoreRequest == "" {
 		r.cancelMu.Unlock()
-		return false
+		return false, nil
 	}
-	if r.restoreStopRequestedAt != nil {
+	if r.restoreStopRequested {
 		r.cancelMu.Unlock()
-		return true
+		return true, nil
 	}
-	now := time.Now().UTC()
-	r.restoreStopRequestedAt = &now
-	r.restoreStoppedBy = operator
+	recorded, err := r.db.RecordApprovedRestoreStop(ctx, r.cancellingRestoreRequest, runID, time.Now().UTC(), operator)
+	if err != nil || !recorded {
+		r.cancelMu.Unlock()
+		return false, err
+	}
+	r.restoreStopRequested = true
 	jobID := r.cancellingJobID
 	r.statusMu.Lock()
 	r.currentRun.Cancelling = true
@@ -49,5 +52,5 @@ func (r *Runner) StopRestoreRun(runID int64, operator string) bool {
 	r.broadcast(map[string]any{
 		"type": "job_cancelling", "job_id": jobID, "run_id": runID, "run_type": "restore",
 	})
-	return true
+	return true, nil
 }

@@ -284,18 +284,18 @@ func (r *Runner) stageApprovedContainerChunks(ctx context.Context, plan Approved
 	r.reportRestoreProgress(reporter, 0, "Staging required backup chunks")
 	adapter, err := newRunAdapter(ctx, plan.Destination)
 	if err != nil {
-		return nil, changedApprovedRestore(err)
+		return nil, approvedRestoreStorageError(ctx, err)
 	}
 	defer storage.CloseAdapter(adapter)
 	stop := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
 	defer stop()
 	repo, err := OpenDedupRepoWithFallback(r.db, adapter, plan.Destination.ID, r.serverKey, passphrase)
 	if err != nil {
-		return nil, changedApprovedRestore(err)
+		return nil, approvedRestoreStorageError(ctx, err)
 	}
 	manifest, err := repo.GetManifest(id)
 	if err != nil {
-		return nil, changedApprovedRestore(err)
+		return nil, approvedRestoreStorageError(ctx, err)
 	}
 	cache, err := os.CreateTemp(stage, "chunks-")
 	if err != nil {
@@ -322,7 +322,7 @@ func (r *Runner) stageApprovedContainerChunks(ctx context.Context, plan Approved
 			if !found {
 				data, err := repo.Get(chunkID)
 				if err != nil {
-					return changedApprovedRestore(err)
+					return approvedRestoreStorageError(ctx, err)
 				}
 				if _, err := cache.Write(data); err != nil {
 					return err
@@ -358,7 +358,7 @@ func (r *Runner) stageApprovedContainerChunks(ctx context.Context, plan Approved
 		}
 		sub, err := repo.GetManifest(entry.Chunks[0])
 		if err != nil {
-			return nil, changedApprovedRestore(err)
+			return nil, approvedRestoreStorageError(ctx, err)
 		}
 		prepared.manifests[entry.Chunks[0]] = sub
 		for path, file := range sub.Files {

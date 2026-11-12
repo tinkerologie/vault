@@ -429,10 +429,10 @@ func checkContainerImageLoad(body io.Reader) error {
 			} `json:"errorDetail"`
 		}
 		if err := json.Unmarshal(reader.Bytes(), &message); err != nil {
-			return errors.New("Docker returned an invalid image load response")
+			return errors.New("invalid image load response from Docker")
 		}
 		if message.Error != "" || (message.ErrorDetail != nil && message.ErrorDetail.Message != "") {
-			return errors.New("Docker rejected the saved image")
+			return errors.New("saved image rejected by Docker")
 		}
 	}
 	return reader.Err()
@@ -466,7 +466,7 @@ func (h *ContainerHandler) stopReviewedContainer(ctx context.Context) error {
 	}
 	existing := result.Container
 	if existing.ID == "" || existing.State == nil {
-		return errors.New("Docker returned no identity or state for the existing container")
+		return errors.New("existing container has no identity or state")
 	}
 	reviewed.existingID = existing.ID
 	if existing.State.Running {

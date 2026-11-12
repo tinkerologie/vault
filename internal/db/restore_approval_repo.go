@@ -68,6 +68,16 @@ func (d *DB) InvalidateRestoreRequest(ctx context.Context, id string, now time.T
 		WHERE id = ? AND status = 'pending' AND expires_at > ?`, now.UnixNano(), id, now.UnixNano()))
 }
 
+// RecordApprovedRestoreStop saves the first stop audit for an active approved
+// run without changing either the run or the request outcome.
+func (d *DB) RecordApprovedRestoreStop(ctx context.Context, requestID string, runID int64, requestedAt time.Time, operator string) (bool, error) {
+	return restoreRequestsChanged(d.ExecContext(ctx, `UPDATE job_runs
+		SET stop_requested_at = ?, stopped_by = ?
+		WHERE id = ? AND run_type = 'restore' AND status = 'running' AND stop_requested_at IS NULL
+		AND EXISTS (SELECT 1 FROM restore_request_approvals WHERE request_id = ? AND run_id = job_runs.id)`,
+		requestedAt, operator, runID, requestID))
+}
+
 var errApprovedRestoreInactive = errors.New("linked Restore Request and Run are no longer active")
 
 // FinishApprovedRestore retries a failed transaction as a unit. Rewriting
@@ -107,10 +117,8 @@ func (d *DB) finishApprovedRestoreOnce(ctx context.Context, requestID string, ru
 		return errApprovedRestoreInactive
 	}
 	changed, err = restoreRequestsChanged(tx.ExecContext(ctx, `UPDATE job_runs
-		SET status = ?, completed_at = CURRENT_TIMESTAMP, log = ?, items_done = ?, items_failed = ?, size_bytes = ?,
-			stop_requested_at = ?, stopped_by = ?
-		WHERE id = ? AND status = 'running'`, run.Status, run.Log, run.ItemsDone, run.ItemsFailed, run.SizeBytes,
-		run.StopRequestedAt, run.StoppedBy, run.ID))
+		SET status = ?, completed_at = CURRENT_TIMESTAMP, log = ?, items_done = ?, items_failed = ?, size_bytes = ?
+		WHERE id = ? AND status = 'running'`, run.Status, run.Log, run.ItemsDone, run.ItemsFailed, run.SizeBytes, run.ID))
 	if err != nil {
 		return err
 	}

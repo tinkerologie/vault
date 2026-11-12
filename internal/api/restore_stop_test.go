@@ -2,9 +2,11 @@ package api
 
 import (
 	"archive/tar"
+	"bytes"
 	"crypto/sha256"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,10 +22,12 @@ import (
 	"golang.org/x/net/webdav"
 	"modernc.org/sqlite"
 
-	"github.com/tinkerologie/vault/internal/runner"
-
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/operatorproof"
 	"github.com/tinkerologie/vault/internal/restorerequest"
+	"github.com/tinkerologie/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 var restoreStopTerminalWriteAttempts atomic.Int32
@@ -289,5 +294,156 @@ func TestStopRestoreRunRequiresProof(t *testing.T) {
 	response := callRestoreRequest(server, http.MethodPost, path, loopbackPeer, "", "")
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("stop without native proof: %d %s", response.Code, response.Body)
+	}
+}
+
+func TestStopDeduplicatedRestorePersistsAuditAndCancelsInterruptedRead(t *testing.T) {
+	database := testDB(t)
+	jobID, _, root, target := requestFolderFixture(t, database)
+	job, err := database.GetJob(jobID)
+	job = requireFixture(t, job, err)
+	dest, err := database.GetStorageDestination(job.StorageDestID)
+	dest = requireFixture(t, dest, err)
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	adapter = requireFixture(t, adapter, err)
+	defer storage.CloseAdapter(adapter)
+	serverKey := bytes.Repeat([]byte{31}, 32)
+	repo, err := dedup.InitRepo(database, adapter, dest.ID, serverKey)
+	repo = requireFixture(t, repo, err)
+	chunkID, err := repo.Put([]byte("data"))
+	chunkID = requireFixture(t, chunkID, err)
+	manifestID, err := repo.PutManifest("archive", dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+		"restored.txt": {Size: 4, Mode: 0o600, Chunks: []dedup.ID{chunkID}},
+	}})
+	manifestID = requireFixture(t, manifestID, err)
+	if err := repo.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	point := evidencePoint(t, database, jobID, 0, "full", "private-source/chunked",
+		fmt.Sprintf(`{"item_manifests":{"archive":"%x"},"item_types":{"archive":"folder"}}`, manifestID[:]))
+
+	var armRead, blockRead, failFlush, saveSnapshot atomic.Bool
+	readStarted, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	files := webdav.Handler{FileSystem: webdav.Dir(root), LockSystem: webdav.NewMemLS()}
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/"+dedup.RepoRoot+"/packs/") && blockRead.Swap(false) {
+			close(readStarted)
+			<-release
+			// An interrupted adapter can return a storage error without a context error.
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		files.ServeHTTP(w, r)
+	}))
+	defer backup.Close()
+	dest.Type, dest.Config = "webdav", fmt.Sprintf(`{"url":%q}`, backup.URL)
+	if err := database.UpdateStorageDestination(dest); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshotPath := filepath.Join(t.TempDir(), "during-stop.db")
+	proofKey := [32]byte{61}
+	server := NewServer(database, ServerConfig{
+		ServerKey: serverKey, OperatorProof: operatorproof.New(proofKey, nil),
+		RestoreRequestFlush: func() error {
+			if armRead.Swap(false) {
+				blockRead.Store(true)
+			}
+			if failFlush.Swap(false) {
+				return errors.New("fixture flash flush failure")
+			}
+			if saveSnapshot.Swap(false) {
+				_, err := database.Exec("VACUUM INTO ?", snapshotPath)
+				return err
+			}
+			return nil
+		},
+	})
+	defer server.mcp.Close()
+	defer func() {
+		unblock()
+		server.Runner().WaitForBackgroundWork()
+	}()
+	assistant := issueAssistantKey(t, server, "Chunked folder assistant")
+	grantRestoreRequests(t, server, assistant.ID, true)
+	path, review := prepareApprovalFixture(t, server, assistant.Key, jobID, point)
+	if !review.Eligible {
+		t.Fatalf("deduplicated folder was ineligible: %v", review.Reasons)
+	}
+	proof := func(action, id, digest, operator string, nonce int) string {
+		return signedApproval(t, proofKey, operatorproof.Action{
+			Version: 1, Action: action, ID: id, ReviewDigest: digest, Operator: operator,
+			Nonce: fmt.Sprintf("%032x", nonce), Timestamp: time.Now().Unix(),
+		})
+	}
+	armRead.Store(true)
+	approved := callRestoreRequest(server, http.MethodPost, path+"/approve", loopbackPeer, "",
+		proof("approve", review.ID, review.ReviewDigest, "approver", 1))
+	var result restorerequest.View
+	if err := json.Unmarshal(approved.Body.Bytes(), &result); err != nil || approved.Code != http.StatusAccepted || result.RunID == 0 {
+		t.Fatalf("approve: %d %s", approved.Code, approved.Body)
+	}
+	select {
+	case <-readStarted:
+	case <-time.After(8 * time.Second):
+		t.Fatal("restore did not reach its deduplicated storage read")
+	}
+	runID := strconv.FormatInt(result.RunID, 10)
+	stopPath := "/api/v1/restore-runs/" + runID + "/stop"
+	stop := func(operator string, nonce, want int) {
+		t.Helper()
+		res := callRestoreRequest(server, http.MethodPost, stopPath, loopbackPeer, "", proof("stop", runID, "", operator, nonce))
+		if res.Code != want {
+			t.Fatalf("stop: %d %s, want %d", res.Code, res.Body, want)
+		}
+	}
+	if _, err := database.Exec(`CREATE TRIGGER fail_stop_audit BEFORE UPDATE OF stop_requested_at ON job_runs
+		BEGIN SELECT RAISE(ABORT, 'fixture stop audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	stop("unrecorded-operator", 2, http.StatusInternalServerError)
+	if server.Runner().Status().Cancelling {
+		t.Fatal("runner signalled a stop whose audit failed to save")
+	}
+	if _, err := database.Exec(`DROP TRIGGER fail_stop_audit`); err != nil {
+		t.Fatal(err)
+	}
+	failFlush.Store(true)
+	stop("verified-stopper", 3, http.StatusServiceUnavailable)
+	saveSnapshot.Store(true)
+	stop("another-operator", 4, http.StatusAccepted)
+
+	reopened, err := db.Open(snapshotPath)
+	reopened = requireFixture(t, reopened, err)
+	defer reopened.Close()
+	if count, err := reopened.CleanupStaleRuns(); err != nil || count != 1 {
+		t.Fatalf("restart cleanup: %d %v", count, err)
+	}
+	restarted := NewServer(reopened, ServerConfig{})
+	defer restarted.mcp.Close()
+	readOutcome := func(srv *Server, peer, key string) restorerequest.View {
+		t.Helper()
+		response := callRestoreRequest(srv, http.MethodGet, path, peer, key, "")
+		var view restorerequest.View
+		if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil || response.Code != http.StatusOK || view.Run == nil {
+			t.Fatalf("read outcome: %d %s", response.Code, response.Body)
+		}
+		return view
+	}
+	interrupted := readOutcome(restarted, loopbackPeer, "")
+	if interrupted.Status != "interrupted" || interrupted.RunID != result.RunID || interrupted.Run.StopRequestedAt == nil || interrupted.Run.StoppedBy != "verified-stopper" {
+		t.Fatalf("restart lost the accepted stop audit: status=%q run=%+v", interrupted.Status, interrupted.Run)
+	}
+
+	unblock()
+	server.Runner().WaitForBackgroundWork()
+	outcome := readOutcome(server, loopbackPeer, "")
+	if outcome.Status != "cancelled" || outcome.TerminalReason != "stopped_by_operator" || outcome.Run.Status != "cancelled" ||
+		outcome.Run.StopRequestedAt == nil || !outcome.Run.StopRequestedAt.Equal(*interrupted.Run.StopRequestedAt) || outcome.Run.StoppedBy != "verified-stopper" {
+		t.Fatalf("interrupted deduplicated restore outcome: status=%q reason=%q run=%+v", outcome.Status, outcome.TerminalReason, outcome.Run)
+	}
+	if _, err := os.Stat(filepath.Join(target, "restored.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled staging wrote to the restore location: %v", err)
 	}
 }

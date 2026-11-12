@@ -468,7 +468,7 @@ func readVMReviewSidecar(adapter storage.Adapter, object storage.FileInfo, name,
 	if err != nil {
 		return nil, engine.ErrVMBackupEvidenceUnknown
 	}
-	defer closePlain()
+	defer func() { _ = closePlain() }()
 	if local != name {
 		return nil, engine.ErrVMBackupEvidenceUnknown
 	}
