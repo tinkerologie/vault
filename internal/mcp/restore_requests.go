@@ -17,7 +17,7 @@ func registerRestoreRequests(server *mcp.Server, service *restorerequest.Service
 	}
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "submit_restore_request",
-		Description: "Prepare one whole folder Restore Request for operator review",
+		Description: "Prepare a Restore Request for one whole Backup Item for operator review",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input restorerequest.Input) (*mcp.CallToolResult, restorerequest.View, error) {
 		result, err := service.Submit(ctx, restorerequest.PrincipalFrom(ctx), input)
 		return nil, result, restoreRequestToolError(err)

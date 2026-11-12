@@ -234,8 +234,6 @@ func volumeArchiveCandidates(manifestArchive, source string, legacyIndex int) []
 		// overlay under the plain base name, so the recorded ".tar.zst" may
 		// no longer exist while ".tar" does.
 		bases = append(bases, TarBaseName(manifestArchive))
-	} else if manifestArchive != "" {
-		log.Printf("engine: restore: ignoring unsafe volume archive name %q in volumes.json", manifestArchive)
 	}
 	if source != "" {
 		bases = append(bases, volumeArchiveBase(source))
@@ -247,6 +245,9 @@ func volumeArchiveCandidates(manifestArchive, source string, legacyIndex int) []
 }
 
 func resolveVolumeArchive(sourceDir, manifestArchive, source string, legacyIndex int) (string, error) {
+	if manifestArchive != "" && !safeVolumeArchiveName(manifestArchive) {
+		log.Printf("engine: restore: ignoring unsafe volume archive name in volumes.json")
+	}
 	bases := volumeArchiveCandidates(manifestArchive, source, legacyIndex)
 	if len(bases) == 0 {
 		return "", fmt.Errorf("no archive name could be resolved for volume %s in %s", source, sourceDir)
@@ -1708,7 +1709,6 @@ func chunkedPrevBySource(parent *dedup.Manifest, mounts []container.MountPoint, 
 // If item.Settings["restore_destination"] is set, volumes are extracted
 // under that base directory instead of their original paths.
 func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceDir string, progress ProgressFunc) error {
-
 	if reviewed, ok := reviewedContainerFrom(ctx); ok {
 		metadata, err := readStagedContainerMetadata(sourceDir)
 		if err != nil {
@@ -1750,6 +1750,11 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	}
 	if err := enforceRestorePrivileges(ctx, item, inspect); err != nil {
 		return err
+	}
+	if reviewed, ok := reviewedContainerFrom(ctx); ok {
+		if err := validateReviewedContainerArchives(ctx, sourceDir, inspect, reviewed.review); err != nil {
+			return err
+		}
 	}
 	ApprovalsSettled(ctx)
 
@@ -1848,6 +1853,9 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		}
 	}
 
+	if err := checkReviewedContainerPaths(ctx, inspect, restoreDest); err != nil {
+		return err
+	}
 	if err := h.stopReviewedContainer(ctx); err != nil {
 		return err
 	}
@@ -2113,6 +2121,9 @@ func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item
 
 	// Remove existing container with the same name if present.
 	if reviewed, ok := reviewedContainerFrom(ctx); ok {
+		if err := checkReviewedContainerPaths(ctx, inspect, restoreDest); err != nil {
+			return "", err
+		}
 		if inspect.pinnedImage == "" {
 			if err := h.checkReviewedClassicImage(ctx, inspect); err != nil {
 				return "", err
@@ -3033,6 +3044,9 @@ func (h *ContainerHandler) RestorePreparedChunked(ctx context.Context, item Back
 		return err
 	}
 
+	if err := checkReviewedContainerPaths(ctx, inspect, restoreDest); err != nil {
+		return err
+	}
 	if err := h.stopReviewedContainer(ctx); err != nil {
 		return err
 	}

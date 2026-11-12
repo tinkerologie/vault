@@ -43,6 +43,7 @@ func (op *Operation) captureContainer(ctx context.Context, r *runner.Runner, pas
 	}
 	op.Warnings = slices.DeleteFunc(op.Warnings, func(warning string) bool { return warning == "artifact_evidence_unavailable" })
 	op.Container = &effects
+	op.EffectiveWriteMode = containerWriteMode(effects.Volumes)
 	op.ResolvedPath = effects.Destination
 	op.plan.Work = work
 	fingerprint, err := json.Marshal([]any{work.Reviewed, work.Trusted})
@@ -69,4 +70,21 @@ func (op *Operation) captureContainer(ctx context.Context, r *runner.Runner, pas
 		op.Effects = append(op.Effects, "preserve_container_database_dump_if_not_replayed")
 	}
 	return nil
+}
+
+func containerWriteMode(volumes []engine.ContainerVolumeEffect) string {
+	mode := ""
+	for _, volume := range volumes {
+		if volume.WriteMode == "configuration_only" {
+			continue
+		}
+		if mode != "" && mode != volume.WriteMode {
+			return "mixed"
+		}
+		mode = volume.WriteMode
+	}
+	if mode == "" {
+		return "recreate"
+	}
+	return mode
 }

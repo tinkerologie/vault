@@ -87,6 +87,9 @@ func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase 
 			if err != nil {
 				return Operation{}, err
 			}
+			if fresh.sourceProbeUnavailable() {
+				return Operation{}, runner.ErrApprovedStorageUnavailable
+			}
 			data, err := json.Marshal(fresh)
 			if err != nil {
 				return Operation{}, err

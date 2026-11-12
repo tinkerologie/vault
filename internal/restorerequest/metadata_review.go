@@ -37,6 +37,9 @@ func (s *Service) ReviewMetadata(ctx context.Context, id, digest, passphrase str
 	}
 
 	fresh, err := s.capture(ctx, stored.Input, passphrase)
+	if err == nil && fresh.sourceProbeUnavailable() {
+		return View{}, runner.ErrApprovedStorageUnavailable
+	}
 	var invalid Invalid
 	if errors.Is(err, runner.ErrReviewedRestoreChanged) || errors.Is(err, db.ErrNotFound) ||
 		errors.As(err, &invalid) || (err == nil && !sameMetadataReviewSource(stored, fresh)) {

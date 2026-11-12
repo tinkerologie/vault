@@ -525,3 +525,97 @@ func TestRestoreApprovalRestoresDeduplicatedFolder(t *testing.T) {
 		t.Fatalf("dedup restore content: %q %v", data, err)
 	}
 }
+
+func TestRestoreApprovalLeavesPendingRequestWhenStorageProbeIsUnavailable(t *testing.T) {
+	database := testDB(t)
+	const contents = "from recovered backup storage"
+	var tarData bytes.Buffer
+	archive := tar.NewWriter(&tarData)
+	if err := archive.WriteHeader(&tar.Header{Name: "restored.txt", Mode: 0o600, Uid: os.Getuid(), Gid: os.Getgid(), Size: int64(len(contents))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := archive.Write([]byte(contents)); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var unavailable atomic.Bool
+	const object = "job/full/archive/data.tar"
+	const stamp = "2026-11-12T00:00:00Z"
+	objectStore := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if unavailable.Load() {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/fixture" && r.URL.Query().Get("list-type") == "2":
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = fmt.Fprintf(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+				<IsTruncated>false</IsTruncated><Contents><Key>%s</Key><LastModified>%s</LastModified><Size>%d</Size></Contents>
+			</ListBucketResult>`, object, stamp, tarData.Len())
+		case r.URL.Path == "/fixture/"+object:
+			modTime, err := time.Parse(time.RFC3339, stamp)
+			if err != nil {
+				t.Error(err)
+			}
+			http.ServeContent(w, r, "data.tar", modTime, bytes.NewReader(tarData.Bytes()))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer objectStore.Close()
+
+	target := filepath.Join(t.TempDir(), "restored")
+	cfg, err := json.Marshal(map[string]any{
+		"bucket": "fixture", "region": "us-east-1", "endpoint": objectStore.URL,
+		"access_key": "fixture-key", "secret_key": "fixture-secret", "force_path_style": true,
+	})
+	dest, err := database.CreateStorageDestination(db.StorageDestination{Name: "Storage fixture", Type: "s3", Config: string(requireFixture(t, cfg, err))})
+	job, err := database.CreateJob(db.Job{Name: "Folder restore Job", StorageDestID: requireFixture(t, dest, err)})
+	job = requireFixture(t, job, err)
+	settings, err := json.Marshal(map[string]string{"path": target})
+	item, err := database.AddJobItem(db.JobItem{JobID: job, ItemType: "folder", ItemName: "archive", Settings: string(requireFixture(t, settings, err))})
+	requireFixture(t, item, err)
+	point := evidencePoint(t, database, job, 0, "full", "job/full", `{"item_sizes":{"archive":20}}`)
+
+	proof := [32]byte{73}
+	server := NewServer(database, ServerConfig{OperatorProof: operatorproof.New(proof, nil)})
+	defer func() { _ = server.Runner().Drain(t.Context()) }()
+	assistant := issueAssistantKey(t, server, "Retry assistant")
+	grantRestoreRequests(t, server, assistant.ID, true)
+	path, review := prepareApprovalFixture(t, server, assistant.Key, job, point)
+	if !review.Eligible {
+		t.Fatalf("initial review: %+v", review)
+	}
+	approve := func(nonce string) *httptest.ResponseRecorder {
+		return callRestoreRequest(server, http.MethodPost, path+"/approve", loopbackPeer, "", signedApproval(t, proof, operatorproof.Action{
+			Version: 1, Action: "approve", ID: review.ID, ReviewDigest: review.ReviewDigest,
+			Timestamp: time.Now().Unix(), Nonce: strings.Repeat(nonce, 32),
+		}))
+	}
+
+	unavailable.Store(true)
+	response := approve("1")
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("approval during storage outage: %d %s", response.Code, response.Body)
+	}
+	response = callRestoreRequest(server, http.MethodGet, path, remotePeer, assistant.Key, "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"pending"`) || strings.Contains(response.Body.String(), `"run_id"`) {
+		t.Fatalf("outage changed the request: %d %s", response.Code, response.Body)
+	}
+
+	unavailable.Store(false)
+	response = approve("2")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("retry after storage recovery: %d %s", response.Code, response.Body)
+	}
+	if err := server.Runner().Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(target, "restored.txt"))
+	if err != nil || string(data) != contents {
+		t.Fatalf("retried restore content: %q %v", data, err)
+	}
+}

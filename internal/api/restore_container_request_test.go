@@ -19,9 +19,11 @@ import (
 	"filippo.io/age"
 
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/engine"
 	"github.com/tinkerologie/vault/internal/operatorproof"
 	"github.com/tinkerologie/vault/internal/restorerequest"
+	"github.com/tinkerologie/vault/internal/storage"
 )
 
 func TestRestoreRequestReviewsSavedContainerEffects(t *testing.T) {
@@ -264,11 +266,12 @@ func writeContainerFixture(t *testing.T, path string, data []byte) {
 	}
 }
 
-func fakeContainerRestoreDaemon(t *testing.T) func() []string {
+func fakeContainerRestoreDaemon(t *testing.T, pinnedRef ...string) func() []string {
 	t.Helper()
 	var mu sync.Mutex
 	var calls []string
 	running := true
+	tagged := false
 	record := func(call string) { calls = append(calls, call) }
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -286,6 +289,18 @@ func fakeContainerRestoreDaemon(t *testing.T) func() []string {
 			_, _ = io.Copy(io.Discard, r.Body)
 			record("image_load")
 			_, _ = fmt.Fprintln(w, `{"stream":"Loaded image: fixture/web:backup"}`)
+		case len(pinnedRef) == 1 && strings.Contains(p, "@sha256:") && strings.HasSuffix(p, "/json"):
+			_, _ = fmt.Fprintf(w, `{"Id":"backup-image","RepoDigests":[%q]}`, pinnedRef[0])
+		case len(pinnedRef) == 1 && strings.HasSuffix(p, "/images/fixture/web:backup/json"):
+			image := "prior-image"
+			if tagged {
+				image = "backup-image"
+			}
+			_, _ = fmt.Fprintf(w, `{"Id":%q}`, image)
+		case len(pinnedRef) == 1 && strings.HasPrefix(p, "/images/") && strings.HasSuffix(p, "/tag"):
+			record("tag")
+			tagged = true
+			w.WriteHeader(http.StatusCreated)
 		case p == "/containers/web/json":
 			_, _ = fmt.Fprintf(w, `{"Id":"original-web","State":{"Running":%t}}`, running)
 		case p == "/containers/original-web/stop":
@@ -324,5 +339,69 @@ func TestContainerRequestRefusesMissingRecordedVolumeArchive(t *testing.T) {
 	_, review := submitContainerFixture(t, server, assistant.Key, job, point, "")
 	if review.Eligible || !slices.Contains(review.Reasons, "container_metadata_unusable") {
 		t.Fatalf("container with a missing volume archive was offered for approval: %+v", review)
+	}
+}
+
+func TestContainerRequestUsesRecordedDedupImageDigest(t *testing.T) {
+	for _, pinned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pinned=%t", pinned), func(t *testing.T) {
+			database := testDB(t)
+			jobID, _, _ := containerRequestFixture(t, database, "", false)
+			job, err := database.GetJob(jobID)
+			job = requireFixture(t, job, err)
+			dest, err := database.GetStorageDestination(job.StorageDestID)
+			dest = requireFixture(t, dest, err)
+			adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+			adapter = requireFixture(t, adapter, err)
+			defer storage.CloseAdapter(adapter)
+			serverKey := bytes.Repeat([]byte{51}, 32)
+			repo, err := dedup.InitRepo(database, adapter, dest.ID, serverKey)
+			repo = requireFixture(t, repo, err)
+			writeBlob := func(blob string) dedup.ManifestEntry {
+				t.Helper()
+				id, err := repo.Put([]byte(blob))
+				return dedup.ManifestEntry{Size: int64(len(blob)), Chunks: []dedup.ID{requireFixture(t, id, err)}}
+			}
+			files := map[string]dedup.ManifestEntry{
+				engine.ContainerInspectKey: writeBlob(`{"Name":"/web","Config":{"Image":"fixture/web:backup"},"State":{"Running":true}}`),
+			}
+			ref := "docker.io/fixture/web@sha256:" + strings.Repeat("a", 64)
+			repoDigest := "docker.io/fixture/other@sha256:" + strings.Repeat("a", 64)
+			if pinned {
+				repoDigest = ref
+			}
+			files[engine.ContainerImageMetaKey] = writeBlob(fmt.Sprintf(`{"repo_digests":[%q]}`, repoDigest))
+			id, err := repo.PutManifest("web", dedup.Manifest{Files: files})
+			id = requireFixture(t, id, err)
+			if err := repo.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			point := evidencePoint(t, database, jobID, 0, "full", "private-source/chunked",
+				fmt.Sprintf(`{"item_manifests":{"web":"%x"},"item_types":{"web":"container"}}`, id[:]))
+			key := [32]byte{51}
+			server := NewServer(database, ServerConfig{ServerKey: serverKey, OperatorProof: operatorproof.New(key, nil)})
+			defer func() { _ = server.Runner().Drain(t.Context()) }()
+			assistant := issueAssistantKey(t, server, "Chunked Docker assistant")
+			grantRestoreRequests(t, server, assistant.ID, true)
+			calls := fakeContainerRestoreDaemon(t, ref)
+			path, review := submitContainerFixture(t, server, assistant.Key, jobID, point, "")
+			if !pinned {
+				if review.Eligible || !review.ManualRestoreRequired || len(calls()) != 0 {
+					t.Fatalf("a digest from another repository can pass review: %+v, calls %v", review, calls())
+				}
+				return
+			}
+			if !review.Eligible || review.Container == nil || review.Container.ImageDigest != ref {
+				t.Fatalf("approved image differs from the backup digest: %+v", review)
+			}
+			response := postContainerAction(t, server, key, path, "approve", review, "", "1")
+			if response.Code != http.StatusAccepted {
+				t.Fatalf("approve: %d %s", response.Code, response.Body)
+			}
+			result := waitForContainerRestore(t, server, path, assistant.Key)
+			if result.Status != "completed" || !slices.Equal(calls(), []string{"tag", "stop", "tag", "remove", "create", "start"}) {
+				t.Fatalf("chunked restore: %+v, calls %v", result, calls())
+			}
+		})
 	}
 }
