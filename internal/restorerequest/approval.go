@@ -175,15 +175,24 @@ type ApprovalView struct {
 	OperatorName string    `json:"operator_name,omitempty"`
 }
 
+type RunItemView struct {
+	Status string `json:"status"`
+}
+
 type RunView struct {
-	Status            string   `json:"status"`
-	ItemsTotal        int      `json:"items_total"`
-	ItemsDone         int      `json:"items_done"`
-	ItemsFailed       int      `json:"items_failed"`
-	Phase             string   `json:"phase,omitempty"`
-	Percent           *int     `json:"percent,omitempty"`
-	ApplicationHealth string   `json:"application_health"`
-	ReadinessChecks   []string `json:"readiness_checks"`
+	ItemResults       []RunItemView `json:"item_results,omitempty"`
+	Active            bool          `json:"active,omitempty"`
+	Stopping          bool          `json:"stopping,omitempty"`
+	StopRequestedAt   *time.Time    `json:"stop_requested_at,omitempty"`
+	StoppedBy         string        `json:"stopped_by,omitempty"`
+	Status            string        `json:"status"`
+	ItemsTotal        int           `json:"items_total"`
+	ItemsDone         int           `json:"items_done"`
+	ItemsFailed       int           `json:"items_failed"`
+	Phase             string        `json:"phase,omitempty"`
+	Percent           *int          `json:"percent,omitempty"`
+	ApplicationHealth string        `json:"application_health"`
+	ReadinessChecks   []string      `json:"readiness_checks"`
 }
 
 func (s *Service) view(ctx context.Context, request db.RestoreRequest, operator bool, warning string) (View, error) {
@@ -211,16 +220,26 @@ func (s *Service) view(ctx context.Context, request db.RestoreRequest, operator 
 	}
 	runView := RunView{
 		Status: run.Status, ItemsTotal: run.ItemsTotal, ItemsDone: run.ItemsDone, ItemsFailed: run.ItemsFailed,
-		ApplicationHealth: "unchecked", ReadinessChecks: []string{},
+		ApplicationHealth: "unchecked", ReadinessChecks: []string{}, StopRequestedAt: run.StopRequestedAt,
+	}
+	if operator {
+		runView.StoppedBy = run.StoppedBy
 	}
 	if request.Status == "interrupted" {
 		runView.Status = "interrupted"
 	}
 	var items []struct {
+		Status          string   `json:"status"`
 		ReadinessChecks []string `json:"readiness_checks"`
 	}
 	if json.Unmarshal([]byte(run.Log), &items) == nil {
 		for _, item := range items {
+			switch item.Status {
+			case "ok":
+				runView.ItemResults = append(runView.ItemResults, RunItemView{Status: "completed"})
+			case "failed", "cancelled", "not_attempted":
+				runView.ItemResults = append(runView.ItemResults, RunItemView{Status: item.Status})
+			}
 			for _, check := range item.ReadinessChecks {
 				switch check {
 				case runner.FolderDataStaged, runner.FolderReviewRevalidated, runner.FolderRestoreCompleted,
@@ -233,7 +252,9 @@ func (s *Service) view(ctx context.Context, request db.RestoreRequest, operator 
 	}
 	status := s.runner.Status()
 	if status.Active && status.RunID == run.ID && run.Status == "running" {
+		runView.Active = true
 		runView.Phase = status.Phase
+		runView.Stopping = status.Cancelling
 		if status.CurrentItem != "" {
 			runView.Percent = &status.CurrentItemPercent
 		}

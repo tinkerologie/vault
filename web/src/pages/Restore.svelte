@@ -57,6 +57,8 @@
             showToast(`Restore completed successfully${jobSuffix} (${done}/${total} items restored)`, 'success')
           } else if (msg.status === 'partial') {
             showToast(`Restore partially completed${jobSuffix} (${done}/${total} restored, ${failed} failed)`, 'warning')
+          } else if (msg.status === 'cancelled') {
+            showToast(`Restore cancelled${jobSuffix}. The restore location may be partly restored.`, 'warning')
           } else {
             showToast(`Restore failed${jobSuffix} (${failed} items failed)`, 'error')
           }

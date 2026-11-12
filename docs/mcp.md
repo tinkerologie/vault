@@ -36,7 +36,7 @@ A request covers one whole folder and expires after 24 hours. Submission perform
 
 An exact repeat returns the existing pending ID and `reused: true`. Each key can hold five unexpired pending requests and submit six new requests per rolling hour. Vault returns a tool error when a new operation reaches either limit. Withdraw a pending request to free a pending slot, or retry after the rolling window.
 
-After the operator approves and the Runner admits the request, use `get_restore_request` to follow the same `run_id` to completion. Vault reports item counts and readiness checks and labels application health as `unchecked`. The tool accepts the request ID and only the owning Assistant Key can read the result. Existing administrator `restore_item` behavior changes in [#646](https://github.com/tinkerologie/vault/issues/646).
+After the operator approves and the Runner admits the request, use `get_restore_request` to follow the same `run_id` to its recorded outcome. Only a signed-in Unraid operator can stop that run. If the stop takes effect, the tool reports `cancelled` and the stop request time. Vault reports item counts and readiness checks and labels application health as `unchecked`. The tool accepts the request ID and only the owning Assistant Key can read the result. Existing administrator `restore_item` behavior changes in [#646](https://github.com/tinkerologie/vault/issues/646).
 
 ## Configuration
 

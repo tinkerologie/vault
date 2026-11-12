@@ -31,6 +31,8 @@ type ApprovedRestore struct {
 	Revalidate func(context.Context) error
 	Flush      func() error
 	checks     []string
+	runContext context.Context
+	cancelRun  context.CancelCauseFunc
 }
 
 // AdmitApprovedRestore reserves the idle Runner without adding a queue entry.
@@ -61,10 +63,11 @@ func (r *Runner) AdmitApprovedRestore(prepare func() (ApprovedRestore, error)) e
 
 	// Publish the reservation before releasing the request/maintenance
 	// boundary so DB replacement and Job deletion see this tracked restore.
-	r.setRunStatus(&RunStatus{
+	approved.runContext, approved.cancelRun = context.WithCancelCause(context.Background())
+	r.publishRestoreCancellation(&RunStatus{
 		Active: true, JobID: approved.Run.JobID, RunID: approved.Run.ID, JobName: approved.Plan.Job.Name,
-		RunType: "restore", RestoreRequestID: approved.RequestID, ItemsTotal: 1,
-	})
+		RunType: "restore", RestoreRequestID: approved.RequestID, ItemsTotal: 1, StartedAt: time.Now().Format(time.RFC3339),
+	}, approved.cancelRun)
 	transferred = true
 	r.backgroundWork.Go(func() {
 		defer release()
@@ -76,15 +79,12 @@ func (r *Runner) AdmitApprovedRestore(prepare func() (ApprovedRestore, error)) e
 }
 
 func (r *Runner) finishTrackedRestore(run db.JobRun, approved *ApprovedRestore, requestStatus, reason string) bool {
-	if approved == nil {
-		_ = r.db.UpdateJobRun(run)
-		return true
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := r.db.FinishApprovedRestore(ctx, approved.RequestID, run, requestStatus, reason); err != nil {
-		log.Printf("runner: could not record the terminal state of approved Restore Run %d", run.ID)
+	if err := r.persistTrackedRestore(run, approved, requestStatus, reason); err != nil {
+		log.Printf("runner: could not record the terminal state of Restore Run %d: %v", run.ID, err)
 		return false
+	}
+	if approved == nil {
+		return true
 	}
 	if approved.Flush != nil {
 		if err := approved.Flush(); err != nil {
@@ -92,6 +92,25 @@ func (r *Runner) finishTrackedRestore(run db.JobRun, approved *ApprovedRestore, 
 		}
 	}
 	return true
+}
+
+func (r *Runner) persistTrackedRestore(run db.JobRun, approved *ApprovedRestore, requestStatus, reason string) error {
+	// Serialize retirement and the terminal write with StopRestoreRun. A
+	// stop that loses this race reads the committed outcome.
+	r.cancelMu.Lock()
+	defer r.cancelMu.Unlock()
+	run.StopRequestedAt = r.restoreStopRequestedAt
+	run.StoppedBy = r.restoreStoppedBy
+	r.cancelFn = nil
+	r.cancellingJobID = 0
+	r.cancellingRunID = 0
+	r.cancellingRestoreRequest = ""
+	r.restoreStopRequestedAt = nil
+	r.restoreStoppedBy = ""
+	if approved == nil {
+		return r.db.UpdateJobRun(run)
+	}
+	return r.db.FinishApprovedRestore(context.Background(), approved.RequestID, run, requestStatus, reason)
 }
 
 type approvedRestoreKey struct{}

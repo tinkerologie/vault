@@ -494,3 +494,63 @@ test('native folder approval keeps a busy request pending and follows the linked
   await page.reload();
   await expect(review.getByText('Restore Run #77')).toBeVisible();
 });
+
+for (const stopOutcome of ['cancelled', 'completed'] as const) {
+  test(`native exact-run stop shows the ${stopOutcome} outcome`, async ({ page }) => {
+    let status = 'running';
+    await setupVaultMockApi(page, {
+      restoreRequestFixtures: true,
+      restoreRequestRun: () => ({
+        status,
+        run_id: 91,
+        terminal_reason: status === 'cancelled' ? 'stopped_by_operator' : undefined,
+        run: {
+          status, active: status === 'running', items_total: 1, items_done: status === 'completed' ? 1 : 0,
+          items_failed: 0, application_health: 'unchecked',
+        },
+      }),
+    });
+    await page.addInitScript(() => {
+      Object.assign(window, { __VAULT_RUNTIME_CONFIG__: {
+        mode: 'unraid-proxy',
+        csrfToken: 'native-csrf-fixture',
+        restoreRequestActionPath: '/plugins/vault/include/restore-request.php',
+      } });
+    });
+    let acceptStop = () => {};
+    const stopReply = new Promise<void>(resolve => { acceptStop = resolve; });
+    let attempts = 0;
+    await page.route('**/plugins/vault/include/restore-request.php', async route => {
+      attempts += 1;
+      expect(Object.fromEntries(new URLSearchParams(route.request().postData() || ''))).toEqual({
+        action: 'stop', id: '91', csrf_token: 'native-csrf-fixture',
+      });
+      await stopReply;
+      if (stopOutcome === 'completed') {
+        status = 'completed';
+        return route.fulfill({ status: 409, json: { run_id: 91, status } });
+      }
+      return route.fulfill({ status: 202, json: { run_id: 91, status: 'stopping' } });
+    });
+
+    await page.goto('/#/restore?request=review-replace');
+    const review = page.getByRole('region', { name: 'Restore Request review' });
+    await expect(review.getByRole('heading', { name: 'Restore Run #91' })).toBeVisible();
+    await review.getByRole('button', { name: 'Stop Restore Run' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Stop Restore Run #91' });
+    await expect(dialog.getByText('Stopping can leave the restore location partly restored.')).toBeVisible();
+    const stop = dialog.getByRole('button', { name: 'Stop Restore Run' });
+    await stop.click();
+    await expect(stop).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+    acceptStop();
+    if (stopOutcome === 'cancelled') {
+      await expect(review.getByRole('status').filter({ hasText: 'Stopping…' })).toBeVisible();
+      status = 'cancelled';
+      await expect(review.getByText('The restore location may be partly restored.', { exact: false })).toBeVisible();
+    }
+    await expect(review.getByRole('status').filter({ hasText: new RegExp(stopOutcome, 'i') })).toBeVisible();
+    await expect(review.getByRole('button', { name: 'Stop Restore Run' })).toHaveCount(0);
+    expect(attempts).toBe(1);
+  });
+}

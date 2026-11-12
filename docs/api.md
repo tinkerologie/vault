@@ -92,9 +92,11 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                                |
 | GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                      |
 | POST   | `/jobs/{id}/run`                                   | Start a backup immediately                                                                |
-| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup job                                                               |
+| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup or manual restore, or remove a queued operation                    |
 | POST   | `/jobs/{id}/restore`                               | Start a restore. Set `destination` to an absolute path or, for a ZFS item, a dataset name |
 | GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                            |
+
+A Restore Request run uses the [exact-run stop action](#folder-restore-requests).
 
 ## Storage
 
@@ -326,6 +328,7 @@ In daemon mode, use `PATCH /settings/assistant-keys/{id}` from the Vault host wi
 | GET    | `/restore-requests`               | Vault host operator review                                         |
 | GET    | `/restore-requests/{id}`          | Owning Assistant Key with permission or Vault host operator review |
 | POST   | `/restore-requests/{id}/withdraw` | Owning Assistant Key with permission                               |
+| POST   | `/restore-runs/{runID}/stop`      | Signed-in Unraid operator via the native Vault action              |
 
 To submit, send positive `job_id` and `restore_point_id` values, the exact folder `item_name`, and `write_mode` of `replace` or `merge`. Omit `destination` to review the configured original location, or supply a path allowed by the alternate location policy. The request covers one whole folder. Vault returns `201` with a pending `id`, `review_link`, evidence, effects, and eligibility. The link opens the review in the Unraid UI and carries no authorization. Submission performs no restore. A signed-in Unraid operator can select **Approve and run** in the review. Vault verifies the native Unraid session and the reviewed operation before it admits the run. Enter any required Backup Passphrase in the review. The general API proxy and standalone Vault interface cannot approve a request.
 
@@ -333,11 +336,13 @@ An exact repeat of a pending operation returns `200` with `reused: true`, the ex
 
 During classic Backup Chain replay, Vault can remove earlier writes that the final listing excludes when it can read the listing and the earlier steps' indexes.
 
-Vault retains requests after withdrawal or expiry. The review window is 24 hours from creation. At the exact expiry time, a pending request becomes expired even if withdrawal arrives first. Repeated withdrawal returns the recorded state. List defaults to `status=pending`. Use `status=withdrawn,expired,invalidated,completed,failed,interrupted` to see terminal requests, and pass `next_before` from the result as `before` for the next page. The default `limit` is 50, with a maximum of 200.
+Vault retains requests after withdrawal or expiry. The review window is 24 hours from creation. At the exact expiry time, a pending request becomes expired even if withdrawal arrives first. Repeated withdrawal returns the recorded state. List defaults to `status=pending`. Use `status=withdrawn,expired,invalidated,completed,failed,interrupted,cancelled` to see terminal requests, and pass `next_before` from the result as `before` for the next page. The default `limit` is 50, with a maximum of 200.
 
 Vault returns `400` for invalid inputs or a folder known to be absent, `403` for insufficient permission, and `404` for unknown or non-owned requests. A database maintenance conflict returns `409`. A committed change with a failed hybrid flash flush includes `persistence_warning`. Assistant responses omit resolved paths, raw point metadata, credentials, and internal source identifiers. The operator review includes the resolved target path. The submission schema has no passphrase or file-selection field.
 
 An approved request includes a stable `run_id` and a `run` summary with status, item counts, live progress when available, and readiness checks. Folder application health is `unchecked`. The operator view also shows the verified approval time and Unraid account name when present. A busy Runner leaves the request pending. A change to the reviewed source or write effects invalidates the request. A repeated approval returns the existing Restore Run. After a restart, an unfinished run is marked interrupted. Prepare a new request to retry.
+
+The native Unraid stop action verifies operator proof bound to the exact Restore Run ID. It returns `202` with `run_id` and `status: stopping` when the Runner accepts the stop, `409` with the recorded status when that run is no longer active, or `404` when the ID has no approved Restore Request. An API key, direct local connection, or the general Unraid API proxy cannot authorize this action. Use the Restore Request status to distinguish `cancelled` from a restore that finished before the stop took effect. The requesting assistant can follow the redacted outcome and stop request time.
 
 ## MCP (Model Context Protocol)
 

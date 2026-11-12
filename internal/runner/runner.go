@@ -201,11 +201,14 @@ type Runner struct {
 	statusMu   sync.RWMutex
 	currentRun *RunStatus
 
-	// cancelMu protects the active cancellation function.
+	// cancelMu protects the cancellation function and its active run owner.
 	cancelMu                 sync.Mutex
 	cancelFn                 context.CancelFunc
 	cancellingJobID          int64
+	cancellingRunID          int64
 	cancellingRestoreRequest string
+	restoreStopRequestedAt   *time.Time
+	restoreStoppedBy         string
 
 	// lastProgress tracks the last progress update time for stall detection.
 	lastProgressMu sync.Mutex
@@ -406,9 +409,10 @@ func (r *Runner) Status() RunStatus {
 func (r *Runner) CancelJob(jobID int64) error {
 	r.statusMu.RLock()
 	active := r.currentRun != nil && r.currentRun.Active
-	var runningID int64
+	var runningID, runningRunID int64
 	if r.currentRun != nil {
 		runningID = r.currentRun.JobID
+		runningRunID = r.currentRun.RunID
 	}
 	r.statusMu.RUnlock()
 
@@ -428,41 +432,34 @@ func (r *Runner) CancelJob(jobID int64) error {
 		return fmt.Errorf("job %d is not running (running: %d)", jobID, runningID)
 	}
 
-	// Read the cancel fn and its owner atomically — between the status
-	// snapshot above and here, run A may have finished and run B installed
-	// its own cancel fn; without the identity check we would cancel B.
+	// Recheck the exact owner because a later run of the same Job may
+	// have started after the queue/status decision.
 	r.cancelMu.Lock()
-	fn := r.cancelFn
-	fnOwner := r.cancellingJobID
-	approvedRequest := r.cancellingRestoreRequest
-	r.cancelMu.Unlock()
-
-	if approvedRequest != "" {
-		return errors.New("a Restore Request run requires the signed-in Unraid operator action")
-	}
-
-	if fn == nil || fnOwner != jobID {
+	r.statusMu.Lock()
+	if r.cancelFn == nil || r.cancellingJobID != jobID ||
+		r.currentRun == nil || r.currentRun.RunID != runningRunID || r.cancellingRunID != runningRunID {
+		r.statusMu.Unlock()
+		r.cancelMu.Unlock()
 		return fmt.Errorf("job %d cannot be cancelled", jobID)
 	}
+	if r.cancellingRestoreRequest != "" {
+		r.statusMu.Unlock()
+		r.cancelMu.Unlock()
+		return errors.New("a Restore Request run requires the signed-in Unraid operator action")
+	}
+	// Mark the operator cancel before waking the worker so it classifies
+	// this as an operator cancel instead of scheduling a stall retry.
+	r.currentRun.Cancelling = true
+	r.statusMu.Unlock()
+	r.cancelFn()
+	r.cancelMu.Unlock()
 
 	log.Printf("runner: cancelling job %d", jobID)
-
-	// Mark the operator cancel BEFORE cancelling the context. Cancellation is
-	// now prompt (the differential pre-scan honours ctx — issue #251), so the
-	// run goroutine can unwind and classify the outcome the instant fn() runs.
-	// If Cancelling were still false at that point the operator cancel would be
-	// misread as a stall-watchdog cancel and scheduled for an unwanted retry.
-	r.statusMu.Lock()
-	if r.currentRun != nil && r.currentRun.JobID == jobID {
-		r.currentRun.Cancelling = true
-	}
-	r.statusMu.Unlock()
-
-	fn()
 
 	r.broadcast(map[string]any{
 		"type":   "job_cancelling",
 		"job_id": jobID,
+		"run_id": runningRunID,
 	})
 
 	return nil
@@ -1139,6 +1136,7 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 	r.cancelMu.Lock()
 	r.cancelFn = cancel
 	r.cancellingJobID = jobID
+	r.cancellingRunID = runID
 	r.cancelMu.Unlock()
 
 	// Clear the cancel function when we're done.
@@ -1146,6 +1144,7 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 		r.cancelMu.Lock()
 		r.cancelFn = nil
 		r.cancellingJobID = 0
+		r.cancellingRunID = 0
 		r.cancelMu.Unlock()
 	}()
 
@@ -4115,6 +4114,19 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 		requestID = approved.RequestID
 	}
 
+	restoreStart := time.Now()
+	var ctx context.Context
+	var cancel context.CancelCauseFunc
+	if approved != nil {
+		ctx, cancel = approved.runContext, approved.cancelRun
+	} else {
+		ctx, cancel = context.WithCancelCause(context.Background())
+		r.publishRestoreCancellation(&RunStatus{
+			Active: true, JobID: restorePoint.JobID, RunID: runID, JobName: jobName,
+			RunType: "restore", ItemsTotal: len(targets), StartedAt: restoreStart.Format(time.RFC3339),
+		}, cancel)
+	}
+	defer cancel(nil)
 	// Recover from panics so the run is marked failed.
 	defer func() {
 		defer r.setRunStatus(nil)
@@ -4140,34 +4152,16 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 		}
 	}()
 
-	// Create a cancellable context for the restore run. Like the backup path,
-	// there is no wall-clock deadline — the stall watchdog is the sole
-	// automatic canceller. CancelJob() triggers the stored cancel func on demand.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	runDiag := r.newRunDiag(runID)
 	ctx = storage.WithDiagStats(ctx, runDiag)
 	ctx = r.withProgressReporter(ctx)
-
-	r.cancelMu.Lock()
-	r.cancelFn = cancel
-	r.cancellingJobID = restorePoint.JobID
-	r.cancellingRestoreRequest = requestID
-	r.cancelMu.Unlock()
-	defer func() {
-		r.cancelMu.Lock()
-		r.cancelFn = nil
-		r.cancellingJobID = 0
-		r.cancellingRestoreRequest = ""
-		r.cancelMu.Unlock()
-	}()
 
 	r.lastProgressMu.Lock()
 	r.lastProgress = time.Now()
 	r.lastProgressMu.Unlock()
 	watchdogDone := make(chan struct{})
 	defer close(watchdogDone)
-	r.startStallWatchdog(ctx, watchdogDone, cancel, restorePoint.JobID, runID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
+	r.startStallWatchdog(ctx, watchdogDone, func() { cancel(errRestoreWatchdog) }, restorePoint.JobID, runID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
 
 	targetNames := make([]string, 0, len(targets))
 	for _, t := range targets {
@@ -4182,19 +4176,6 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 		"run_type":           "restore",
 		"restore_request_id": requestID,
 		"items_total":        len(targets),
-	})
-
-	restoreStart := time.Now()
-
-	r.setRunStatus(&RunStatus{
-		Active:           true,
-		JobID:            restorePoint.JobID,
-		RunID:            runID,
-		JobName:          jobName,
-		RunType:          "restore",
-		RestoreRequestID: requestID,
-		ItemsTotal:       len(targets),
-		StartedAt:        restoreStart.Format(time.RFC3339),
 	})
 
 	r.logActivity("info", "restore",
@@ -4243,6 +4224,11 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 	)
 
 	for _, t := range targets {
+		if errors.Is(context.Cause(ctx), errOperatorRestoreStop) {
+			itemResults = append(itemResults, map[string]any{"name": t.Name, "type": t.Type, "status": "not_attempted"})
+			requestReason = "stopped_by_operator"
+			continue
+		}
 		reporter := restoreProgressReporter{
 			JobID:       restorePoint.JobID,
 			RunID:       runID,
@@ -4283,6 +4269,9 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 		} else {
 			itemCtx = context.WithValue(itemCtx, approvedRestoreKey{}, true)
 			restoreErr = approved.Plan.Work.restore(itemCtx, r, approved, passphrase, reporter)
+		}
+		stopped := errors.Is(context.Cause(ctx), errOperatorRestoreStop) && errors.Is(restoreErr, context.Canceled)
+		if approved != nil && !stopped {
 			if restoreErr != nil {
 				requestReason = approvedRestoreFailure(restoreErr)
 				operatorDiagnostic = approvedRestoreOperatorDiagnostic(restoreErr)
@@ -4303,7 +4292,11 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 			result["readiness_checks"] = approved.checks
 		}
 
-		if restoreErr != nil {
+		if stopped {
+			requestReason = "stopped_by_operator"
+			result["status"] = "cancelled"
+			r.runLog(runID, runLogLevelWarn, "Restore stopped by operator. The restore location may be partly restored.", nil)
+		} else if restoreErr != nil {
 			itemsFailed++
 			result["status"] = "failed"
 			result["error"] = restoreErr.Error()
@@ -4372,7 +4365,9 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 
 	// Finalise the run.
 	status := "completed"
-	if itemsFailed > 0 && itemsDone > 0 {
+	if requestReason == "stopped_by_operator" {
+		status = "cancelled"
+	} else if itemsFailed > 0 && itemsDone > 0 {
 		status = "partial"
 	} else if itemsFailed > 0 {
 		status = "failed"
