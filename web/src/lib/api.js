@@ -1,4 +1,4 @@
-import { buildApiRequest, isProxyMode } from './runtime-config.js'
+import { buildApiRequest, buildRestoreApprovalRequest, isProxyMode } from './runtime-config.js'
 import { markAuthRequired } from './auth.svelte.js'
 
 /** @type {boolean} */
@@ -36,8 +36,8 @@ export const RESTORE_POINT_CONTENTS_TIMEOUT_MS = LONG_REQUEST_TIMEOUT_MS
  * Send one API request with an abort timeout. Non-2xx responses throw an Error
  * carrying the server's message and the HTTP `status`.
  */
-async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
-  const { url, options } = buildApiRequest(method, path, { body })
+async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_MS, buildRequest = buildApiRequest } = {}) {
+  const { url, options } = buildRequest(method, path, { body })
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   let res
@@ -256,6 +256,9 @@ export const api = {
     return request('GET', `/restore-requests?${params}`)
   },
   getRestoreRequest: (id) => request('GET', `/restore-requests/${encodeURIComponent(id)}`),
+  approveRestoreRequest: (id, reviewDigest, passphrase) => request('POST', id, { reviewDigest, passphrase }, {
+    buildRequest: buildRestoreApprovalRequest, timeoutMs: LONG_REQUEST_TIMEOUT_MS,
+  }),
 
   listAssistantKeys: () => request('GET', '/settings/assistant-keys'),
   createAssistantKey: (name) => request('POST', '/settings/assistant-keys', { name }),

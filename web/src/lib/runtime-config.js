@@ -7,6 +7,7 @@ const defaultConfig = Object.freeze({
   daemonBindAddress: '127.0.0.1',
   daemonPort: '24085',
   proxyPath: '',
+  restoreRequestActionPath: '',
   csrfToken: '',
   liveMode: 'websocket',
   timeFormat: 'auto',
@@ -130,5 +131,32 @@ export function buildApiRequest(method, path, { body = null, headers = {} } = {}
   return {
     url: `${cfg.apiBase || defaultConfig.apiBase}${normalizedPath}`,
     options,
+  }
+}
+
+export function canApproveRestoreRequest() {
+  const cfg = getRuntimeConfig()
+  return isProxyMode() && Boolean(cfg.restoreRequestActionPath && cfg.csrfToken)
+}
+
+export function buildRestoreApprovalRequest(method, id, { body }) {
+  if (!canApproveRestoreRequest()) throw new Error('Open the signed-in Unraid Vault page to approve.')
+  const cfg = getRuntimeConfig()
+  const form = new URLSearchParams({
+    action: 'approve',
+    id,
+    review_digest: body.reviewDigest,
+    passphrase: body.passphrase,
+    csrf_token: cfg.csrfToken,
+  })
+  return {
+    url: cfg.restoreRequestActionPath,
+    options: {
+      method,
+      credentials: 'same-origin',
+      redirect: 'error',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body: form.toString(),
+    },
   }
 }

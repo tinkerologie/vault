@@ -11,15 +11,17 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/operatorproof"
 	"github.com/tinkerologie/vault/internal/restorerequest"
 )
 
 type RestoreRequestHandler struct {
 	service *restorerequest.Service
+	proof   *operatorproof.Verifier
 }
 
-func NewRestoreRequestHandler(service *restorerequest.Service) *RestoreRequestHandler {
-	return &RestoreRequestHandler{service: service}
+func NewRestoreRequestHandler(service *restorerequest.Service, proof *operatorproof.Verifier) *RestoreRequestHandler {
+	return &RestoreRequestHandler{service: service, proof: proof}
 }
 
 func (h *RestoreRequestHandler) Submit(w http.ResponseWriter, r *http.Request) {

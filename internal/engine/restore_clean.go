@@ -77,6 +77,11 @@ func clearRestoreTarget(target string) error {
 		return fmt.Errorf("%w: %s is only %d level(s) below the filesystem root", errUnsafeToClean, normalized, pathDepth(normalized))
 	}
 
+	return clearPinnedRestoreTarget(normalized)
+}
+
+func clearPinnedRestoreTarget(normalized string) error {
+
 	// Pinned component by component, so an ancestor swapped for a symlink after
 	// the checks above fails here rather than redirecting the deletion.
 	root, err := safepath.OpenPinnedDir(normalized)

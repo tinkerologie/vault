@@ -408,12 +408,13 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.With(LocalOnly).Delete("/settings/assistant-keys/{id}", assistantKeys.Revoke)
 			r.With(LocalOnly).Patch("/settings/assistant-keys/{id}", assistantKeys.SetRestoreRequest)
 			s.restoreRequests = restorerequest.New(s.db, s.assistantRevocations, storageH.MaintenanceLock(),
-				s.config.RestoreRequestFlush, s.config.RestoreRequestClock)
-			requests := handlers.NewRestoreRequestHandler(s.restoreRequests)
+				s.runner, s.config.RestoreRequestFlush, s.config.RestoreRequestClock)
+			requests := handlers.NewRestoreRequestHandler(s.restoreRequests, s.config.OperatorProof)
 			r.Post(restoreRequestsRoute, requests.Submit)
 			r.Get(restoreRequestsRoute, requests.List)
 			r.Get(restoreRequestRoute, requests.Get)
 			r.Post(withdrawRequestRoute, requests.Withdraw)
+			r.With(LocalOnly, ExtendWriteDeadline(handlers.RestoreApprovalWriteTimeout)).Post(restoreRequestRoute+"/approve", requests.Approve)
 			s.mcp = mcpserver.New(s.db, s.runner, intake, mcpserver.Config{
 				Version: s.config.Version, ReadOnly: s.config.ReadOnly, RestoreRequests: s.restoreRequests,
 			})

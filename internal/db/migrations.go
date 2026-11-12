@@ -99,6 +99,16 @@ CREATE INDEX IF NOT EXISTS idx_restore_requests_owner_pending ON restore_request
 CREATE INDEX IF NOT EXISTS idx_restore_requests_due ON restore_requests(status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_restore_requests_history ON restore_requests(status, created_at DESC, id DESC);
 
+-- Keep the approval and historical run ID when a Job is explicitly deleted.
+CREATE TABLE IF NOT EXISTS restore_request_approvals (
+    request_id TEXT PRIMARY KEY REFERENCES restore_requests(id) ON DELETE CASCADE,
+    run_id INTEGER NOT NULL UNIQUE,
+    approved_at INTEGER NOT NULL,
+    operator_name TEXT NOT NULL,
+    review_digest TEXT NOT NULL
+);
+
+
 CREATE TABLE IF NOT EXISTS activity_log (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	level TEXT NOT NULL DEFAULT 'info',

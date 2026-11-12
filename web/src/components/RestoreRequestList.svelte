@@ -15,7 +15,7 @@
     loading = true
     error = ''
     try {
-      const page = await api.listRestoreRequests({ status: history ? 'withdrawn,expired' : 'pending', before })
+      const page = await api.listRestoreRequests({ status: history ? 'withdrawn,expired,invalidated,running,completed,failed,partial,interrupted,cancelled' : 'pending', before })
       requests = before ? [...requests, ...page.requests] : page.requests
       cursor = page.next_before || ''
       warning = page.persistence_warning || ''
@@ -41,7 +41,7 @@
   {:else if loading && requests.length === 0}
     <p role="status" class="text-sm text-text-muted">Loading Restore Requests…</p>
   {:else if requests.length === 0}
-    <p class="text-sm text-text-muted">{history ? 'No withdrawn or expired Restore Requests.' : 'No pending Restore Requests.'}</p>
+    <p class="text-sm text-text-muted">{history ? 'No Restore Requests in history.' : 'No pending Restore Requests.'}</p>
   {/if}
 
   {#if warning}
@@ -57,6 +57,8 @@
           <span class="text-xs text-text-muted">
             {#if history}
               <span class="capitalize">{request.status}</span>
+              {#if request.run_id} · Restore Run #{request.run_id}{/if}
+              {#if request.approval} · {request.approval.operator_name || 'Signed-in Unraid operator'}{/if}
               {#if request.terminal_at} · <time datetime={request.terminal_at}>{formatDate(request.terminal_at)}</time>{/if}
             {:else}
               Expires <time datetime={request.expires_at}>{formatDate(request.expires_at)}</time>

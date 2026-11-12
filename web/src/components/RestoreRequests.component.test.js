@@ -56,7 +56,7 @@ it('shows expired request history, retries an error, and loads the next cursor',
   await screen.findByText('expired')
   await fireEvent.click(screen.getByRole('button', { name: 'Load more requests' }))
   await screen.findByText('withdrawn')
-  expect(api.listRestoreRequests).toHaveBeenLastCalledWith({ status: 'withdrawn,expired', before: 'first' })
+  expect(api.listRestoreRequests).toHaveBeenLastCalledWith({ status: 'withdrawn,expired,invalidated,running,completed,failed,partial,interrupted,cancelled', before: 'first' })
   expect(screen.getByRole('link', { name: 'Documents · Folder backups' })).toBeTruthy()
   expect(screen.getByRole('link', { name: 'Pictures · Folder backups' })).toBeTruthy()
 })

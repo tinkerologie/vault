@@ -475,7 +475,7 @@ func TestRestoreRequestValidationAndMaintenanceRefusals(t *testing.T) {
 	grantRestoreRequests(t, srv, key.ID, true)
 	job, point, _, _ := requestFolderFixture(t, d)
 	request := submitFolderRequest(t, srv, key.Key, job, point, "")
-	for _, query := range []string{"?status=failed", "?before=invalid", "?limit=0", "?limit=abc", "?limit=201"} {
+	for _, query := range []string{"?status=unknown", "?before=invalid", "?limit=0", "?limit=abc", "?limit=201"} {
 		w := callRestoreRequest(srv, http.MethodGet, restoreRequestsPath+query, loopbackPeer, "", "")
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("invalid query %s: %d %s", query, w.Code, w.Body)

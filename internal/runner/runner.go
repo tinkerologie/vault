@@ -62,6 +62,7 @@ type RunStatus struct {
 	RunID              int64        `json:"run_id,omitempty"`
 	JobName            string       `json:"job_name,omitempty"`
 	RunType            string       `json:"run_type,omitempty"`
+	RestoreRequestID   string       `json:"restore_request_id,omitempty"`
 	ItemsTotal         int          `json:"items_total,omitempty"`
 	ItemsDone          int          `json:"items_done,omitempty"`
 	ItemsFailed        int          `json:"items_failed,omitempty"`
@@ -201,9 +202,10 @@ type Runner struct {
 	currentRun *RunStatus
 
 	// cancelMu protects the active cancellation function.
-	cancelMu        sync.Mutex
-	cancelFn        context.CancelFunc
-	cancellingJobID int64
+	cancelMu                 sync.Mutex
+	cancelFn                 context.CancelFunc
+	cancellingJobID          int64
+	cancellingRestoreRequest string
 
 	// lastProgress tracks the last progress update time for stall detection.
 	lastProgressMu sync.Mutex
@@ -432,7 +434,12 @@ func (r *Runner) CancelJob(jobID int64) error {
 	r.cancelMu.Lock()
 	fn := r.cancelFn
 	fnOwner := r.cancellingJobID
+	approvedRequest := r.cancellingRestoreRequest
 	r.cancelMu.Unlock()
+
+	if approvedRequest != "" {
+		return errors.New("a Restore Request run requires the signed-in Unraid operator action")
+	}
 
 	if fn == nil || fnOwner != jobID {
 		return fmt.Errorf("job %d cannot be cancelled", jobID)
@@ -4098,6 +4105,40 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 		return
 	}
 	run.ID = runID
+	r.runTrackedRestore(run, restorePoint, targets, destination, passphrase, jobName, nil)
+}
+
+func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, targets []RestoreTarget, destination, passphrase, jobName string, approved *ApprovedRestore) {
+	runID := run.ID
+	requestID := ""
+	if approved != nil {
+		requestID = approved.RequestID
+	}
+
+	// Recover from panics so the run is marked failed.
+	defer func() {
+		defer r.setRunStatus(nil)
+		if rec := recover(); rec != nil {
+			panicText := fmt.Sprintf("Internal error (panic): %v", rec)
+			if approved != nil {
+				panicText = "Internal error during approved restore"
+			}
+			log.Printf("runner: restore run %d: %s", runID, panicText)
+			run.Status = "failed"
+			run.Log = panicText
+			r.runLog(runID, runLogLevelError, panicText, nil)
+			if !r.finishTrackedRestore(run, approved, run.Status, "restore_failed") {
+				return
+			}
+			r.broadcast(map[string]any{
+				"type":     "job_run_completed",
+				"job_id":   restorePoint.JobID,
+				"run_id":   runID,
+				"run_type": "restore",
+				"status":   "failed",
+			})
+		}
+	}()
 
 	// Create a cancellable context for the restore run. Like the backup path,
 	// there is no wall-clock deadline — the stall watchdog is the sole
@@ -4111,11 +4152,13 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 	r.cancelMu.Lock()
 	r.cancelFn = cancel
 	r.cancellingJobID = restorePoint.JobID
+	r.cancellingRestoreRequest = requestID
 	r.cancelMu.Unlock()
 	defer func() {
 		r.cancelMu.Lock()
 		r.cancelFn = nil
 		r.cancellingJobID = 0
+		r.cancellingRestoreRequest = ""
 		r.cancelMu.Unlock()
 	}()
 
@@ -4132,24 +4175,26 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 	}
 
 	r.broadcast(map[string]any{
-		"type":        "job_run_started",
-		"job_id":      restorePoint.JobID,
-		"run_id":      runID,
-		"job_name":    jobName,
-		"run_type":    "restore",
-		"items_total": len(targets),
+		"type":               "job_run_started",
+		"job_id":             restorePoint.JobID,
+		"run_id":             runID,
+		"job_name":           jobName,
+		"run_type":           "restore",
+		"restore_request_id": requestID,
+		"items_total":        len(targets),
 	})
 
 	restoreStart := time.Now()
 
 	r.setRunStatus(&RunStatus{
-		Active:     true,
-		JobID:      restorePoint.JobID,
-		RunID:      runID,
-		JobName:    jobName,
-		RunType:    "restore",
-		ItemsTotal: len(targets),
-		StartedAt:  restoreStart.Format(time.RFC3339),
+		Active:           true,
+		JobID:            restorePoint.JobID,
+		RunID:            runID,
+		JobName:          jobName,
+		RunType:          "restore",
+		RestoreRequestID: requestID,
+		ItemsTotal:       len(targets),
+		StartedAt:        restoreStart.Format(time.RFC3339),
 	})
 
 	r.logActivity("info", "restore",
@@ -4181,33 +4226,15 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 			"items_list":       targetNames,
 		})
 
-	// Recover from panics so the run is marked failed.
-	defer func() {
-		r.setRunStatus(nil)
-		if rec := recover(); rec != nil {
-			log.Printf("runner: PANIC during restore run %d: %v", runID, rec)
-			run.Status = "failed"
-			run.Log = fmt.Sprintf("Internal error (panic): %v", rec)
-			r.runLog(runID, runLogLevelError, fmt.Sprintf("Internal error (panic): %v", rec), nil)
-			_ = r.db.UpdateJobRun(run)
-			r.broadcast(map[string]any{
-				"type":     "job_run_completed",
-				"job_id":   restorePoint.JobID,
-				"run_id":   runID,
-				"run_type": "restore",
-				"status":   "failed",
-			})
-		}
-	}()
-
 	// Per-item sizes recorded at backup time, used to report what this restore
 	// actually wrote rather than the whole restore point's size (issue #334).
 	itemSizes, _ := restorePoint.ItemSizes()
 
 	var (
-		itemsDone   int
-		itemsFailed int
-		itemResults []map[string]any
+		requestReason string
+		itemsDone     int
+		itemsFailed   int
+		itemResults   []map[string]any
 		// restoredBytes sums only the items whose size is known;
 		// restoredSizesKnown counts them, so "nothing known" stays
 		// distinguishable from "known to be zero bytes".
@@ -4249,7 +4276,17 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 		tally := &engine.RestoreTally{}
 		diagBefore := runDiag.Snapshot()
 		itemCtx := engine.WithRestoreTrust(engine.WithRestoreTally(ctx, tally), engine.RestoreTrust{AllowHostPrivileges: t.AllowHostPrivileges, AllowUnpinnedImage: t.AllowUnpinnedImage})
-		restoreErr := r.restoreItemWithReporter(itemCtx, restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
+		var restoreErr error
+		if approved == nil {
+			restoreErr = r.restoreItemWithReporter(itemCtx, restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
+		} else {
+			restoreErr = r.restoreApprovedFolder(itemCtx, approved, passphrase, reporter)
+			if restoreErr != nil {
+				requestReason = approvedRestoreFailure(restoreErr)
+				restoreErr = errors.New(requestReason)
+			}
+			r.sendRestoreNotification(t.Name, t.Type, restoreErr)
+		}
 		elapsed := time.Since(start)
 		itemDiag := diagDelta(diagBefore, runDiag.Snapshot())
 
@@ -4257,6 +4294,10 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 			"name":     t.Name,
 			"type":     t.Type,
 			"duration": elapsed.String(),
+		}
+
+		if approved != nil {
+			result["readiness_checks"] = approved.checks
 		}
 
 		if restoreErr != nil {
@@ -4354,7 +4395,13 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 	run.ItemsDone = itemsDone
 	run.ItemsFailed = itemsFailed
 	run.SizeBytes = restoredSize
-	_ = r.db.UpdateJobRun(run)
+	requestStatus := status
+	if requestReason == "reviewed_operation_changed" {
+		requestStatus = "invalidated"
+	}
+	if !r.finishTrackedRestore(run, approved, requestStatus, requestReason) {
+		return
+	}
 
 	r.broadcast(map[string]any{
 		"type":         "job_run_completed",
@@ -4686,20 +4733,8 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 		log.Printf("runner: restore point %d has no effective listing — skipping chain prune", newest.ID)
 		return
 	}
-	keep := make(map[string]struct{}, len(listing.Files))
-	for _, f := range listing.Files {
-		keep[f.Path] = struct{}{}
-	}
 
-	// Union of everything the earlier chain steps could have written (later
-	// steps win so the recorded size matches the surviving extraction). If
-	// any step's index is unreadable we cannot know its writes — skip
-	// pruning rather than guess.
-	type writtenEntry struct {
-		isDir bool
-		size  int64
-	}
-	written := make(map[string]writtenEntry)
+	indexes := make([]engine.TarIndex, 0, len(chain)-1)
 	for _, step := range chain[:len(chain)-1] {
 		if !rpContainsItem(step, itemName) {
 			continue
@@ -4709,9 +4744,7 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 			log.Printf("runner: chain step %d has no readable tar index — skipping chain prune", step.ID)
 			return
 		}
-		for _, f := range idx.Files {
-			written[f.Path] = writtenEntry{isDir: f.IsDir, size: f.Size}
-		}
+		indexes = append(indexes, idx)
 	}
 
 	destPath := destination
@@ -4754,17 +4787,36 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 		return
 	}
 
-	// The index sidecar is stored off-host and could be tampered with. All
-	// prune I/O goes through an os.Root scoped to the restore destination:
-	// the kernel-enforced boundary rejects absolute paths, ".." traversal,
-	// AND escapes through symlinked intermediate directories (CWE-22),
-	// while operating on the exact index path with no normalization.
 	root, err := os.OpenRoot(destPath)
 	if err != nil {
 		return
 	}
 	defer root.Close()
+	pruneRestoreWrites(root, newest.ID, listing, indexes, writes)
+}
 
+func pruneRestoreWrites(root *os.Root, pointID int64, listing engine.TarIndex, indexes []engine.TarIndex, writes map[string]os.FileInfo) {
+	keep := make(map[string]struct{}, len(listing.Files))
+	for _, file := range listing.Files {
+		keep[file.Path] = struct{}{}
+	}
+	// Later steps win so the size matches the surviving extraction.
+	type writtenEntry struct {
+		isDir bool
+		size  int64
+	}
+	written := make(map[string]writtenEntry)
+	for _, index := range indexes {
+		for _, file := range index.Files {
+			written[file.Path] = writtenEntry{isDir: file.IsDir, size: file.Size}
+		}
+	}
+
+	// The index sidecar is stored off-host and could be tampered with. All
+	// prune I/O goes through an os.Root scoped to the restore destination:
+	// the kernel-enforced boundary rejects absolute paths, ".." traversal,
+	// AND escapes through symlinked intermediate directories (CWE-22),
+	// while operating on the exact index path with no normalization.
 	pruned := 0
 	var pruneDirs []string
 	for rel, we := range written {
@@ -4803,7 +4855,7 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 	}
 	if pruned > 0 {
 		log.Printf("runner: chain prune removed %d entr%s deleted/excluded since restore point %d's chain base",
-			pruned, map[bool]string{true: "y", false: "ies"}[pruned == 1], newest.ID)
+			pruned, map[bool]string{true: "y", false: "ies"}[pruned == 1], pointID)
 	}
 }
 
@@ -5723,6 +5775,10 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 		return fmt.Errorf("getting storage destination: %w", err)
 	}
 
+	return r.stageRestorePointItemFrom(ctx, job, dest, restorePoint, itemName, tmpDir, passphrase, phaseStart, phaseEnd, reporter, nil)
+}
+
+func (r *Runner) stageRestorePointItemFrom(ctx context.Context, job db.Job, dest db.StorageDestination, restorePoint db.RestorePoint, itemName, tmpDir, passphrase string, phaseStart, phaseEnd int, reporter restoreProgressReporter, files []storage.FileInfo) error {
 	adapter, err := newRunAdapter(ctx, dest)
 	if err != nil {
 		return fmt.Errorf("creating storage adapter: %w", err)
@@ -5736,7 +5792,9 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 	// Parse checksums from restore point metadata for verification.
 	expectedChecksums := parseItemChecksums(restorePoint.Metadata, itemName)
 
-	files, err := adapter.List(itemStoragePath)
+	if files == nil {
+		files, err = adapter.List(itemStoragePath)
+	}
 	if err != nil {
 		if storage.IsNotExist(err) {
 			r.reportRestoreProgress(reporter, phaseEnd, "Restore data ready")
@@ -5824,6 +5882,10 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 			defer func() { <-sem }()
 			defer func() {
 				if rec := recover(); rec != nil {
+					if approvedRestoreContext(ctx) {
+						errOnce.Do(func() { firstErr = errors.New("restore download worker failed") })
+						return
+					}
 					log.Printf("runner: PANIC in download worker for %s: %v", fi.Path, rec)
 					errOnce.Do(func() { firstErr = fmt.Errorf("download worker for %s panicked: %v", fi.Path, rec) })
 				}

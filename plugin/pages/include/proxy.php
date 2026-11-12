@@ -23,6 +23,21 @@ if ($path !== '/api/v1' && strpos($path, '/api/v1/') !== 0) {
     vault_proxy_error(403, 'only /api/v1 routes can be proxied');
 }
 
+// Only the native action endpoint may forward approval proofs. Decode before
+// checking so cURL path normalization cannot make an alias bypass this guard.
+$route = rawurldecode(explode('?', $path, 2)[0]);
+$parts = [];
+foreach (explode('/', $route) as $part) {
+    if ($part === '..') {
+        array_pop($parts);
+    } elseif ($part !== '' && $part !== '.') {
+        $parts[] = $part;
+    }
+}
+if (preg_match('#^api/v1/restore-requests/[^/]+/approve$#', implode('/', $parts)) === 1) {
+    vault_proxy_error(403, 'Restore Request approval requires the native Unraid action');
+}
+
 if ($path === '/api/v1/ws' || strpos($path, '/api/v1/ws?') === 0) {
     vault_proxy_error(501, 'websocket proxy unavailable; plugin mode uses polling');
 }

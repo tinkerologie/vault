@@ -242,9 +242,18 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		return fmt.Errorf("cannot determine restore path: no path in settings or metadata")
 	}
 
-	destPath, err := ResolveFolderRestoreTarget(destPath, fromJob)
-	if err != nil {
-		return err
+	var err error
+	target, reviewed := ctx.Value(reviewedFolderTargetKey{}).(ReviewedFolderTarget)
+	if reviewed {
+		if err := target.Check(); err != nil {
+			return err
+		}
+		destPath = target.Resolved
+	} else {
+		destPath, err = ResolveFolderRestoreTarget(destPath, fromJob)
+		if err != nil {
+			return err
+		}
 	}
 
 	progress(item.Name, 30, "restoring to "+destPath)
@@ -254,7 +263,12 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		return fmt.Errorf("backup archive not found: %w", err)
 	}
 
-	if err := mkdirRestored(destPath, 0750); err != nil {
+	if reviewed {
+		err = createReviewedFolder(destPath)
+	} else {
+		err = mkdirRestored(destPath, 0o750)
+	}
+	if err != nil {
 		return fmt.Errorf("creating restore dir %s: %w", destPath, err)
 	}
 
@@ -265,7 +279,13 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	// Replace the target rather than merging into it, when the restore asked
 	// for that (issue #321). Declines for a partial restore, which would
 	// otherwise delete every file the user did not pick.
-	if err := cleanRestoreDestination(item, destPath, include); err != nil {
+	if reviewed {
+		if clean, _ := item.Settings[SettingCleanDestination].(bool); clean {
+			if err := clearPinnedRestoreTarget(destPath); err != nil {
+				return err
+			}
+		}
+	} else if err := cleanRestoreDestination(item, destPath, include); err != nil {
 		return err
 	}
 
@@ -522,6 +542,13 @@ func (h *FolderHandler) restoreChunkedTree(ctx context.Context, item BackupItem,
 		return err
 	}
 
+	if err := cleanRestoreDestination(item, destPath, extractRestoreFilePaths(item.Settings)); err != nil {
+		return err
+	}
+	return h.restoreChunkedEntries(ctx, item, m, repo.Get, destPath, progress)
+}
+
+func (h *FolderHandler) restoreChunkedEntries(ctx context.Context, item BackupItem, m dedup.Manifest, get func(dedup.ID) ([]byte, error), destPath string, progress ProgressFunc) error {
 	// Split entries into dirs and files so we can MkdirAll before writing
 	// any file content. Manifest paths originated from filepath.Walk at
 	// backup time so they should be clean relative paths, but the manifest
@@ -533,11 +560,6 @@ func (h *FolderHandler) restoreChunkedTree(ctx context.Context, item BackupItem,
 	// selected directory) — mirroring untarDirectoryFiltered's semantics.
 	includePaths := extractRestoreFilePaths(item.Settings)
 	include := newIncludeSet(includePaths)
-
-	// Same replace-don't-merge contract as the classic path (issue #321).
-	if err := cleanRestoreDestination(item, destPath, includePaths); err != nil {
-		return err
-	}
 
 	var dirs, files []string
 	for p, e := range m.Files {
@@ -643,7 +665,7 @@ func (h *FolderHandler) restoreChunkedTree(ctx context.Context, item BackupItem,
 		}
 		var written int64
 		for _, cid := range e.Chunks {
-			body, err := repo.Get(cid)
+			body, err := get(cid)
 			if err != nil {
 				_ = out.Close()
 				return fmt.Errorf("restore %s: %w", fp, err)

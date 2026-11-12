@@ -416,3 +416,81 @@ test.describe('Folder Restore Request review', () => {
     await expect(history.getByRole('button', { name: 'Load more requests' })).toHaveCount(0);
   });
 });
+
+test('native folder approval keeps a busy request pending and follows the linked Restore Run', async ({ page }) => {
+  await setupVaultMockApi(page, { restoreRequestFixtures: true });
+  await page.addInitScript(() => {
+    Object.assign(window, { __VAULT_RUNTIME_CONFIG__: {
+      mode: 'unraid-proxy',
+      csrfToken: 'native-csrf-fixture',
+      restoreRequestActionPath: '/plugins/vault/include/restore-request.php',
+    } });
+  });
+  let approvalAttempts = 0;
+  let finished = false;
+  await page.route('**/api/v1/restore-requests/review-replace', route => route.fulfill({ json: {
+    id: 'review-replace', status: finished ? 'completed' : 'pending',
+    requester_name: 'Recovery assistant', job_name: 'Folder backups',
+    item: { item_name: 'archive', item_type: 'folder' },
+    restore_point: { id: 11, created_at: '2026-11-10T02:00:00Z' },
+    target_choice: 'alternate', configured_path: '/mnt/user/restore/review',
+    resolved_path: '/mnt/cache/restore/review',
+    expires_at: '2026-11-14T02:00:00Z', membership: 'confirmed', verification: { status: 'none' },
+    chain: { status: 'confirmed', steps: [] }, effective_write_mode: 'replace',
+    effects: ['clear_target_contents', 'write_backed_up_entries'], warnings: ['unverified_backup'],
+    eligible_for_approval: true, requires_passphrase: true, review_digest: 'reviewed-fixture',
+    ...(finished ? {
+      run_id: 77, approval: { operator_name: 'root', approved_at: '2026-11-12T02:00:00Z' },
+      run: { status: 'completed', items_done: 1, items_total: 1, items_failed: 0, application_health: 'unchecked' },
+    } : {}),
+  } }));
+  await page.route('**/plugins/vault/include/restore-request.php', route => {
+    approvalAttempts += 1;
+    const req = route.request();
+    expect(req.url()).not.toContain('ephemeral-fixture');
+    expect(Object.fromEntries(new URLSearchParams(req.postData() || ''))).toEqual({
+      action: 'approve', id: 'review-replace', review_digest: 'reviewed-fixture',
+      passphrase: 'ephemeral-fixture', csrf_token: 'native-csrf-fixture',
+    });
+    if (approvalAttempts === 1) {
+      return route.fulfill({ status: 409, json: { error: 'Runner busy. Try again when it finishes.' } });
+    }
+    finished = true;
+    return route.fulfill({ status: 202, json: { run_id: 77, status: 'running' } });
+  });
+
+  await page.route('**/api/v1/runs/77/logs?*', route => route.fulfill({ json: {
+    run_id: 77, entries: [{ id: 1, message: 'Folder Restore completed' }],
+  } }));
+  await page.route(url => url.pathname === '/api/v1/restore-requests' &&
+    url.searchParams.get('status')?.includes('completed') === true, route => route.fulfill({ json: {
+    requests: [{ id: 'review-replace', status: 'completed', run_id: 77, job_name: 'Folder backups',
+      item: { item_name: 'archive', item_type: 'folder' }, approval: { operator_name: 'root' } }],
+  } }));
+
+  await page.goto('/#/restore?request=review-replace');
+  const review = page.getByRole('region', { name: 'Restore Request review' });
+  await expect(review.getByText('/mnt/cache/restore/review')).toBeVisible();
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await review.getByRole('button', { name: 'Approve and run' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Approve Restore Request' });
+    await dialog.getByLabel('Backup Passphrase').fill('ephemeral-fixture');
+    await dialog.getByLabel(/Type RESTORE to confirm/).fill('RESTORE');
+    await dialog.getByRole('button', { name: 'Approve and run' }).click();
+    if (attempt === 0) {
+      await expect(review.getByRole('alert')).toContainText('Runner busy');
+      await expect(review.getByText('pending', { exact: true })).toBeVisible();
+    }
+  }
+  await expect(review.getByText('Restore Run #77')).toBeVisible();
+  await expect(review.getByText('unchecked', { exact: true })).toBeVisible();
+  await review.getByText('Restore Run log', { exact: true }).click();
+  await expect(review.getByText('Folder Restore completed', { exact: true })).toBeVisible();
+  await page.goto('/#/history');
+  const history = page.getByRole('region', { name: 'Request history' });
+  await expect(history.getByText(/Restore Run #77/)).toBeVisible();
+  await expect(history.getByText(/root/)).toBeVisible();
+  await history.getByRole('link', { name: 'archive · Folder backups' }).click();
+  await page.reload();
+  await expect(review.getByText('Restore Run #77')).toBeVisible();
+});

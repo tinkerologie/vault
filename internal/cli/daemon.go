@@ -28,6 +28,7 @@ import (
 	"github.com/tinkerologie/vault/internal/logbuf"
 	"github.com/tinkerologie/vault/internal/logx"
 	"github.com/tinkerologie/vault/internal/memlimit"
+	"github.com/tinkerologie/vault/internal/operatorproof"
 	"github.com/tinkerologie/vault/internal/replication"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/safepath"
@@ -492,6 +493,14 @@ var daemonCmd = &cobra.Command{
 		if hybridMode && snapshotMgr != nil {
 			cfg.RestoreRequestFlush = snapshotMgr.FlushToUSB
 		}
+		if nativeApproval, _ := cmd.Flags().GetBool("unraid-operator-approval"); nativeApproval {
+			proof, err := operatorproof.NewRuntime()
+			if err != nil {
+				log.Print("Warning: native Restore Request approval is unavailable")
+			} else {
+				cfg.OperatorProof = proof
+			}
+		}
 		srv := api.NewServer(database, cfg)
 		if err := srv.ReconcileRestoreRequests(cmd.Context()); err != nil {
 			log.Printf("Warning: startup Restore Request expiry reconciliation failed: %v", err)
@@ -674,6 +683,8 @@ var daemonCmd = &cobra.Command{
 
 func init() {
 	daemonCmd.Flags().String("db", "/boot/config/plugins/vault/vault.db", "Database path")
+	daemonCmd.Flags().Bool("unraid-operator-approval", false, "Enable native operator approval for the installed Unraid plugin")
+	_ = daemonCmd.Flags().MarkHidden("unraid-operator-approval")
 	daemonCmd.Flags().String("addr", ":24085", "API listen address")
 	daemonCmd.Flags().String("tls-cert", "", "Path to TLS certificate file")
 	daemonCmd.Flags().String("tls-key", "", "Path to TLS private key file")

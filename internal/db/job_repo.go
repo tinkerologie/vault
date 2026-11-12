@@ -146,9 +146,27 @@ func updateJob(ctx context.Context, q jobSQL, job Job) (sql.Result, error) {
 	)
 }
 
+// ErrApprovedRestoreRunning protects the atomic approval-to-run handoff
+// even when the Runner has not yet published live status.
+var ErrApprovedRestoreRunning = errors.New("an approved Restore Run is in progress")
+
 func (d *DB) DeleteJob(id int64) error {
-	_, err := d.Exec("DELETE FROM jobs WHERE id = ?", id)
-	return err
+	result, err := d.Exec(`DELETE FROM jobs WHERE id = ? AND NOT EXISTS (
+		SELECT 1 FROM job_runs r JOIN restore_request_approvals a ON a.run_id = r.id
+		WHERE r.job_id = jobs.id AND r.status = 'running')`, id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 0 {
+		return err
+	}
+	if _, err := d.GetJob(id); err == nil {
+		return ErrApprovedRestoreRunning
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 // GetJobByName looks up a job by its unique name. Returns ErrNotFound if
@@ -479,15 +497,7 @@ func (d *DB) UpdateJobRunProgress(runID int64, done, failed int, sizeBytes int64
 // CleanupStaleRuns marks any "running" job runs as "failed". This handles
 // runs that were interrupted by a daemon restart or crash.
 func (d *DB) CleanupStaleRuns() (int64, error) {
-	res, err := d.Exec(
-		`UPDATE job_runs SET status='failed', completed_at=CURRENT_TIMESTAMP,
-		log='Interrupted: daemon was restarted while backup was running'
-		WHERE status='running'`,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("cleaning up stale runs: %w", err)
-	}
-	return res.RowsAffected()
+	return d.cleanupStaleRuns(context.Background())
 }
 
 // CountRunningBackupsOnDestination returns how many backup runs are currently
@@ -518,7 +528,8 @@ func (d *DB) DeleteOldFailedRuns(keepDays int) (int64, error) {
 	res, err := d.Exec(
 		`DELETE FROM job_runs WHERE status IN ('failed', 'error')
 		AND completed_at IS NOT NULL
-		AND completed_at < datetime('now', '-' || ? || ' days')`,
+		AND completed_at < datetime('now', '-' || ? || ' days')
+		AND id NOT IN (SELECT run_id FROM restore_request_approvals)`,
 		keepDays,
 	)
 	if err != nil {
@@ -540,7 +551,8 @@ func (d *DB) PurgeEligibleRuns(keepDays int) (int64, error) {
 		 WHERE status != 'running'
 		   AND completed_at IS NOT NULL
 		   AND completed_at < datetime('now', '-' || ? || ' days')
-		   AND id NOT IN (SELECT DISTINCT job_run_id FROM restore_points)`,
+		   AND id NOT IN (SELECT DISTINCT job_run_id FROM restore_points)
+		   AND id NOT IN (SELECT run_id FROM restore_request_approvals)`,
 		keepDays,
 	)
 	if err != nil {
@@ -686,9 +698,9 @@ func (d *DB) AcknowledgeJobRuns(ctx context.Context, ids []int64, actor, reason 
 	return int(count), len(seen) - int(count), nil
 }
 
-// PurgeJobRuns deletes all job run records and returns the count of deleted rows.
+// PurgeJobRuns deletes run history except the runs linked to Restore Requests.
 func (d *DB) PurgeJobRuns() (int64, error) {
-	res, err := d.Exec("DELETE FROM job_runs")
+	res, err := d.Exec("DELETE FROM job_runs WHERE id NOT IN (SELECT run_id FROM restore_request_approvals)")
 	if err != nil {
 		return 0, fmt.Errorf("purging job runs: %w", err)
 	}

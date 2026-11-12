@@ -115,7 +115,7 @@
   </div>
 
   {#if requestId}
-    <RestoreRequestReview {requestId} />
+    {#key requestId}<RestoreRequestReview {requestId} />{/key}
   {/if}
   <RestoreRequestList />
 

@@ -1,10 +1,85 @@
 <script>
+  import { onMount } from 'svelte'
+  import ConfirmDialog from './ConfirmDialog.svelte'
   import { api } from '../lib/api.js'
+  import { canApproveRestoreRequest } from '../lib/runtime-config.js'
   import { formatDate } from '../lib/utils.js'
 
   let { requestId } = $props()
   const heading = $props.id()
-  let review = $derived(api.getRestoreRequest(requestId))
+  let request = $state(null)
+  let loading = $state(true)
+  let loadError = $state('')
+  let approvalError = $state('')
+  let approving = $state(false)
+  let confirm = $state(false)
+  let passphrase = $state('')
+  let logs = $state([])
+  let logsLoading = $state(false)
+  let logsError = $state(false)
+  const nativeApproval = canApproveRestoreRequest()
+
+  const lifetime = new AbortController()
+  let refreshTimer
+
+  onMount(() => {
+    void refresh()
+    return () => {
+      lifetime.abort()
+      clearTimeout(refreshTimer)
+      passphrase = ''
+    }
+  })
+
+  async function refresh() {
+    try {
+      const result = await api.getRestoreRequest(requestId)
+      if (lifetime.signal.aborted) return
+      request = result
+      loadError = ''
+    } catch (error) {
+      if (!lifetime.signal.aborted) loadError = reviewError(error)
+    } finally {
+      if (!lifetime.signal.aborted) {
+        loading = false
+        if (request?.status === 'running') refreshTimer = setTimeout(refresh, 1500)
+      }
+    }
+  }
+
+  async function approve() {
+    approving = true
+    approvalError = ''
+    try {
+      const result = await api.approveRestoreRequest(requestId, request.review_digest, passphrase)
+      if (!lifetime.signal.aborted && result?.run_id && result.run) request = result
+    } catch (error) {
+      if (!lifetime.signal.aborted && error.status !== 410) approvalError = error.message
+    } finally {
+      passphrase = ''
+      confirm = false
+      approving = false
+      if (!lifetime.signal.aborted) await refresh()
+    }
+  }
+
+  async function loadRunLog() {
+    logsLoading = true
+    logsError = false
+    try {
+      const result = await api.getRunLogs(request.run_id, { tail: true, limit: 50 })
+      if (!lifetime.signal.aborted) logs = result.entries
+    } catch {
+      if (!lifetime.signal.aborted) logsError = true
+    } finally {
+      logsLoading = false
+    }
+  }
+
+  function cancelApproval() {
+    passphrase = ''
+    confirm = false
+  }
 
   const labels = {
     clear_target_contents: 'Clear all existing target contents before writing files.',
@@ -29,6 +104,14 @@
     original_target_disallowed: 'The original restore location is outside the allowed folder restore policy.',
     withdrawn_by_requester: 'The requesting assistant withdrew this request.',
     approval_window_elapsed: 'The 24-hour review window elapsed.',
+    reviewed_operation_changed: 'The reviewed source or location changed. Ask the assistant to prepare a new request.',
+    approval_persistence_failed: 'The approval could not be saved to flash. The Restore did not start.',
+    daemon_restarted: 'The daemon restarted during this Restore. The target may be partially restored.',
+    restore_failed: 'The Restore failed. Check the Restore Run log for details.',
+    reviewed_operation_revalidated: 'Reviewed operation revalidated',
+    required_backup_data_staged: 'Required backup data staged',
+    folder_restore_completed: 'Folder Restore completed',
+
   }
 
   function reviewError(error) {
@@ -43,9 +126,9 @@
     <h2 id={heading} class="text-base font-semibold text-text">Restore Request review</h2>
     <a href="#/restore" class="hit-target text-sm font-medium text-info hover:underline">Back to Restore</a>
   </div>
-  {#await review}
+  {#if loading}
     <p role="status" class="text-sm text-text-muted">Loading Restore Request…</p>
-  {:then request}
+  {:else if request}
     <dl class="grid gap-3 text-sm sm:grid-cols-2">
       <div><dt class="text-text-muted">Requester</dt><dd class="text-text [overflow-wrap:anywhere]">{request.requester_name}</dd></div>
       <div><dt class="text-text-muted">Status</dt><dd class="capitalize text-text">{request.status}</dd></div>
@@ -57,6 +140,9 @@
       </div>
       <div><dt class="text-text-muted">{request.target_choice === 'alternate' ? 'Alternate' : 'Original'} location</dt>
         <dd class="break-all text-text">{request.resolved_path || 'Unavailable'}</dd>
+        {#if request.configured_path && request.configured_path !== request.resolved_path}
+          <dd class="break-all text-xs text-text-muted">Configured as {request.configured_path}</dd>
+        {/if}
       </div>
       <div><dt class="text-text-muted">Expires</dt>
         <dd class="text-text"><time datetime={request.expires_at}>{formatDate(request.expires_at)}</time></dd>
@@ -115,7 +201,73 @@
     {#if request.terminal_reason}
       <p class="mt-4 text-sm text-text-muted">{labels[request.terminal_reason] ?? request.terminal_reason}</p>
     {/if}
-  {:catch error}
-    <p role="alert" class="text-sm text-danger">{reviewError(error)}</p>
-  {/await}
+    {#if request.run_id}
+      <div class="mt-4 border-t border-border pt-3 text-sm">
+        <h3 class="font-medium text-text">Restore Run #{request.run_id}</h3>
+        <p role="status" class="mt-1 capitalize text-text">{request.run?.status || request.status}
+          {#if request.run?.percent != null} · {request.run.percent}%{/if}
+        </p>
+        {#if request.run}
+          <p class="mt-1 text-text-muted">{request.run.items_done} of {request.run.items_total} items restored
+            {#if request.run.items_failed} · {request.run.items_failed} failed{/if}
+          </p>
+          <p class="mt-1 text-text-muted">Application health <span>{request.run.application_health}</span></p>
+          {#if request.run.readiness_checks?.length}
+            <ul class="mt-1 list-disc pl-5 text-text-muted">
+              {#each request.run.readiness_checks as check (check)}
+                <li>{labels[check] ?? check}</li>
+              {/each}
+            </ul>
+          {/if}
+        {/if}
+        {#if request.approval}
+          <p class="mt-1 text-text-muted">Approved by {request.approval.operator_name || 'a signed-in Unraid operator'}
+            · {formatDate(request.approval.approved_at)}
+          </p>
+        {/if}
+        <details class="mt-2" ontoggle={(event) => { if (event.currentTarget.open) void loadRunLog() }}>
+          <summary class="cursor-pointer text-info hover:underline">Restore Run log</summary>
+          {#if logsLoading}
+            <p role="status" class="text-text-muted">Loading run log…</p>
+          {:else if logsError}
+            <p role="alert" class="text-danger">Could not load this Restore Run log.</p>
+          {:else if logs.length}
+            <ul class="mt-2 space-y-1 break-words text-text-muted">
+              {#each logs as entry (entry.id)}
+                <li>{entry.message}</li>
+              {/each}
+            </ul>
+          {:else}
+            <p class="text-text-muted">No log entries yet.</p>
+          {/if}
+          <button type="button" class="hit-target text-info hover:underline" disabled={logsLoading} onclick={loadRunLog}>Refresh log</button>
+        </details>
+      </div>
+    {/if}
+    {#if request.status === 'pending' && request.eligible_for_approval}
+      {#if nativeApproval && request.review_digest}
+        <button class="mt-4 hit-target rounded-lg bg-vault px-3 py-1 text-sm font-medium text-on-vault disabled:opacity-50"
+          type="button" disabled={approving} onclick={() => { confirm = true }}>Approve and run</button>
+        <ConfirmDialog show={confirm} title="Approve Restore Request"
+          message="Start this Restore Request now."
+          confirmLabel="Approve and run" confirmWord={request.effective_write_mode === 'replace' ? 'RESTORE' : ''}
+          confirmDisabled={request.requires_passphrase && !passphrase} busy={approving}
+          source={[{ label: 'Restore location', value: request.resolved_path }]}
+          consequences={request.effects.map(effect => labels[effect] ?? effect)}
+          onconfirm={approve} oncancel={cancelApproval}>
+          <label class="mt-4 block text-sm text-text">
+            Backup Passphrase{request.requires_passphrase ? '' : ' (if needed)'}
+            <input type="password" bind:value={passphrase} autocomplete="off" disabled={approving}
+              class="mt-1 w-full rounded-lg border border-border bg-surface-3 px-3 py-2 text-text" />
+          </label>
+        </ConfirmDialog>
+      {:else}
+        <p class="mt-4 text-sm text-text-muted">Open this request from the signed-in Unraid Vault page to approve it.</p>
+      {/if}
+    {/if}
+    {#if approvalError}<p role="alert" class="mt-3 text-sm text-danger">{approvalError}</p>{/if}
+    {#if loadError}<p role="alert" class="mt-3 text-sm text-danger">{loadError}</p>{/if}
+  {:else}
+    <p role="alert" class="text-sm text-danger">{loadError}</p>
+  {/if}
 </section>

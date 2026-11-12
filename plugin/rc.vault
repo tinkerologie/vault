@@ -164,9 +164,9 @@ start() {
     touch "$LOG"
     trim_log
     if [ "$MDNS_ADVERTISE" = "no" ]; then
-        nohup "$DAEMON" daemon --db="$DB" --addr="$ADDR" --mdns=false >> "$LOG" 2>&1 &
+        nohup "$DAEMON" daemon --db="$DB" --addr="$ADDR" --unraid-operator-approval --mdns=false >> "$LOG" 2>&1 &
     else
-        nohup "$DAEMON" daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
+        nohup "$DAEMON" daemon --db="$DB" --addr="$ADDR" --unraid-operator-approval >> "$LOG" 2>&1 &
     fi
     echo $! > "$PIDFILE"
 

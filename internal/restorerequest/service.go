@@ -47,31 +47,37 @@ func PrincipalFrom(ctx context.Context) Principal {
 
 type Service struct {
 	db          *db.DB
+	runner      *runner.Runner
 	revocations *db.AssistantRevocations
 	maintenance *sync.Mutex
 	flush       func() error
 	now         func() time.Time
 }
 
-func New(database *db.DB, revocations *db.AssistantRevocations, maintenance *sync.Mutex, flush func() error, now func() time.Time) *Service {
+func New(database *db.DB, revocations *db.AssistantRevocations, maintenance *sync.Mutex, execution *runner.Runner, flush func() error, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{db: database, revocations: revocations, maintenance: maintenance, flush: flush, now: now}
+	return &Service{db: database, runner: execution, revocations: revocations, maintenance: maintenance, flush: flush, now: now}
 }
 
 type View struct {
-	ID                 string     `json:"id"`
-	Status             string     `json:"status"`
-	CreatedAt          time.Time  `json:"created_at"`
-	ExpiresAt          time.Time  `json:"expires_at"`
-	TerminalAt         *time.Time `json:"terminal_at,omitempty"`
-	TerminalReason     string     `json:"terminal_reason,omitempty"`
-	RequesterName      string     `json:"requester_name"`
-	ReviewLink         string     `json:"review_link"`
-	ResolvedPath       string     `json:"resolved_path,omitempty"`
-	PersistenceWarning string     `json:"persistence_warning,omitempty"`
-	Reused             bool       `json:"reused,omitempty"`
+	ID                 string        `json:"id"`
+	Status             string        `json:"status"`
+	CreatedAt          time.Time     `json:"created_at"`
+	ExpiresAt          time.Time     `json:"expires_at"`
+	TerminalAt         *time.Time    `json:"terminal_at,omitempty"`
+	TerminalReason     string        `json:"terminal_reason,omitempty"`
+	RequesterName      string        `json:"requester_name"`
+	ReviewLink         string        `json:"review_link"`
+	ReviewDigest       string        `json:"review_digest,omitempty"`
+	ConfiguredPath     string        `json:"configured_path,omitempty"`
+	RunID              int64         `json:"run_id,omitempty"`
+	Approval           *ApprovalView `json:"approval,omitempty"`
+	Run                *RunView      `json:"run,omitempty"`
+	ResolvedPath       string        `json:"resolved_path,omitempty"`
+	PersistenceWarning string        `json:"persistence_warning,omitempty"`
+	Reused             bool          `json:"reused,omitempty"`
 	Review
 }
 
@@ -94,6 +100,11 @@ func view(request db.RestoreRequest, operator bool, warning string) (View, error
 	}
 	if operator {
 		result.ResolvedPath = op.ResolvedPath
+		result.ConfiguredPath = op.ConfiguredPath
+		if op.TargetChoice == "alternate" {
+			result.ConfiguredPath = op.Input.Destination
+		}
+		result.ReviewDigest = reviewDigest(request.Operation)
 	} else {
 		result.Item = result.Item.Redacted()
 		result.JobName = runner.RedactRecoveryLabel(result.JobName)
@@ -177,7 +188,7 @@ func (s *Service) Get(ctx context.Context, principal Principal, id string) (View
 			return View{}, err
 		}
 	}
-	return view(request, principal.AssistantDigest == "", warning)
+	return s.view(ctx, request, principal.AssistantDigest == "", warning)
 }
 
 func (s *Service) Withdraw(ctx context.Context, principal Principal, id string) (View, error) {
@@ -199,7 +210,7 @@ func (s *Service) Withdraw(ctx context.Context, principal Principal, id string) 
 		return View{}, err
 	}
 	if request.Status != "pending" {
-		return view(request, false, "")
+		return s.view(ctx, request, false, "")
 	}
 	now := s.now().UTC()
 	var changed bool
@@ -216,7 +227,7 @@ func (s *Service) Withdraw(ctx context.Context, principal Principal, id string) 
 	if err != nil {
 		return View{}, err
 	}
-	return view(request, false, warning)
+	return s.view(ctx, request, false, warning)
 }
 
 func (s *Service) List(ctx context.Context, principal Principal, statuses []string, before string, limit int) (Page, error) {
@@ -227,8 +238,10 @@ func (s *Service) List(ctx context.Context, principal Principal, statuses []stri
 		statuses = []string{"pending"}
 	}
 	for _, status := range statuses {
-		if status != "pending" && status != "withdrawn" && status != "expired" {
-			return Page{}, Invalid("status must be pending, withdrawn, or expired")
+		switch status {
+		case "pending", "withdrawn", "expired", "invalidated", "running", "completed", "failed", "partial", "interrupted", "cancelled":
+		default:
+			return Page{}, Invalid("invalid Restore Request status")
 		}
 	}
 	if limit < 0 || limit > 200 || (before != "" && !validRequestID(before)) {
@@ -248,7 +261,7 @@ func (s *Service) List(ctx context.Context, principal Principal, statuses []stri
 	count := min(len(requests), limit)
 	result := Page{Requests: make([]View, 0, count), PersistenceWarning: warning}
 	for _, request := range requests[:count] {
-		entry, err := view(request, true, "")
+		entry, err := s.view(ctx, request, true, "")
 		if err != nil {
 			return Page{}, err
 		}

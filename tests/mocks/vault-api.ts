@@ -374,7 +374,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       if (requestPath === '') {
         const status = requestUrl.searchParams.get('status');
         const before = requestUrl.searchParams.get('before');
-        const history = status === 'withdrawn,expired';
+        const history = status?.split(',').includes('withdrawn');
         const requests = history
           ? [{ ...review, id: before ? 'expired' : 'withdrawn', status: before ? 'expired' : 'withdrawn',
               item: { item_name: before ? 'expired fixture' : 'withdrawn fixture', item_type: 'folder' } }]

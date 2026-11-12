@@ -219,7 +219,7 @@ class SSHKeyTests(unittest.TestCase):
         run = self.run_role("deploy")
         self.assertEqual(run.rc, 0, run.output)
         uploads = [event for event in run.commands if event["program"] == "scp"]
-        self.assertEqual(len(uploads), 13)  # 12 plugin files + rc.vault (#468)
+        self.assertEqual(len(uploads), 14)  # 13 plugin files + rc.vault
         for upload in uploads:
             self.assert_key_only(upload, run.key)
         destinations = [event["args"][-1].split(":", 1)[1] for event in uploads]
@@ -227,7 +227,7 @@ class SSHKeyTests(unittest.TestCase):
         self.assertEqual(destinations, [
             "/usr/local/sbin/vault", plugin + "Vault.page", plugin + "Backups.page",
             plugin + "README.md", plugin + "include/api.php", plugin + "include/control.php",
-            plugin + "include/app.php", plugin + "include/embed-host.js", plugin + "include/proxy.php", plugin + "include/apply.sh",
+            plugin + "include/app.php", plugin + "include/embed-host.js", plugin + "include/proxy.php", plugin + "include/restore-request.php", plugin + "include/apply.sh",
             plugin + "event/", plugin + "ui/", "/etc/rc.d/rc.vault",
         ])
         # rc.vault ships from plugin/rc.vault, the script the .plg installs (#468).

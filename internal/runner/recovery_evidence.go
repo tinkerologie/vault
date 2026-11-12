@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -43,12 +44,13 @@ type RecoveryChain struct {
 }
 
 type RecoveryChainStep struct {
-	RestorePointID   int64  `json:"restore_point_id"`
-	BackupType       string `json:"backup_type"`
-	Membership       Status `json:"membership"`
-	ItemTypeEvidence Status `json:"item_type_evidence"`
-	DataRequired     bool   `json:"data_required"`
-	Artifacts        Status `json:"artifacts,omitempty"`
+	RestorePointID   int64              `json:"restore_point_id"`
+	BackupType       string             `json:"backup_type"`
+	Membership       Status             `json:"membership"`
+	ItemTypeEvidence Status             `json:"item_type_evidence"`
+	DataRequired     bool               `json:"data_required"`
+	Artifacts        Status             `json:"artifacts,omitempty"`
+	ClassicObjects   []storage.FileInfo `json:"-"`
 }
 
 type RecoveryVerification struct {
@@ -176,8 +178,10 @@ func InspectRecovery(ctx context.Context, database *db.DB, id int64, item ItemSe
 	}
 	if result.Membership == Confirmed && failure == nil && selectedManifestErr == nil {
 		statuses := probeRecoveryArtifacts(ctx, database, point.JobID, points, result.Chain.Steps, item, deduplicated, wrap)
-		for i, status := range statuses {
+		for i, probe := range statuses {
+			status := probe.status
 			if status != "" {
+				result.Chain.Steps[i].ClassicObjects = probe.objects
 				result.Chain.Steps[i].Artifacts = status
 				if _, manifest, manifestErr := lookupItemManifest(points[i], item.ItemName); !manifest && manifestErr == nil && status == Confirmed {
 					result.Chain.Steps[i].ItemTypeEvidence = Confirmed
@@ -259,11 +263,12 @@ func recoveryVerification(ctx context.Context, database *db.DB, point db.Restore
 var recoveryProbeSlots = make(chan struct{}, 8)
 
 type stepProbeResult struct {
-	index  int
-	status Status
+	index   int
+	status  Status
+	objects []storage.FileInfo
 }
 
-func probeRecoveryArtifacts(ctx context.Context, database *db.DB, jobID int64, points []db.RestorePoint, steps []RecoveryChainStep, item ItemSelection, deduplicated bool, wrap func(storage.Adapter) RecoveryMetadata) []Status {
+func probeRecoveryArtifacts(ctx context.Context, database *db.DB, jobID int64, points []db.RestorePoint, steps []RecoveryChainStep, item ItemSelection, deduplicated bool, wrap func(storage.Adapter) RecoveryMetadata) []stepProbeResult {
 	ctx, cancel := context.WithTimeout(ctx, evidenceProbeTimeout)
 	defer cancel()
 	select {
@@ -287,7 +292,7 @@ func probeRecoveryArtifacts(ctx context.Context, database *db.DB, jobID int64, p
 		if errors.Is(err, db.ErrNotFound) {
 			for i, step := range steps {
 				if step.Artifacts == Unknown {
-					updates <- stepProbeResult{i, Missing}
+					updates <- stepProbeResult{index: i, status: Missing}
 				}
 			}
 		}
@@ -307,19 +312,20 @@ func probeRecoveryArtifacts(ctx context.Context, database *db.DB, jobID int64, p
 				return
 			}
 			if step.Artifacts == Unknown && step.Membership == Confirmed {
+				probe.classicObjects = nil
 				status := probe.inspect(ctx, database, dest.ID, points[i], item, deduplicated)
-				updates <- stepProbeResult{i, status}
+				updates <- stepProbeResult{i, status, probe.classicObjects}
 			}
 		}
 	}()
-	statuses := make([]Status, len(steps))
+	statuses := make([]stepProbeResult, len(steps))
 	for {
 		select {
 		case update, ok := <-updates:
 			if !ok {
 				return statuses
 			}
-			statuses[update.index] = update.status
+			statuses[update.index] = update
 		case <-ctx.Done():
 			// Preserve proven outcomes even if a later step or provider
 			// cleanup timed out.
@@ -329,7 +335,7 @@ func probeRecoveryArtifacts(ctx context.Context, database *db.DB, jobID int64, p
 					if !ok {
 						return statuses
 					}
-					statuses[update.index] = update.status
+					statuses[update.index] = update
 				default:
 					return statuses
 				}
@@ -344,8 +350,9 @@ type RecoveryMetadata interface {
 }
 
 type evidenceProbe struct {
-	adapter   RecoveryMetadata
-	remaining int
+	adapter        RecoveryMetadata
+	remaining      int
+	classicObjects []storage.FileInfo
 }
 
 func (p *evidenceProbe) inspect(ctx context.Context, database *db.DB, destID int64, point db.RestorePoint, item ItemSelection, selectedDeduplicated bool) Status {
@@ -480,6 +487,10 @@ func (p *evidenceProbe) classic(point db.RestorePoint, item ItemSelection) Statu
 	}
 	if item.ItemType == "vm" {
 		return vmDiskEvidence(selected, expected)
+	}
+	if item.ItemType == "folder" {
+		slices.SortFunc(selected, func(a, b storage.FileInfo) int { return cmp.Compare(a.Path, b.Path) })
+		p.classicObjects = selected
 	}
 	return Confirmed
 }

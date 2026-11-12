@@ -33,6 +33,7 @@ type Operation struct {
 	SourceDigest   string `json:"source_digest"`
 	ConfiguredPath string `json:"configured_path,omitempty"`
 	ResolvedPath   string `json:"resolved_path,omitempty"`
+	plan           runner.FolderRestorePlan
 }
 
 type Review struct {
@@ -49,6 +50,7 @@ type Review struct {
 	TargetChoice       string                      `json:"target_choice"`
 	WriteMode          string                      `json:"write_mode"`
 	EffectiveWriteMode string                      `json:"effective_write_mode"`
+	RequiresPassphrase bool                        `json:"requires_passphrase,omitempty"`
 	Effects            []string                    `json:"effects"`
 }
 
@@ -83,6 +85,7 @@ func Capture(ctx context.Context, database *db.DB, in Input) (Operation, error) 
 	}
 	op := Operation{
 		Input: in, StorageDestID: job.StorageDestID,
+		plan: runner.FolderRestorePlan{Job: job, Point: point, ItemName: in.ItemName},
 		Review: Review{
 			JobName: job.Name, Item: item, RestorePoint: evidence.Point, Membership: evidence.Membership,
 			ItemTypeEvidence: evidence.ItemTypeEvidence, Chain: evidence.Chain, Verification: evidence.Verification,
@@ -99,7 +102,7 @@ func Capture(ctx context.Context, database *db.DB, in Input) (Operation, error) 
 		op.Reasons = append(op.Reasons, "chain_unconfirmed")
 	}
 	for _, step := range evidence.Chain.Steps {
-		if step.DataRequired && (step.Artifacts == runner.Broken || step.Artifacts == runner.Missing) {
+		if step.DataRequired && step.Artifacts != runner.Confirmed {
 			op.Reasons = appendOnce(op.Reasons, "required_data_unusable")
 		}
 		if step.DataRequired && step.ItemTypeEvidence != runner.Confirmed {
@@ -113,6 +116,7 @@ func Capture(ctx context.Context, database *db.DB, in Input) (Operation, error) 
 	if err := op.captureTarget(ctx, database); err != nil {
 		return Operation{}, err
 	}
+	op.RequiresPassphrase = op.plan.RequiresPassphrase()
 	op.Eligible = len(op.Reasons) == 0
 	return op, nil
 }
@@ -136,7 +140,8 @@ func captureSource(ctx context.Context, database *db.DB, op *Operation) (string,
 	case err != nil:
 		return "", err
 	}
-	if err := encoder.Encode([]any{dest.ID, dest.Type, dest.Config, dest.DedupEnabled}); err != nil {
+	op.plan.Destination = dest
+	if err := encoder.Encode([]any{dest.ID, dest.Type, dest.Config, dest.DedupEnabled, op.plan.Job.Compression}); err != nil {
 		return "", err
 	}
 	for _, step := range op.Chain.Steps {
@@ -148,8 +153,14 @@ func captureSource(ctx context.Context, database *db.DB, op *Operation) (string,
 		if err != nil {
 			return "", err
 		}
-		if err := encoder.Encode(point); err != nil {
+		if err := encoder.Encode([]any{point, step.ClassicObjects}); err != nil {
 			return "", err
+		}
+		if step.DataRequired {
+			op.plan.Steps = append(op.plan.Steps, runner.FolderRestoreStep{Point: point, Objects: step.ClassicObjects})
+		}
+		if point.ID == op.plan.Point.ID {
+			op.plan.Point = point
 		}
 	}
 	return hex.EncodeToString(digest.Sum(nil)), nil
@@ -192,6 +203,9 @@ func (op *Operation) captureTarget(ctx context.Context, database *db.DB) error {
 				op.Warnings = append(op.Warnings, "target_too_shallow_to_clear")
 			}
 		}
+	}
+	op.plan.Target = engine.ReviewedFolderTarget{
+		Configured: target, Resolved: op.ResolvedPath, Original: original, Clean: op.EffectiveWriteMode == "replace",
 	}
 	if op.EffectiveWriteMode == "replace" {
 		op.Effects = []string{"clear_target_contents", "write_backed_up_entries"}

@@ -185,6 +185,19 @@
       until: scp_upload_proxy_php_via_scp.rc == 0
       changed_when: true
 
+    - name: Upload restore-request.php via SCP
+      delegate_to: localhost
+      ansible.builtin.command:
+        cmd: >
+          scp {{ scp_common_opts }}
+          {{ playbook_dir }}/../plugin/pages/include/restore-request.php
+          {{ ansible_user }}@{{ ansible_host }}:{{ plugin_dir }}/include/restore-request.php
+      register: scp_upload_restore_request_php_via_scp
+      retries: 3
+      delay: 5
+      until: scp_upload_restore_request_php_via_scp.rc == 0
+      changed_when: true
+
     - name: Upload apply.sh via SCP
       delegate_to: localhost
       ansible.builtin.command:

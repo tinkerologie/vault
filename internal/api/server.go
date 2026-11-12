@@ -19,6 +19,7 @@ import (
 	jobintake "github.com/tinkerologie/vault/internal/jobs"
 	mcpserver "github.com/tinkerologie/vault/internal/mcp"
 	"github.com/tinkerologie/vault/internal/mount"
+	"github.com/tinkerologie/vault/internal/operatorproof"
 	"github.com/tinkerologie/vault/internal/replication"
 	"github.com/tinkerologie/vault/internal/restorerequest"
 	"github.com/tinkerologie/vault/internal/runner"
@@ -39,6 +40,7 @@ type ServerConfig struct {
 	CredentialDir       string       // durable directory containing vault.key
 	RestoreRequestFlush func() error // synchronous durability barrier for request transitions
 	RestoreRequestClock func() time.Time
+	OperatorProof       *operatorproof.Verifier
 }
 
 type Server struct {

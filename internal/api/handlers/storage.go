@@ -713,6 +713,10 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.restoreMu.Unlock()
+	if !req.VerifyOnly && h.runner != nil && h.runner.Status().RestoreRequestID != "" {
+		respondError(w, http.StatusConflict, "wait for the Restore Request run to finish before replacing the database")
+		return
+	}
 
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
