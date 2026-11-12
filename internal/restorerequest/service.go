@@ -17,12 +17,16 @@ import (
 
 const (
 	approvalWindow     = 24 * time.Hour
+	submissionWindow   = time.Hour
+	maxPendingPerKey   = 5
+	maxRecentPerKey    = 6
 	persistenceWarning = "the request state is saved in the working database but could not be saved to flash"
 )
 
 var (
 	ErrPermission = errors.New("operator access or a permitted Assistant Key is required")
 	ErrBusy       = errors.New("database maintenance is in progress")
+	ErrLimit      = errors.New("restore request limit reached: follow an existing pending request, withdraw one to free a slot, or retry after the rolling hour")
 )
 
 type Principal struct {
@@ -67,6 +71,7 @@ type View struct {
 	ReviewLink         string     `json:"review_link"`
 	ResolvedPath       string     `json:"resolved_path,omitempty"`
 	PersistenceWarning string     `json:"persistence_warning,omitempty"`
+	Reused             bool       `json:"reused,omitempty"`
 	Review
 }
 
@@ -136,10 +141,16 @@ func (s *Service) Submit(ctx context.Context, principal Principal, input Input) 
 		ID: hex.EncodeToString(id[:]), OwnerDigest: principal.AssistantDigest,
 		RequesterName: key.Name, Operation: operation, Status: "pending", CreatedAt: now, ExpiresAt: now.Add(approvalWindow),
 	}
-	if err := s.db.CreateRestoreRequest(ctx, request); err != nil {
+	record, created, err := s.db.AdmitRestoreRequest(ctx, request, maxPendingPerKey, maxRecentPerKey, now.Add(-submissionWindow))
+	if errors.Is(err, db.ErrRestoreRequestLimit) {
+		return View{}, ErrLimit
+	}
+	if err != nil {
 		return View{}, err
 	}
-	return view(request, false, s.flushChange(true))
+	result, err := view(record, false, s.flushChange(created))
+	result.Reused = !created
+	return result, err
 }
 
 func (s *Service) Get(ctx context.Context, principal Principal, id string) (View, error) {

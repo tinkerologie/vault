@@ -11,7 +11,7 @@
     write_backed_up_entries: 'Write backed-up entries to the target.',
     overwrite_matching_entries: 'Overwrite matching entries with the backup.',
     keep_unrelated_entries: 'Keep existing entries the restore does not touch.',
-    prune_replayed_entries: 'Remove entries written by earlier Backup Chain steps when the final listing shows they were deleted or excluded.',
+    prune_replayed_entries: 'If Vault can read the final file listing and the earlier Backup Chain indexes, it removes entries the replay wrote that are absent from the final listing.',
     unverified_backup: 'This backup has no recorded Verification.',
     artifact_evidence_unavailable: 'Vault could not confirm all required storage artifacts.',
     item_type_evidence_unavailable: 'The recorded evidence does not confirm the Backup Item type.',

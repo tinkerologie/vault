@@ -75,6 +75,10 @@ func TestRestoreRequestPreparesFolderWithoutWorkloadWrites(t *testing.T) {
 		t.Fatalf("inspection key submitted a request: %d %s", w.Code, w.Body)
 	}
 	grantRestoreRequests(t, srv, key.ID, true)
+	w = callRestoreRequest(srv, http.MethodPost, restoreRequestsPath, loopbackPeer, "", body)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("keyless local principal could submit a request: %d %s", w.Code, w.Body)
+	}
 	w = callRestoreRequest(srv, http.MethodPost, restoreRequestsPath, remotePeer, key.Key, body)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("submit: %d %s", w.Code, w.Body)
@@ -139,10 +143,10 @@ func TestRestoreRequestOwnerLifecycleAndHistorySurviveReopen(t *testing.T) {
 	other := issueAssistantKey(t, srv, "Other assistant")
 	grantRestoreRequests(t, srv, key.ID, true)
 	grantRestoreRequests(t, srv, other.ID, true)
-	job, point, _, _ := requestFolderFixture(t, d)
+	job, point, _, target := requestFolderFixture(t, d)
 	withdrawn := submitFolderRequest(t, srv, key.Key, job, point, "")
 	flushFails = true
-	expired := submitFolderRequest(t, srv, key.Key, job, point, "")
+	expired := submitFolderRequest(t, srv, key.Key, job, point, fmt.Sprintf(`,"destination":%q`, target))
 	flushFails = false
 	if expired.PersistenceWarning == "" || strings.Contains(expired.PersistenceWarning, "private") ||
 		!expired.ExpiresAt.Equal(now.Add(24*time.Hour)) {
@@ -379,6 +383,9 @@ func TestRestoreRequestUsesPointEvidenceAndValidatesFolderOnlyInputs(t *testing.
 		t.Errorf("alternate merge: %+v", alt)
 	}
 	replica := NewServer(d, ServerConfig{ReadOnly: true})
+	if err := replica.ReconcileRestoreRequests(t.Context()); err != nil {
+		t.Fatalf("replica expiry reconciliation: %v", err)
+	}
 	if w := callRestoreRequest(replica, http.MethodGet, restoreRequestsPath, loopbackPeer, "", ""); w.Code != http.StatusNotFound {
 		t.Errorf("replica request listing status = %d", w.Code)
 	}
@@ -395,10 +402,10 @@ func TestRestoreRequestReconcilesExpiryAfterDowntimeAndOnRead(t *testing.T) {
 	srv := NewServer(d, config)
 	key := issueAssistantKey(t, srv, "Assistant")
 	grantRestoreRequests(t, srv, key.ID, true)
-	job, point, _, _ := requestFolderFixture(t, d)
+	job, point, _, target := requestFolderFixture(t, d)
 	first := submitFolderRequest(t, srv, key.Key, job, point, "")
 	now = now.Add(time.Hour)
-	second := submitFolderRequest(t, srv, key.Key, job, point, "")
+	second := submitFolderRequest(t, srv, key.Key, job, point, fmt.Sprintf(`,"destination":%q`, target))
 	now = first.ExpiresAt
 	if err := d.Reopen(); err != nil {
 		t.Fatal(err)
@@ -579,5 +586,321 @@ func TestRestoreRequestReviewsClassicReplayAndReportsMissingOriginal(t *testing.
 	result = submitFolderRequest(t, srv, key.Key, job, incremental, "")
 	if result.Eligible || !reflect.DeepEqual(result.Reasons, []string{"original_target_unknown"}) {
 		t.Errorf("review of missing original: %+v", result)
+	}
+}
+
+func TestRestoreRequestDatabaseWriteFailureDoesNotPublishTransition(t *testing.T) {
+	d := testDB(t)
+	now := time.Date(2026, 11, 11, 6, 0, 0, 1, time.UTC)
+	flushes := 0
+	failFlash := false
+	srv := NewServer(d, ServerConfig{RestoreRequestClock: func() time.Time { return now }, RestoreRequestFlush: func() error {
+		flushes++
+		if failFlash {
+			return errors.New("flash fixture failure")
+		}
+		return nil
+	}})
+	key := issueAssistantKey(t, srv, "Assistant")
+	grantRestoreRequests(t, srv, key.ID, true)
+	job, point, _, _ := requestFolderFixture(t, d)
+
+	// SQLite triggers stand in for a failed durable write without changing
+	// the service or relying on filesystem timing.
+	exec := func(sql string) {
+		t.Helper()
+		if _, err := d.Exec(sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`CREATE TRIGGER refuse_insert BEFORE INSERT ON restore_requests BEGIN SELECT RAISE(ABORT, 'private fault'); END`)
+	body := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"archive","write_mode":"merge"}`, job, point)
+	assertUnavailable := func(w *httptest.ResponseRecorder) {
+		t.Helper()
+		if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "private fault") {
+			t.Fatalf("failed database write disclosed a result: %d %s", w.Code, w.Body)
+		}
+	}
+	assertUnavailable(callRestoreRequest(srv, http.MethodPost, restoreRequestsPath, remotePeer, key.Key, body))
+	if flushes != 0 {
+		t.Fatalf("failed submission attempted flash persistence: %d", flushes)
+	}
+	exec("DROP TRIGGER refuse_insert")
+	request := submitFolderRequest(t, srv, key.Key, job, point, "")
+	exec(`CREATE TRIGGER refuse_transition BEFORE UPDATE ON restore_requests BEGIN SELECT RAISE(ABORT, 'private fault'); END`)
+	path := restoreRequestsPath + "/" + request.ID
+	assertUnavailable(callRestoreRequest(srv, http.MethodPost, path+"/withdraw", remotePeer, key.Key, ""))
+	current := callRestoreRequest(srv, http.MethodGet, path, remotePeer, key.Key, "")
+	if current.Code != http.StatusOK || !strings.Contains(current.Body.String(), `"status":"pending"`) {
+		t.Fatalf("failed withdrawal changed request state: %d %s", current.Code, current.Body)
+	}
+	now = request.ExpiresAt
+	lock := srv.storageHandler.MaintenanceLock()
+	lock.Lock()
+	busy := callRestoreRequest(srv, http.MethodGet, path, remotePeer, key.Key, "")
+	lock.Unlock()
+	if busy.Code != http.StatusConflict {
+		t.Fatalf("due request during maintenance: %d %s", busy.Code, busy.Body)
+	}
+	assertUnavailable(callRestoreRequest(srv, http.MethodGet, path, remotePeer, key.Key, ""))
+	assertUnavailable(callRestoreRequest(srv, http.MethodGet, restoreRequestsPath, loopbackPeer, "", ""))
+	if flushes != 1 {
+		t.Fatalf("failed transitions attempted flash persistence: %d", flushes)
+	}
+
+	exec("DROP TRIGGER refuse_transition")
+	failFlash = true
+	if err := srv.ReconcileRestoreRequests(t.Context()); err == nil || !strings.Contains(err.Error(), "could not be saved to flash") {
+		t.Fatalf("reconciliation did not report committed but unflushed expiry: %v", err)
+	}
+	current = callRestoreRequest(srv, http.MethodGet, path, remotePeer, key.Key, "")
+	if current.Code != http.StatusOK || !strings.Contains(current.Body.String(), `"status":"expired"`) || flushes != 2 {
+		t.Fatalf("working database lost expiry after flash failure: %d %s, flushes %d", current.Code, current.Body, flushes)
+	}
+}
+
+func TestAssistantRestoreGrantFailsClosedAfterCommittedTombstone(t *testing.T) {
+	d := testDB(t)
+	dir := t.TempDir()
+	cfg := ServerConfig{CredentialDir: dir}
+	srv := NewServer(d, cfg)
+	key := issueAssistantKey(t, srv, "Assistant")
+	grantRestoreRequests(t, srv, key.ID, false) // Inspection-only is already in force.
+	grantRestoreRequests(t, srv, key.ID, true)
+	job, point, _, _ := requestFolderFixture(t, d)
+	request := submitFolderRequest(t, srv, key.Key, job, point, "")
+	requestPath := restoreRequestsPath + "/" + request.ID
+	keyPath := fmt.Sprintf("%s/%d", assistantKeysPath, key.ID)
+
+	// A failed tombstone write must not look like a successful downgrade.
+	journal := filepath.Join(dir, "assistant-keys.revoked")
+	if err := os.Mkdir(journal, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	removeGrant := func(s *Server) *httptest.ResponseRecorder {
+		return callRestoreRequest(s, http.MethodPatch, keyPath, loopbackPeer, "", `{"restore_request":false}`)
+	}
+	if w := removeGrant(srv); w.Code != http.StatusInternalServerError {
+		t.Fatalf("could not persist tombstone, downgrade status = %d", w.Code)
+	}
+	if w := callRestoreRequest(srv, http.MethodGet, requestPath, remotePeer, key.Key, ""); w.Code != http.StatusOK {
+		t.Fatalf("failed downgrade incorrectly removed current grant: %d %s", w.Code, w.Body)
+	}
+	if err := os.Remove(journal); err != nil {
+		t.Fatal(err)
+	}
+
+	// With the journal back, fail the subsequent SQLite cleanup. The
+	// successful tombstone must remain authoritative across restart.
+	if _, err := d.Exec(`CREATE TRIGGER refuse_grant_update BEFORE UPDATE ON assistant_keys BEGIN SELECT RAISE(ABORT, 'private fault'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if w := removeGrant(srv); w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "private fault") {
+		t.Fatalf("failed SQLite grant cleanup: %d %s", w.Code, w.Body)
+	}
+	restarted := NewServer(d, cfg)
+	for _, server := range []*Server{srv, restarted} {
+		if w := callRestoreRequest(server, http.MethodGet, requestPath, remotePeer, key.Key, ""); w.Code != http.StatusForbidden {
+			t.Fatalf("committed tombstone did not deny ownership access: %d %s", w.Code, w.Body)
+		}
+		if w := callRestoreRequest(server, http.MethodGet, "/api/v1/recovery/catalog", remotePeer, key.Key, ""); w.Code != http.StatusOK {
+			t.Fatalf("permission tombstone revoked inspection: %d %s", w.Code, w.Body)
+		}
+	}
+}
+
+func TestRestoreRequestReportsMissingStorageAndDoesNotAuthorizeMalformedIDs(t *testing.T) {
+	d := testDB(t)
+	srv := NewServer(d, ServerConfig{})
+	key := issueAssistantKey(t, srv, "Assistant")
+	grantRestoreRequests(t, srv, key.ID, true)
+	job, point, _, _ := requestFolderFixture(t, d)
+	config, err := d.GetJob(job)
+	config = requireFixture(t, config, err)
+	if err := d.DeleteStorageDestination(config.StorageDestID); err != nil {
+		t.Fatal(err)
+	}
+	operation := submitFolderRequest(t, srv, key.Key, job, point, "")
+	if operation.Eligible || !strings.Contains(strings.Join(operation.Reasons, ","), "required_data_unusable") {
+		t.Fatalf("missing destination was not reported: %+v", operation)
+	}
+	if w := callRestoreRequest(srv, http.MethodGet, restoreRequestsPath+"/bad-id", remotePeer, key.Key, ""); w.Code != http.StatusNotFound {
+		t.Errorf("follow malformed request ID: %d %s", w.Code, w.Body)
+	}
+	if w := callRestoreRequest(srv, http.MethodPost, restoreRequestsPath+"/bad-id/withdraw", remotePeer, key.Key, ""); w.Code != http.StatusNotFound {
+		t.Errorf("withdraw malformed request ID: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestRestoreRequestCorruptStoredReviewFailsClosedAcrossTransports(t *testing.T) {
+	d := testDB(t)
+	srv := NewServer(d, ServerConfig{})
+	key := issueAssistantKey(t, srv, "Assistant")
+	grantRestoreRequests(t, srv, key.ID, true)
+	job, point, _, _ := requestFolderFixture(t, d)
+	saved := submitFolderRequest(t, srv, key.Key, job, point, "")
+	if _, err := d.Exec("UPDATE restore_requests SET operation = ? WHERE id = ?", `{"fixture-private-operation"`, saved.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, url := range []string{restoreRequestsPath + "/" + saved.ID, restoreRequestsPath} {
+		w := callRestoreRequest(srv, http.MethodGet, url, loopbackPeer, "", "")
+		if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "fixture-private-operation") {
+			t.Errorf("corrupt REST result: %d %s", w.Code, w.Body)
+		}
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RemoteAddr = remotePeer
+		srv.router.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+	defer srv.mcp.Close()
+	client := assistantMCPClient{t: t, baseURL: ts.URL + "/api/v1/mcp", key: key.Key}
+	client.initialize()
+	status, body := client.post(fmt.Sprintf(`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"get_restore_request","arguments":{"id":%q}}}`, saved.ID))
+	if status != http.StatusOK || !strings.Contains(body, `"isError":true`) || strings.Contains(body, "fixture-private-operation") {
+		t.Errorf("corrupt MCP result: %d %s", status, body)
+	}
+}
+
+func TestAssistantMCPRefreshesScopeWhenPersistentPermissionChanges(t *testing.T) {
+	d := testDB(t)
+	srv := NewServer(d, ServerConfig{})
+	key := issueAssistantKey(t, srv, "Assistant")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RemoteAddr = remotePeer
+		srv.router.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+	defer srv.mcp.Close()
+	client := assistantMCPClient{t: t, baseURL: ts.URL + "/api/v1/mcp", key: key.Key}
+	client.initialize()
+
+	// This server persists the grant without access to the transport
+	// registry that owns the existing inspection session.
+	writer := NewServer(d, ServerConfig{})
+	grantRestoreRequests(t, writer, key.ID, true)
+	list := `{"jsonrpc":"2.0","id":10,"method":"tools/list"}`
+	if status, _ := client.post(list); status != http.StatusNotFound {
+		t.Fatalf("stale inspection session after grant = %d, want 404", status)
+	}
+	client.session = ""
+	client.initialize()
+	if status, body := client.post(list); status != http.StatusOK || !strings.Contains(body, `"name":"submit_restore_request"`) {
+		t.Fatalf("new session did not reflect persisted grant: %d %s", status, body)
+	}
+}
+
+func TestRestoreRequestReusesPendingSubmissionAcrossDatabaseHandles(t *testing.T) {
+	d := testDB(t)
+	var flushes atomic.Int64
+	config := ServerConfig{RestoreRequestFlush: func() error {
+		flushes.Add(1)
+		return nil
+	}}
+	srv := NewServer(d, config)
+	key := issueAssistantKey(t, srv, "Assistant")
+	grantRestoreRequests(t, srv, key.ID, true)
+	job, point, _, _ := requestFolderFixture(t, d)
+	other, err := db.Open(d.Path())
+	other = requireFixture(t, other, err)
+	defer other.Close()
+	otherServer := NewServer(other, config)
+	payload := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"archive","write_mode":"merge"}`, job, point)
+	results := make(chan *httptest.ResponseRecorder, 2)
+	var calls sync.WaitGroup
+	for _, server := range []*Server{srv, otherServer} {
+		calls.Go(func() {
+			results <- callRestoreRequest(server, http.MethodPost, restoreRequestsPath, remotePeer, key.Key, payload)
+		})
+	}
+	calls.Wait()
+	close(results)
+	observed := map[int]restorerequest.View{}
+	for w := range results {
+		var result restorerequest.View
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.ID == "" {
+			t.Fatalf("concurrent submission: %d %s", w.Code, w.Body)
+		}
+		observed[w.Code] = result
+	}
+	first := observed[http.StatusCreated]
+	reused := observed[http.StatusOK]
+	if first.ID == "" || reused.ID != first.ID || !reused.ExpiresAt.Equal(first.ExpiresAt) || flushes.Load() != 1 {
+		t.Fatalf("duplicate changed the request or flash writes: results %+v, flushes %d", observed, flushes.Load())
+	}
+	if err := d.Reopen(); err != nil {
+		t.Fatal(err)
+	}
+	w := callRestoreRequest(srv, http.MethodPost, restoreRequestsPath, remotePeer, key.Key, payload)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), first.ID) || flushes.Load() != 1 {
+		t.Fatalf("repeat after reopen: %d %s, flushes %d", w.Code, w.Body, flushes.Load())
+	}
+	w = callRestoreRequest(srv, http.MethodGet, restoreRequestsPath, loopbackPeer, "", "")
+	var pending restorerequest.Page
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &pending) != nil || len(pending.Requests) != 1 {
+		t.Fatalf("duplicate grew the pending list: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestRestoreRequestLimitsBoundDurableAcceptanceAcrossRESTAndMCP(t *testing.T) {
+	d := testDB(t)
+	start := time.Date(2026, 11, 11, 6, 0, 0, 1, time.UTC)
+	var clock, flushes atomic.Int64
+	clock.Store(start.UnixNano())
+	config := ServerConfig{RestoreRequestClock: func() time.Time { return time.Unix(0, clock.Load()) }, RestoreRequestFlush: func() error {
+		flushes.Add(1)
+		return nil
+	}}
+	srv := NewServer(d, config)
+	key := issueAssistantKey(t, srv, "Assistant")
+	grantRestoreRequests(t, srv, key.ID, true)
+	job, point, root, _ := requestFolderFixture(t, d)
+	target := func(index int) string { return filepath.Join(root, fmt.Sprintf("target-%d", index)) }
+	payload := func(index int) string {
+		return fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"archive","write_mode":"merge","destination":%q}`, job, point, target(index))
+	}
+	post := func(server *Server, index int) *httptest.ResponseRecorder {
+		return callRestoreRequest(server, http.MethodPost, restoreRequestsPath, remotePeer, key.Key, payload(index))
+	}
+	var accepted []restorerequest.View
+	for index := range 5 {
+		accepted = append(accepted, submitFolderRequest(t, srv, key.Key, job, point, fmt.Sprintf(`,"destination":%q`, target(index))))
+	}
+	if w := post(srv, 5); w.Code != http.StatusTooManyRequests || flushes.Load() != 5 {
+		t.Fatalf("pending cap: %d %s, flushes %d", w.Code, w.Body, flushes.Load())
+	}
+	if w := post(srv, 0); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), accepted[0].ID) || flushes.Load() != 5 {
+		t.Fatalf("pending retry at cap: %d %s, flushes %d", w.Code, w.Body, flushes.Load())
+	}
+	withdraw := func(id string) {
+		t.Helper()
+		w := callRestoreRequest(srv, http.MethodPost, restoreRequestsPath+"/"+id+"/withdraw", remotePeer, key.Key, "")
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"status":"withdrawn"`) {
+			t.Fatalf("withdraw request %s: %d %s", id, w.Code, w.Body)
+		}
+	}
+	withdraw(accepted[0].ID)
+	submitFolderRequest(t, srv, key.Key, job, point, fmt.Sprintf(`,"destination":%q`, target(5)))
+	withdraw(accepted[1].ID)
+
+	if err := d.Reopen(); err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewServer(d, config)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RemoteAddr = remotePeer
+		restarted.router.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+	defer restarted.mcp.Close()
+	client := assistantMCPClient{t: t, baseURL: ts.URL + "/api/v1/mcp", key: key.Key}
+	client.initialize()
+	status, body := client.post(fmt.Sprintf(`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"submit_restore_request","arguments":%s}}`, payload(6)))
+	if status != http.StatusOK || !strings.Contains(body, `"isError":true`) || !strings.Contains(body, "limit reached") || flushes.Load() != 8 {
+		t.Fatalf("rolling cap after reconnect and reopen: %d %s, flushes %d", status, body, flushes.Load())
+	}
+	clock.Store(start.Add(time.Hour).UnixNano())
+	if w := post(restarted, 6); w.Code != http.StatusCreated || flushes.Load() != 9 {
+		t.Fatalf("rolling allowance did not renew: %d %s, flushes %d", w.Code, w.Body, flushes.Load())
 	}
 }

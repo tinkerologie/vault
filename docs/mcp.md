@@ -34,6 +34,8 @@ An operator can enable **Allow Restore Requests** for a key in Settings. Reconne
 
 A request covers one whole folder and expires after 24 hours. Submission performs no restore. Open the review link on the Unraid host to inspect the request. The link carries no authorization. A missing request and another key's request both return a tool error. See the [REST contract](api.md#folder-restore-requests) for state and error details.
 
+An exact repeat returns the existing pending ID and `reused: true`. Each key can hold five unexpired pending requests and submit six new requests per rolling hour. Vault returns a tool error when a new operation reaches either limit. Withdraw a pending request to free a pending slot, or retry after the rolling window.
+
 Operator approval is tracked in [#642](https://github.com/tinkerologie/vault/issues/642). Existing administrator `restore_item` behavior changes in [#646](https://github.com/tinkerologie/vault/issues/646).
 
 ## Configuration

@@ -155,6 +155,10 @@ func TestRevokedAssistantKeyStaysDeniedAfterDatabaseRollback(t *testing.T) {
 	if got := readCatalog(restarted, other.Key, loopbackPeer); got != http.StatusUnauthorized {
 		t.Errorf("key with corrupt revocation ledger = %d, want 401", got)
 	}
+	permissionURL := fmt.Sprintf("%s/%d", assistantKeysPath, other.ID)
+	if w := callRestoreRequest(restarted, http.MethodPatch, permissionURL, loopbackPeer, "", `{"restore_request":true}`); w.Code != http.StatusInternalServerError {
+		t.Fatalf("grant with a corrupt revocation ledger: %d", w.Code)
+	}
 	if got := readCatalog(restarted, "", loopbackPeer); got != http.StatusOK {
 		t.Errorf("operator with corrupt revocation ledger = %d, want 200", got)
 	}

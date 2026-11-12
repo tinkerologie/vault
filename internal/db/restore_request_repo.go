@@ -22,11 +22,37 @@ type RestoreRequest struct {
 	TerminalReason string
 }
 
-func (d *DB) CreateRestoreRequest(ctx context.Context, r RestoreRequest) error {
-	_, err := d.ExecContext(ctx, `INSERT INTO restore_requests
-		(id, owner_digest, requester_name, operation, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		r.ID, r.OwnerDigest, r.RequesterName, string(r.Operation), r.CreatedAt.UnixNano(), r.ExpiresAt.UnixNano())
-	return err
+var ErrRestoreRequestLimit = errors.New("restore request admission limit reached")
+
+// AdmitRestoreRequest checks duplicates and limits in the insert statement.
+// Concurrent callers using different handles must share the same allowance.
+func (d *DB) AdmitRestoreRequest(ctx context.Context, request RestoreRequest, maxPending, maxRecent int, recentAfter time.Time) (RestoreRequest, bool, error) {
+	now := request.CreatedAt.UnixNano()
+	operation := string(request.Operation)
+	result, err := d.ExecContext(ctx, `INSERT INTO restore_requests
+		(id, owner_digest, requester_name, operation, created_at, expires_at)
+		SELECT ?, ?, ?, ?, ?, ?
+		WHERE NOT EXISTS (SELECT 1 FROM restore_requests
+			WHERE owner_digest = ? AND operation = ? AND status = 'pending' AND expires_at > ?)
+		AND (SELECT COUNT(*) FROM restore_requests
+			WHERE owner_digest = ? AND status = 'pending' AND expires_at > ?) < ?
+		AND (SELECT COUNT(*) FROM restore_requests
+			WHERE owner_digest = ? AND created_at > ?) < ?`,
+		request.ID, request.OwnerDigest, request.RequesterName, operation, now, request.ExpiresAt.UnixNano(),
+		request.OwnerDigest, operation, now,
+		request.OwnerDigest, now, maxPending,
+		request.OwnerDigest, recentAfter.UnixNano(), maxRecent)
+	created, err := restoreRequestsChanged(result, err)
+	if err != nil || created {
+		return request, created, err
+	}
+	existing, err := scanRestoreRequest(d.QueryRowContext(ctx, `SELECT `+restoreRequestColumns+`
+		FROM restore_requests WHERE owner_digest = ? AND operation = ? AND status = 'pending' AND expires_at > ?
+		ORDER BY created_at DESC, id DESC LIMIT 1`, request.OwnerDigest, operation, now))
+	if errors.Is(err, ErrNotFound) {
+		return RestoreRequest{}, false, ErrRestoreRequestLimit
+	}
+	return existing, false, err
 }
 
 const restoreRequestColumns = "id, owner_digest, requester_name, operation, status, created_at, expires_at, terminal_at, terminal_reason"

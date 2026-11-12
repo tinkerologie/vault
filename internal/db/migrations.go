@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS restore_requests (
     terminal_at INTEGER,
     terminal_reason TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_restore_requests_owner ON restore_requests(owner_digest, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_restore_requests_owner_pending ON restore_requests(owner_digest, expires_at) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_restore_requests_due ON restore_requests(status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_restore_requests_history ON restore_requests(status, created_at DESC, id DESC);
 

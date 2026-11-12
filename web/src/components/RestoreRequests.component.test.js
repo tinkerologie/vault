@@ -27,7 +27,7 @@ const request = {
     { restore_point_id: 5, backup_type: 'incremental', membership: 'confirmed', data_required: true, artifacts: 'confirmed' },
   ] },
   effective_write_mode: 'merge',
-  effects: ['overwrite_matching_entries', 'keep_unrelated_entries'],
+  effects: ['overwrite_matching_entries', 'keep_unrelated_entries', 'prune_replayed_entries'],
   warnings: ['target_too_shallow_to_clear'],
   eligible_for_approval: true,
 }
@@ -69,6 +69,7 @@ it('shows the exact review effects and Backup Chain without starting a restore',
   expect(within(review).getByText('Recovery advisor')).toBeTruthy()
   expect(within(review).getByText(/Overwrite matching entries/)).toBeTruthy()
   expect(within(review).getByText(/Keep existing entries/)).toBeTruthy()
+  expect(within(review).getByText(/If Vault can read the final file listing and the earlier Backup Chain indexes/)).toBeTruthy()
   expect(within(review).getByText(/Vault would use merge/)).toBeTruthy()
   expect(within(review).getByText('passed')).toBeTruthy()
   expect(within(review).getByText(/#4 · full/)).toBeTruthy()

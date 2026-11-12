@@ -29,7 +29,11 @@ func (h *RestoreRequestHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	result, err := h.service.Submit(ctx, restorerequest.PrincipalFrom(ctx), input)
-	respondRestoreRequest(w, http.StatusCreated, result, err)
+	status := http.StatusCreated
+	if result.Reused {
+		status = http.StatusOK
+	}
+	respondRestoreRequest(w, status, result, err)
 }
 
 func (h *RestoreRequestHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +92,8 @@ func respondRestoreRequest(w http.ResponseWriter, status int, result any, err er
 		respondError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, db.ErrNotFound):
 		respondError(w, http.StatusNotFound, "Restore Request or selected Restore Point not found")
+	case errors.Is(err, restorerequest.ErrLimit):
+		respondError(w, http.StatusTooManyRequests, err.Error())
 	case errors.Is(err, restorerequest.ErrBusy):
 		respondError(w, http.StatusConflict, err.Error())
 	default:
