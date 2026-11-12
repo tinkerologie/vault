@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/svelte'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import Settings from './Settings.svelte'
 import { api } from '../lib/api.js'
 import { copyText } from '../lib/clipboard.js'
@@ -23,6 +23,7 @@ vi.mock('../lib/api.js', () => ({
     listAssistantKeys: vi.fn(async () => []),
     createAssistantKey: vi.fn(async () => ({ ...record, assistant_key: token })),
     revokeAssistantKey: vi.fn(async () => null),
+    setAssistantRestoreRequest: vi.fn(async (_id, enabled) => ({ ...record, restore_request: enabled })),
   },
 }))
 
@@ -45,6 +46,17 @@ describe('Settings Assistant Keys', () => {
     expect(copyText).toHaveBeenCalledWith(token)
     await fireEvent.click(within(section).getByRole('button', { name: 'Dismiss Assistant Key' }))
     expect(within(section).queryByText(token)).toBeNull()
+
+    const permission = within(section).getByRole('checkbox', { name: 'Allow Restore Requests for Recovery advisor' })
+    expect(permission.checked).toBe(false)
+    await fireEvent.click(permission)
+    await waitFor(() => expect(permission.disabled).toBe(false))
+    expect(api.setAssistantRestoreRequest).toHaveBeenLastCalledWith(record.id, true)
+    expect(permission.checked).toBe(true)
+    await fireEvent.click(permission)
+    await waitFor(() => expect(permission.disabled).toBe(false))
+    expect(api.setAssistantRestoreRequest).toHaveBeenLastCalledWith(record.id, false)
+    expect(permission.checked).toBe(false)
 
     await fireEvent.click(within(section).getByRole('button', { name: 'Revoke Recovery advisor' }))
     const dialog = await screen.findByRole('dialog', { name: 'Revoke Assistant Key' })

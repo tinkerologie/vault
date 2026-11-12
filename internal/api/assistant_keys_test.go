@@ -52,7 +52,7 @@ func TestIssueAssistantKeyDisclosesTokenOnlyOnce(t *testing.T) {
 	}
 	w := serve(srv, asLocal(httptest.NewRequest(http.MethodGet, assistantKeysPath, nil)))
 	body := w.Body.String()
-	if w.Code != http.StatusOK || !strings.Contains(body, "Recovery advisor") || !strings.Contains(body, "created_at") {
+	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" || !strings.Contains(body, "Recovery advisor") || !strings.Contains(body, "created_at") {
 		t.Fatalf("list keys status = %d", w.Code)
 	}
 	if strings.Contains(body, key.Key) || strings.Contains(body, "assistant_key") || strings.Contains(body, "digest") {
@@ -312,6 +312,7 @@ func TestOnlineDatabaseRestoreKeepsCurrentAssistantKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	current := issueAssistantKey(t, srv, "Live key")
+	grantRestoreRequests(t, srv, current.ID, true)
 	revoke := func(key issuedAssistantKey) {
 		t.Helper()
 		url := fmt.Sprintf("%s/%d", assistantKeysPath, key.ID)
@@ -330,7 +331,7 @@ func TestOnlineDatabaseRestoreKeepsCurrentAssistantKeys(t *testing.T) {
 	revoke(old)
 	restore()
 	w := serve(srv, asLocal(httptest.NewRequest(http.MethodGet, assistantKeysPath, nil)))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), current.Name) || strings.Contains(w.Body.String(), old.Name) {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), current.Name) || !strings.Contains(w.Body.String(), `"restore_request":true`) || strings.Contains(w.Body.String(), old.Name) {
 		t.Fatalf("current list after restore status = %d", w.Code)
 	}
 	for _, check := range []struct {

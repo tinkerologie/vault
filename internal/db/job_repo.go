@@ -190,7 +190,11 @@ func insertJobItem(ctx context.Context, q jobSQL, item JobItem) (int64, error) {
 }
 
 func (d *DB) GetJobItems(jobID int64) ([]JobItem, error) {
-	return getJobItems(context.Background(), d, jobID)
+	return d.GetJobItemsContext(context.Background(), jobID)
+}
+
+func (d *DB) GetJobItemsContext(ctx context.Context, jobID int64) ([]JobItem, error) {
+	return getJobItems(ctx, d, jobID)
 }
 
 func getJobItems(ctx context.Context, q jobSQL, jobID int64) ([]JobItem, error) {

@@ -226,6 +226,7 @@ export const createInitialMockStorage = (): MockStorageDestination[] => [
  * Intercepts Vault API endpoints to provide deterministic, hermetic responses for Playwright tests.
  */
 export interface VaultMockOptions {
+  restoreRequestFixtures?: boolean;
   /** Body served for GET /runner/status; defaults to an idle runner. */
   runnerStatus?: Record<string, unknown>;
   /** Report replica mode from GET /health, so the UI runs read-only. */
@@ -342,10 +343,49 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
     // Graceful fallback if routeWebSocket is not supported
   }
 
+  const review = {
+    id: 'review-replace', status: 'pending', requester_name: 'Recovery assistant', job_name: 'Folder backups',
+    item: { item_name: 'replace fixture', item_type: 'folder' },
+    restore_point: { id: 42, job_id: 5, created_at: '2026-11-10T12:00:00Z' },
+    created_at: '2026-11-11T12:00:00Z', expires_at: '2026-11-12T12:00:00Z',
+    chain: { status: 'confirmed', steps: [
+      { restore_point_id: 42, backup_type: 'full', membership: 'confirmed', artifacts: 'confirmed', data_required: true },
+    ] },
+    membership: 'confirmed', item_type_evidence: 'confirmed', verification: { status: 'none' },
+    target_choice: 'alternate', resolved_path: '/mnt/user/recovery/fixture', write_mode: 'replace', effective_write_mode: 'replace',
+    effects: ['clear_target_contents', 'write_backed_up_entries'], warnings: ['unverified_backup'],
+    eligible_for_approval: true, ineligibility_reasons: [],
+  };
+  const merge = {
+    ...review, id: 'review-merge', item: { item_name: 'merge fixture', item_type: 'folder' },
+    resolved_path: '/mnt/user/recovery/merge', write_mode: 'merge', effective_write_mode: 'merge',
+    effects: ['overwrite_matching_entries', 'keep_unrelated_entries'],
+    eligible_for_approval: false, ineligibility_reasons: ['chain_unconfirmed'],
+  };
   await page.route('**/api/v1/**', async (route: Route, request: Request) => {
     const url = new URL(request.url());
     const path = url.pathname;
     const method = request.method();
+
+    const requestUrl = new URL(request.url());
+    const requestPath = requestUrl.pathname.replace('/api/v1/restore-requests', '');
+    if (requestUrl.pathname.startsWith('/api/v1/restore-requests') && request.method() === 'GET') {
+      if (!options.restoreRequestFixtures) return route.fulfill({ json: { requests: [] } });
+      if (requestPath === '') {
+        const status = requestUrl.searchParams.get('status');
+        const before = requestUrl.searchParams.get('before');
+        const history = status === 'withdrawn,expired';
+        const requests = history
+          ? [{ ...review, id: before ? 'expired' : 'withdrawn', status: before ? 'expired' : 'withdrawn',
+              item: { item_name: before ? 'expired fixture' : 'withdrawn fixture', item_type: 'folder' } }]
+          : [review, merge];
+        return route.fulfill({ json: { requests, ...(history && !before && { next_before: 'withdrawn' }) } });
+      }
+      if (requestPath === '/review-replace' || requestPath === '/review-merge') {
+        return route.fulfill({ json: requestPath === '/review-replace' ? review : merge });
+      }
+      return route.fulfill({ status: requestPath === '/denied' ? 403 : 404, json: { error: 'unavailable' } });
+    }
 
     // Health
     if (path.endsWith('/health/summary')) {

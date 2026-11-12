@@ -22,6 +22,7 @@ import (
 	mcpserver "github.com/tinkerologie/vault/internal/mcp"
 	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/release"
+	"github.com/tinkerologie/vault/internal/restorerequest"
 	"github.com/tinkerologie/vault/web"
 )
 
@@ -49,12 +50,15 @@ const (
 	recoveryCatalogRoute  = "/recovery/catalog"
 	restorePointsRoute    = "/recovery/restore-points"
 	recoveryEvidenceRoute = restorePointsRoute + "/{rpid}/evidence"
+	restoreRequestsRoute  = "/restore-requests"
+	restoreRequestRoute   = restoreRequestsRoute + "/{id}"
+	withdrawRequestRoute  = restoreRequestRoute + "/withdraw"
 )
 
 func assistantRouteGuard(router chi.Router) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if requestAccess(r) == accessAssistant {
+			if p := requestPrincipal(r); p.level == accessAssistant {
 				path := chi.RouteContext(r.Context()).RoutePath
 				pattern := router.Find(chi.NewRouteContext(), r.Method, path)
 				switch pattern {
@@ -66,6 +70,16 @@ func assistantRouteGuard(router chi.Router) func(http.Handler) http.Handler {
 					}
 				case recoveryCatalogRoute, restorePointsRoute, recoveryEvidenceRoute:
 					if r.Method == http.MethodGet {
+						next.ServeHTTP(w, r)
+						return
+					}
+				case restoreRequestsRoute, withdrawRequestRoute:
+					if p.restoreGrant != "" && r.Method == http.MethodPost {
+						next.ServeHTTP(w, r)
+						return
+					}
+				case restoreRequestRoute:
+					if p.restoreGrant != "" && r.Method == http.MethodGet {
 						next.ServeHTTP(w, r)
 						return
 					}
@@ -392,17 +406,32 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/settings/assistant-keys", assistantKeys.List)
 			r.With(LocalOnly, httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Post("/settings/assistant-keys", assistantKeys.Create)
 			r.With(LocalOnly).Delete("/settings/assistant-keys/{id}", assistantKeys.Revoke)
+			r.With(LocalOnly).Patch("/settings/assistant-keys/{id}", assistantKeys.SetRestoreRequest)
+			s.restoreRequests = restorerequest.New(s.db, s.assistantRevocations, storageH.MaintenanceLock(),
+				s.config.RestoreRequestFlush, s.config.RestoreRequestClock)
+			requests := handlers.NewRestoreRequestHandler(s.restoreRequests)
+			r.Post(restoreRequestsRoute, requests.Submit)
+			r.Get(restoreRequestsRoute, requests.List)
+			r.Get(restoreRequestRoute, requests.Get)
+			r.Post(withdrawRequestRoute, requests.Withdraw)
 			s.mcp = mcpserver.New(s.db, s.runner, intake, mcpserver.Config{
-				Version:  s.config.Version,
-				ReadOnly: s.config.ReadOnly,
+				Version: s.config.Version, ReadOnly: s.config.ReadOnly, RestoreRequests: s.restoreRequests,
 			})
 			assistantKeys.SetRevokeHook(s.mcp.CloseAssistant)
 			adminMCP := s.mcp.HTTPHandler()
 			mcpHandler := func(w http.ResponseWriter, r *http.Request) {
 				p := requestPrincipal(r)
 				if p.level == accessAssistant {
-					s.mcp.ServeAssistant(w, r, p.assistantID, func() bool {
-						return s.assistantRevocations.Permits(p.assistantDigest)
+					s.mcp.ServeAssistant(w, r, p.assistantID, p.assistantDigest, p.restoreGrant, func() bool {
+						key, err := s.db.FindAssistantKey(r.Context(), p.assistantDigest)
+						if err != nil || key.ID != p.assistantID || !s.assistantRevocations.Permits(p.assistantDigest) {
+							return false
+						}
+						currentGrant := ""
+						if s.assistantRevocations.PermitsRestoreRequests(key) {
+							currentGrant = key.RestoreGrant
+						}
+						return currentGrant == p.restoreGrant
 					})
 					return
 				}

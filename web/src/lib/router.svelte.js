@@ -1,16 +1,16 @@
 /** Minimal hash-based SPA router for Svelte 5 */
 
-let current = $state(getHash())
+let rawHash = $state(readRawHash())
+let current = $derived(routePath(rawHash))
 
-function getHash() {
-  const raw = window.location.hash.slice(1) || '/'
+function routePath(raw) {
   // Strip query params for route matching
   const qIdx = raw.indexOf('?')
   return qIdx === -1 ? raw : raw.slice(0, qIdx)
 }
 
 function handleHashChange() {
-  current = getHash()
+  rawHash = readRawHash()
 }
 
 if (typeof window !== 'undefined') {
@@ -54,5 +54,9 @@ export function getRoute() {
 
 /** Get the raw hash including query params */
 export function getRawHash() {
-  return window.location.hash.slice(1) || '/'
+  return rawHash
+}
+
+function readRawHash() {
+  return typeof window === 'undefined' ? '/' : window.location.hash.slice(1) || '/'
 }

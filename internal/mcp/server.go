@@ -17,6 +17,7 @@ import (
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/engine"
 	jobintake "github.com/tinkerologie/vault/internal/jobs"
+	"github.com/tinkerologie/vault/internal/restorerequest"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/storage"
 )
@@ -43,8 +44,9 @@ type MCPServer struct {
 
 // Config controls MCP metadata exposed to clients.
 type Config struct {
-	Version  string
-	ReadOnly bool
+	Version         string
+	ReadOnly        bool
+	RestoreRequests *restorerequest.Service
 }
 
 // New creates a new MCP server with all Vault tools registered.

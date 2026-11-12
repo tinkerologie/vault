@@ -37,6 +37,12 @@ func pathDepth(path string) int {
 	return len(strings.Split(trimmed, string(filepath.Separator)))
 }
 
+// CanClearRestoreTarget reports the depth rule for an already resolved
+// restore target. The engine also revalidates the path when clearing it.
+func CanClearRestoreTarget(resolved string) bool {
+	return pathDepth(resolved) >= minCleanDepth
+}
+
 // clearRestoreTarget removes everything inside target, keeping target itself.
 //
 // The restore wizard warns "This will overwrite existing data", but the
@@ -67,8 +73,8 @@ func clearRestoreTarget(target string) error {
 	if !allowed {
 		return fmt.Errorf("refusing to clear %q: path must stay within approved roots", target)
 	}
-	if depth := pathDepth(normalized); depth < minCleanDepth {
-		return fmt.Errorf("%w: %s is only %d level(s) below the filesystem root", errUnsafeToClean, normalized, depth)
+	if !CanClearRestoreTarget(normalized) {
+		return fmt.Errorf("%w: %s is only %d level(s) below the filesystem root", errUnsafeToClean, normalized, pathDepth(normalized))
 	}
 
 	// Pinned component by component, so an ancestor swapped for a symlink after

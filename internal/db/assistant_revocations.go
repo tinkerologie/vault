@@ -81,6 +81,12 @@ func (l *AssistantRevocations) Permits(digest string) bool {
 	return l.revoked != nil && !revoked
 }
 
+// PermitsRestoreRequests checks the grant independently of the key. The same
+// durable ledger revokes both randomly identified grants and entire keys.
+func (l *AssistantRevocations) PermitsRestoreRequests(key AssistantKey) bool {
+	return validAssistantDigest(key.RestoreGrant) && l.Permits(key.RestoreGrant)
+}
+
 func (l *AssistantRevocations) Revoke(digest string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()

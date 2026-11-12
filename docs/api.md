@@ -316,6 +316,23 @@ While a destination is still sealed with another key, browsing its restore
 points (`GET /jobs/{id}/restore-points/{rpid}/contents`) returns
 **424** with `{"code": "dedup_key_mismatch", "error": "…"}`.
 
+### Folder Restore Requests
+
+In daemon mode, use `PATCH /settings/assistant-keys/{id}` from the Vault host with `{"restore_request":true}` to grant a named Assistant Key permission to prepare, follow and withdraw its own requests. Send `false` to remove the permission and keep recovery inspection. Reconnect the assistant's MCP session after changing permission.
+
+| Method | Endpoint                          | Access                                                             |
+| ------ | --------------------------------- | ------------------------------------------------------------------ |
+| POST   | `/restore-requests`               | Assistant Key with Restore Request permission                      |
+| GET    | `/restore-requests`               | Vault host operator review                                         |
+| GET    | `/restore-requests/{id}`          | Owning Assistant Key with permission or Vault host operator review |
+| POST   | `/restore-requests/{id}/withdraw` | Owning Assistant Key with permission                               |
+
+To submit, send positive `job_id` and `restore_point_id` values, the exact folder `item_name`, and `write_mode` of `replace` or `merge`. Omit `destination` to review the configured original location, or supply a path allowed by the alternate location policy. The request covers one whole folder. Vault returns `201` with a pending `id`, `review_link`, evidence, effects, and eligibility. The link opens the review in the Unraid UI and carries no authorization. Submission performs no restore. Approval is tracked in [#642](https://github.com/tinkerologie/vault/issues/642).
+
+Vault retains requests after withdrawal or expiry. The review window is 24 hours from creation. At the exact expiry time, a pending request becomes expired even if withdrawal arrives first. Repeated withdrawal returns the recorded state. List defaults to `status=pending`. Use `status=withdrawn,expired` for terminal requests, and pass `next_before` from the result as `before` for the next page. The default `limit` is 50, with a maximum of 200.
+
+Vault returns `400` for invalid inputs or a folder known to be absent, `403` for insufficient permission, and `404` for unknown or non-owned requests. A database maintenance conflict returns `409`. A committed change with a failed hybrid flash flush includes `persistence_warning`. Assistant responses omit resolved paths, raw point metadata, credentials, and internal source identifiers. The operator review includes the resolved target path. The submission schema has no passphrase or file-selection field.
+
 ## MCP (Model Context Protocol)
 
 | Method | Endpoint | Description                                                                         |

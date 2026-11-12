@@ -242,21 +242,10 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		return fmt.Errorf("cannot determine restore path: no path in settings or metadata")
 	}
 
-	if !restorePathSafe(destPath) || strings.Contains(destPath, "../") || strings.Contains(destPath, "..\\") {
-		return fmt.Errorf("suspicious restore destination %q", destPath)
-	}
-	if fromJob {
-		if _, err := safepath.CheckFolderLocation(destPath); err != nil {
-			return err
-		}
-	} else if _, err := safepath.CheckCustomRestoreDestination(destPath); err != nil {
-		return err
-	}
-	normalizedDestPath, err := normalizeRestorePath(destPath)
+	destPath, err := ResolveFolderRestoreTarget(destPath, fromJob)
 	if err != nil {
 		return err
 	}
-	destPath = normalizedDestPath
 
 	progress(item.Name, 30, "restoring to "+destPath)
 

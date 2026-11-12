@@ -489,7 +489,13 @@ var daemonCmd = &cobra.Command{
 			Version:        version,
 			AllowedOrigins: resolveAllowedOrigins(allowedOrigins, cfgPath),
 		}
+		if hybridMode && snapshotMgr != nil {
+			cfg.RestoreRequestFlush = snapshotMgr.FlushToUSB
+		}
 		srv := api.NewServer(database, cfg)
+		if err := srv.ReconcileRestoreRequests(cmd.Context()); err != nil {
+			log.Printf("Warning: startup Restore Request expiry reconciliation failed: %v", err)
+		}
 		srv.SetStartupDiagnostics(startupDiag)
 
 		// Discover NVMe-backed ZFS pools and wire them into the staging
@@ -647,14 +653,15 @@ var daemonCmd = &cobra.Command{
 		defer stop()
 
 		workers := daemonWorkers{
-			scheduler:     sched,
-			throttle:      srv.Runner().RunAutoThrottleLoop,
-			snapshots:     snapshotMgr,
-			evaluator:     anomalyEvaluator,
-			heartbeatPath: filepath.Join(hbDir, "heartbeat"),
-			discovery:     mdns,
-			addr:          addr,
-			tls:           tlsCert != "",
+			restoreRequestExpiry: srv.ReconcileRestoreRequests,
+			scheduler:            sched,
+			throttle:             srv.Runner().RunAutoThrottleLoop,
+			snapshots:            snapshotMgr,
+			evaluator:            anomalyEvaluator,
+			heartbeatPath:        filepath.Join(hbDir, "heartbeat"),
+			discovery:            mdns,
+			addr:                 addr,
+			tls:                  tlsCert != "",
 		}
 		err = workers.run(ctx, srv)
 		if errors.Is(err, http.ErrServerClosed) {

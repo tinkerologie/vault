@@ -16,6 +16,7 @@
   let issued = $state(null)
   let selected = $state(null)
   let revoking = $state(false)
+  let savingPermission = $state(false)
 
   async function load() {
     loading = true
@@ -56,6 +57,22 @@
     }
   }
 
+  async function changeRestoreRequestPermission(key, event) {
+    if (remote || savingPermission || revoking) return
+    const checkbox = event.currentTarget
+    savingPermission = true
+    try {
+      const updated = await api.setAssistantRestoreRequest(key.id, checkbox.checked)
+      keys = keys.map(entry => entry.id === key.id ? updated : entry)
+      notify(updated.restore_request ? 'Restore Request permission granted' : 'Restore Request permission revoked', 'success')
+    } catch (e) {
+      checkbox.checked = Boolean(key.restore_request)
+      notify(e.message, 'error')
+    } finally {
+      savingPermission = false
+    }
+  }
+
   async function revoke() {
     if (!selected || revoking || remote) return
     const { id } = selected
@@ -77,7 +94,7 @@
 <section aria-labelledby={heading} class="bg-surface-2 border border-border rounded-xl overflow-hidden">
   <div class="px-5 py-4 border-b border-border">
     <h2 id={heading} class="text-base font-semibold text-text">Assistant Keys</h2>
-    <p class="mt-1 text-xs text-text-muted">Give each assistant read-only access to the recovery catalog.</p>
+    <p class="mt-1 text-xs text-text-muted">Assistant Keys start with read-only recovery access. Grant Restore Request permission separately.</p>
   </div>
   <div class="px-5 py-4 space-y-4">
     {#if loading}
@@ -92,14 +109,25 @@
     {:else}
       <ul class="divide-y divide-border">
         {#each keys as key (key.id)}
-          <li class="flex items-center justify-between gap-4 py-2">
+          <li class="flex flex-wrap items-center justify-between gap-4 py-2">
             <div class="min-w-0">
               <p class="text-sm font-medium text-text [overflow-wrap:anywhere]">{key.name}</p>
               <time datetime={key.created_at} class="text-xs text-text-muted">{formatDate(key.created_at)}</time>
             </div>
             {#if !remote}
-              <button type="button" onclick={() => selected = key} aria-label={'Revoke ' + key.name}
-                class="hit-target shrink-0 text-sm font-medium text-danger hover:underline">Revoke</button>
+              <div class="flex flex-wrap items-center gap-4">
+                <label class="hit-target flex items-center gap-2 text-sm text-text">
+                  <input type="checkbox" checked={key.restore_request === true} disabled={savingPermission || revoking}
+                    aria-label={'Allow Restore Requests for ' + key.name}
+                    onchange={(event) => changeRestoreRequestPermission(key, event)} class="accent-vault" />
+                  Allow Restore Requests
+                </label>
+                <button type="button" onclick={() => selected = key} aria-label={'Revoke ' + key.name}
+                  disabled={savingPermission}
+                  class="hit-target shrink-0 text-sm font-medium text-danger hover:underline">Revoke</button>
+              </div>
+            {:else}
+              <p class="text-xs text-text-muted">{key.restore_request ? 'Restore Requests allowed' : 'Inspection only'}</p>
             {/if}
           </li>
         {/each}
@@ -107,7 +135,7 @@
     {/if}
 
     {#if remote}
-      <ApiKeyLocalOnlyNotice subject="Assistant Key creation and revocation" />
+      <ApiKeyLocalOnlyNotice subject="Assistant Key changes" />
     {:else if issued}
       <div class="rounded-lg border border-border bg-surface p-3">
         <p role="status" class="text-sm text-text">Copy this Assistant Key now. Vault shows it once.</p>

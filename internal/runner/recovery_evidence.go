@@ -43,11 +43,12 @@ type RecoveryChain struct {
 }
 
 type RecoveryChainStep struct {
-	RestorePointID int64  `json:"restore_point_id"`
-	BackupType     string `json:"backup_type"`
-	Membership     Status `json:"membership"`
-	DataRequired   bool   `json:"data_required"`
-	Artifacts      Status `json:"artifacts,omitempty"`
+	RestorePointID   int64  `json:"restore_point_id"`
+	BackupType       string `json:"backup_type"`
+	Membership       Status `json:"membership"`
+	ItemTypeEvidence Status `json:"item_type_evidence"`
+	DataRequired     bool   `json:"data_required"`
+	Artifacts        Status `json:"artifacts,omitempty"`
 }
 
 type RecoveryVerification struct {
@@ -149,8 +150,13 @@ func InspectRecovery(ctx context.Context, database *db.DB, id int64, item ItemSe
 		// The Job chain still needs a full anchor. Classic replay skips
 		// every point known to omit this item, including an earlier full.
 		// A deduplicated point needs only its own stored manifest.
-		required := selected || (!deduplicated && member != Missing)
-		entry := RecoveryChainStep{RestorePointID: step.ID, BackupType: IdentifyPoint(step).BackupType, Membership: member, DataRequired: required}
+		// A conflicting type with the same name is not a usable
+		// replay step. The classic Runner selects its steps by name.
+		names, _ := step.BackedUpItems()
+		_, sameName := names[item.ItemName]
+		required := selected || (!deduplicated && (member != Missing || sameName))
+		entry := RecoveryChainStep{RestorePointID: step.ID, BackupType: IdentifyPoint(step).BackupType, Membership: member,
+			ItemTypeEvidence: recordedItemType(step, item), DataRequired: required}
 		if required {
 			entry.Artifacts = Unknown
 			manifestErr := selectedManifestErr
@@ -173,8 +179,11 @@ func InspectRecovery(ctx context.Context, database *db.DB, id int64, item ItemSe
 		for i, status := range statuses {
 			if status != "" {
 				result.Chain.Steps[i].Artifacts = status
-				if points[i].ID == point.ID && !deduplicated && status == Confirmed {
-					result.ItemTypeEvidence = Confirmed
+				if _, manifest, manifestErr := lookupItemManifest(points[i], item.ItemName); !manifest && manifestErr == nil && status == Confirmed {
+					result.Chain.Steps[i].ItemTypeEvidence = Confirmed
+					if points[i].ID == point.ID {
+						result.ItemTypeEvidence = Confirmed
+					}
 				}
 			}
 		}

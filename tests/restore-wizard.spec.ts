@@ -375,3 +375,44 @@ test.describe('Restore Wizard partial-restore file picker (#449)', () => {
     await expect(summary).toContainText('No restorable files');
   });
 });
+
+test.describe('Folder Restore Request review', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page, { restoreRequestFixtures: true });
+  });
+
+  test('opens a direct request link and follows query-only selection in an iframe', async ({ page }) => {
+    await page.route('**/test-restore-review', route => route.fulfill({
+      contentType: 'text/html',
+      body: '<iframe title="Vault" src="/?embed=1#/restore?request=review-replace"></iframe>',
+    }));
+    await page.goto('/test-restore-review');
+    const frame = page.frameLocator('iframe[title="Vault"]');
+    const review = frame.getByRole('region', { name: 'Restore Request review' });
+    await expect(review.getByText('/mnt/user/recovery/fixture')).toBeVisible();
+    await expect(review.getByText(/Clear all existing target contents/i)).toBeVisible();
+    await expect(review.getByText(/This backup has no recorded Verification/i)).toBeVisible();
+    await expect(review.getByRole('button', { name: /approve|start restore/i })).toHaveCount(0);
+
+    await frame.getByRole('link', { name: /merge fixture/i }).click();
+    await expect(review.getByText(/Overwrite matching entries/i)).toBeVisible();
+    await expect(review.getByText(/Backup Chain could not be confirmed/i)).toBeVisible();
+    await expect(review.getByText('/mnt/user/recovery/fixture')).toHaveCount(0);
+  });
+
+  test('shows unavailable and denied review links', async ({ page }) => {
+    await page.goto('/#/restore?request=missing');
+    await expect(page.getByText('Restore Request not found.')).toBeVisible();
+    await page.evaluate(() => { window.location.hash = '/restore?request=denied'; });
+    await expect(page.getByText('Operator access required to review this Restore Request.')).toBeVisible();
+  });
+
+  test('paginates terminal request history separately from run history', async ({ page }) => {
+    await page.goto('/#/history');
+    const history = page.getByRole('region', { name: 'Request history' });
+    await expect(history.getByText('withdrawn fixture', { exact: false })).toBeVisible();
+    await history.getByRole('button', { name: 'Load more requests' }).click();
+    await expect(history.getByText('expired fixture', { exact: false })).toBeVisible();
+    await expect(history.getByRole('button', { name: 'Load more requests' })).toHaveCount(0);
+  });
+});

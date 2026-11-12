@@ -14,6 +14,8 @@ import (
 )
 
 type assistantTransport struct {
+	digest  string
+	grant   string
 	server  *mcp.Server
 	handler http.Handler
 	stop    context.Context
@@ -27,8 +29,8 @@ func (entry *assistantTransport) close() {
 
 // ServeAssistant handles an already authenticated request on the transport for
 // its key. Session IDs and tools from other transports are unavailable here.
-func (s *MCPServer) ServeAssistant(w http.ResponseWriter, r *http.Request, keyID int64, permitted func() bool) {
-	entry := s.assistantTransport(keyID, permitted)
+func (s *MCPServer) ServeAssistant(w http.ResponseWriter, r *http.Request, keyID int64, digest, grant string, permitted func() bool) {
+	entry := s.assistantTransport(keyID, digest, grant, permitted)
 	if entry == nil {
 		http.Error(w, "valid API key required", http.StatusUnauthorized)
 		return
@@ -47,16 +49,25 @@ func (s *MCPServer) ServeAssistant(w http.ResponseWriter, r *http.Request, keyID
 	entry.handler.ServeHTTP(w, r.WithContext(ctx))
 }
 
-func (s *MCPServer) assistantTransport(keyID int64, permitted func() bool) *assistantTransport {
+func (s *MCPServer) assistantTransport(keyID int64, digest, grant string, permitted func() bool) *assistantTransport {
 	s.assistantMu.Lock()
-	defer s.assistantMu.Unlock()
+	var retired *assistantTransport
+	defer func() {
+		s.assistantMu.Unlock()
+		if retired != nil {
+			retired.close()
+		}
+	}()
 	// Check the durable revocation decision under the registry lock. A request
 	// authenticated before revocation cannot recreate a retired transport.
 	if s.assistantsClosed || !permitted() {
 		return nil
 	}
 	if entry := s.assistants[keyID]; entry != nil {
-		return entry
+		if entry.digest == digest && entry.grant == grant {
+			return entry
+		}
+		retired = entry
 	}
 
 	stop, cancel := context.WithCancel(s.assistantStop)
@@ -64,7 +75,11 @@ func (s *MCPServer) assistantTransport(keyID int64, permitted func() bool) *assi
 	stopSubscriptionsOnShutdown(server, stop)
 	registerRecoveryCatalog(server, s.db)
 	registerRecoveryEvidence(server, s.db)
+	if grant != "" && s.config.RestoreRequests != nil {
+		registerRestoreRequests(server, s.config.RestoreRequests)
+	}
 	entry := &assistantTransport{
+		digest: digest, grant: grant,
 		server: server,
 		handler: mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server { return server },
 			&mcp.StreamableHTTPOptions{SessionTimeout: 15 * time.Minute}),

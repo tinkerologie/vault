@@ -20,6 +20,7 @@ import (
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/restorerequest"
 )
 
 const (
@@ -292,6 +293,7 @@ type principal struct {
 	level           accessLevel
 	assistantID     int64
 	assistantDigest string
+	restoreGrant    string
 }
 
 func requestPrincipal(r *http.Request) principal {
@@ -304,7 +306,10 @@ func requestAccess(r *http.Request) accessLevel {
 }
 
 func withPrincipal(r *http.Request, p principal) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
+	ctx := context.WithValue(r.Context(), principalKey{}, p)
+	return r.WithContext(restorerequest.WithPrincipal(ctx, restorerequest.Principal{
+		AssistantDigest: p.assistantDigest, LocalReview: p.level == accessLocal,
+	}))
 }
 
 func withAccess(r *http.Request, level accessLevel) *http.Request {
@@ -350,9 +355,13 @@ func apiKeyAuth(database *db.DB, local *localIPCache, verifier *apiKeyVerifier, 
 			if presented && !legacyAdmin {
 				digest, valid := crypto.AssistantKeyDigest(key)
 				if valid && revocations.Permits(digest) {
-					id, err := database.FindAssistantKey(r.Context(), digest)
+					key, err := database.FindAssistantKey(r.Context(), digest)
 					if err == nil && revocations.Permits(digest) {
-						next.ServeHTTP(w, withPrincipal(r, principal{level: accessAssistant, assistantID: id, assistantDigest: digest}))
+						p := principal{level: accessAssistant, assistantID: key.ID, assistantDigest: digest}
+						if revocations.PermitsRestoreRequests(key) {
+							p.restoreGrant = key.RestoreGrant
+						}
+						next.ServeHTTP(w, withPrincipal(r, p))
 						return
 					}
 				}

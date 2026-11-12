@@ -24,6 +24,18 @@ The catalog lists Jobs, Restore Points, recorded parent links and recorded backu
 
 Use `find_restore_points` with the exact `item_name` and `item_type` (`folder`, `container` or `vm`). Use `get_recovery_evidence` with those same fields and a `restore_point_id` to check the required Backup Chain, artifact metadata and Verification for a candidate. Both tools return the same structured evidence as the [REST endpoints](api.md#backup-item-evidence).
 
+An operator can enable **Allow Restore Requests** for a key in Settings. Reconnect the MCP client after changing permission. The additional tools use the key on every call.
+
+| Tool                       | Input                                                                                                               | Result                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `submit_restore_request`   | `job_id`, `restore_point_id`, exact folder `item_name`, `write_mode` (`replace` or `merge`), optional `destination` | Pending request, review link, evidence and write effects                     |
+| `get_restore_request`      | `id`                                                                                                                | Redacted request and recorded state for the owning key                       |
+| `withdraw_restore_request` | `id`                                                                                                                | Recorded state after attempting to withdraw the owning key's pending request |
+
+A request covers one whole folder and expires after 24 hours. Submission performs no restore. Open the review link on the Unraid host to inspect the request. The link carries no authorization. A missing request and another key's request both return a tool error. See the [REST contract](api.md#folder-restore-requests) for state and error details.
+
+Operator approval is tracked in [#642](https://github.com/tinkerologie/vault/issues/642). Existing administrator `restore_item` behavior changes in [#646](https://github.com/tinkerologie/vault/issues/646).
+
 ## Configuration
 
 ### Claude Desktop

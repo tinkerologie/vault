@@ -427,7 +427,7 @@ func CarryAssistantKeys(ctx context.Context, from, to *DB) error {
 		digest string
 	}
 	read := func() ([]credential, error) {
-		rows, err := from.QueryContext(ctx, `SELECT id, name, key_digest, created_at FROM assistant_keys`)
+		rows, err := from.QueryContext(ctx, `SELECT id, name, key_digest, created_at, restore_request_grant FROM assistant_keys`)
 		if err != nil {
 			return nil, err
 		}
@@ -435,7 +435,7 @@ func CarryAssistantKeys(ctx context.Context, from, to *DB) error {
 		var keys []credential
 		for rows.Next() {
 			var key credential
-			if err := rows.Scan(&key.ID, &key.Name, &key.digest, &key.CreatedAt); err != nil {
+			if err := rows.Scan(&key.ID, &key.Name, &key.digest, &key.CreatedAt, &key.RestoreGrant); err != nil {
 				return nil, err
 			}
 			keys = append(keys, key)
@@ -460,8 +460,8 @@ func CarryAssistantKeys(ctx context.Context, from, to *DB) error {
 		return err
 	}
 	for _, key := range keys {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO assistant_keys (id, name, key_digest, created_at) VALUES (?, ?, ?, ?)`,
-			key.ID, key.Name, key.digest, key.CreatedAt); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO assistant_keys (id, name, key_digest, created_at, restore_request_grant) VALUES (?, ?, ?, ?, ?)`,
+			key.ID, key.Name, key.digest, key.CreatedAt, key.RestoreGrant); err != nil {
 			return err
 		}
 	}

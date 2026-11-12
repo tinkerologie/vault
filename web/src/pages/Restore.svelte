@@ -7,6 +7,8 @@
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
+  import RestoreRequestList from '../components/RestoreRequestList.svelte'
+  import RestoreRequestReview from '../components/RestoreRequestReview.svelte'
   import RestoreWizard from '../components/RestoreWizard.svelte'
   import ActiveMounts from '../components/ActiveMounts.svelte'
   import { refreshMounts } from '../lib/mounts.svelte.js'
@@ -22,9 +24,10 @@
     const qIdx = raw.indexOf('?')
     if (qIdx === -1) return {}
     const params = new URLSearchParams(raw.slice(qIdx))
-    return { job: params.get('job'), type: params.get('type'), name: params.get('name') }
+    return { job: params.get('job'), type: params.get('type'), name: params.get('name'), request: params.get('request') }
   }
 
+  let requestId = $derived(getInitialParams().request)
   const initialParams = getInitialParams()
   const initialJobId = initialParams.job ?? null
   const initialType = initialParams.type ?? null
@@ -111,17 +114,24 @@
     <p class="text-sm text-text-muted mt-1">Browse and restore from backup snapshots</p>
   </div>
 
-  <ActiveMounts onunmount={handleUnmounted} onunmounterror={handleUnmountError} />
+  {#if requestId}
+    <RestoreRequestReview {requestId} />
+  {/if}
+  <RestoreRequestList />
 
-  {#if loading}
-    <Spinner text="Loading..." />
-  {:else if jobs.length === 0}
-    <EmptyState title="No backup jobs" description="Create a backup job first, then come back to restore.">
-      {#snippet iconSlot()}
-        <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-      {/snippet}
-    </EmptyState>
-  {:else}
-    <RestoreWizard {jobs} onrestore={handleRestore} onmount={handleMounted} {initialJobId} {initialType} {initialName} />
+  {#if !requestId}
+    <ActiveMounts onunmount={handleUnmounted} onunmounterror={handleUnmountError} />
+
+    {#if loading}
+      <Spinner text="Loading..." />
+    {:else if jobs.length === 0}
+      <EmptyState title="No backup jobs" description="Create a backup job first, then come back to restore.">
+        {#snippet iconSlot()}
+          <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        {/snippet}
+      </EmptyState>
+    {:else}
+      <RestoreWizard {jobs} onrestore={handleRestore} onmount={handleMounted} {initialJobId} {initialType} {initialName} />
+    {/if}
   {/if}
 </div>

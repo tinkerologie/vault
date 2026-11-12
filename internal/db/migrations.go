@@ -82,6 +82,21 @@ CREATE TABLE IF NOT EXISTS assistant_keys (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Requests survive deletion of the key, Job, and Restore Point they refer to.
+CREATE TABLE IF NOT EXISTS restore_requests (
+    id TEXT PRIMARY KEY,
+    owner_digest TEXT NOT NULL,
+    requester_name TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    terminal_at INTEGER,
+    terminal_reason TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_restore_requests_due ON restore_requests(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_restore_requests_history ON restore_requests(status, created_at DESC, id DESC);
+
 CREATE TABLE IF NOT EXISTS activity_log (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	level TEXT NOT NULL DEFAULT 'info',
@@ -253,6 +268,7 @@ CREATE INDEX IF NOT EXISTS idx_capacity_samples_dest_time ON destination_capacit
 // alterMigrations are idempotent ALTER TABLE statements for columns added
 // after the initial schema. Errors (e.g. duplicate column) are expected.
 var alterMigrations = []string{
+	"ALTER TABLE assistant_keys ADD COLUMN restore_request_grant TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE jobs ADD COLUMN verify_backup INTEGER DEFAULT 1",
 	"ALTER TABLE job_items ADD COLUMN sort_order INTEGER DEFAULT 0",
 	"ALTER TABLE jobs ADD COLUMN encryption TEXT DEFAULT 'none'",

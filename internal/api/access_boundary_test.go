@@ -606,6 +606,7 @@ var localOnlyRoutes = map[string]bool{
 	"DELETE /settings/api-key":             true,
 	"POST /settings/assistant-keys":        true,
 	"DELETE /settings/assistant-keys/{id}": true,
+	"PATCH /settings/assistant-keys/{id}":  true,
 }
 
 // publicRoutes is every route reachable with no credential. Adding to this

@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -26,10 +28,14 @@ func NewAssistantKeyHandler(database *db.DB, revocations *db.AssistantRevocation
 }
 
 func (h *AssistantKeyHandler) List(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	keys, err := h.db.ListAssistantKeys(r.Context())
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "could not list Assistant Keys")
 		return
+	}
+	for i := range keys {
+		keys[i].RestoreRequest = h.revocations.PermitsRestoreRequests(keys[i])
 	}
 	respondJSON(w, http.StatusOK, keys)
 }
@@ -79,6 +85,77 @@ func (h *AssistantKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		db.AssistantKey
 		Key string `json:"assistant_key"`
 	}{AssistantKey: record, Key: key})
+}
+
+func (h *AssistantKeyHandler) SetRestoreRequest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	var input struct {
+		Enabled *bool `json:"restore_request"`
+	}
+	if !decodeRestoreRequest(w, r, &input) {
+		return
+	}
+	if input.Enabled == nil {
+		respondError(w, http.StatusBadRequest, "restore_request must be true or false")
+		return
+	}
+	if !h.maintenance.TryLock() {
+		respondError(w, http.StatusConflict, "database maintenance is in progress")
+		return
+	}
+	defer h.maintenance.Unlock()
+
+	ctx := r.Context()
+	digest, err := h.db.AssistantKeyDigest(ctx, id)
+	if errors.Is(err, db.ErrNotFound) {
+		respondError(w, http.StatusNotFound, "Assistant Key not found")
+		return
+	}
+	if err != nil || !h.revocations.Ready() {
+		respondError(w, http.StatusInternalServerError, "could not read Assistant Key")
+		return
+	}
+	if !h.revocations.Permits(digest) {
+		respondError(w, http.StatusNotFound, "Assistant Key not found")
+		return
+	}
+	key, err := h.db.FindAssistantKey(ctx, digest)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "could not read Assistant Key")
+		return
+	}
+	key.RestoreRequest = h.revocations.PermitsRestoreRequests(key)
+	if *input.Enabled == key.RestoreRequest {
+		respondJSON(w, http.StatusOK, key)
+		return
+	}
+	if *input.Enabled {
+		var grant [32]byte
+		rand.Read(grant[:])
+		key, err = h.db.SetAssistantRestoreGrant(ctx, id, hex.EncodeToString(grant[:]))
+	} else {
+		// Tombstone the grant before clearing the DB row so restoring an
+		// older DB snapshot cannot re-enable it.
+		if err := h.revocations.Revoke(key.RestoreGrant); err != nil {
+			respondError(w, http.StatusInternalServerError, "could not persist Restore Request permission revocation")
+			return
+		}
+		key, err = h.db.SetAssistantRestoreGrant(ctx, id, "")
+	}
+	if h.onRevoke != nil {
+		h.onRevoke(id)
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "could not update Restore Request permission")
+		return
+	}
+	h.onChange()
+	key.RestoreRequest = h.revocations.PermitsRestoreRequests(key)
+	respondJSON(w, http.StatusOK, key)
 }
 
 func (h *AssistantKeyHandler) SetRevokeHook(fn func(int64)) {

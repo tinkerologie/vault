@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/tinkerologie/vault/internal/anomaly"
@@ -18,6 +20,7 @@ import (
 	mcpserver "github.com/tinkerologie/vault/internal/mcp"
 	"github.com/tinkerologie/vault/internal/mount"
 	"github.com/tinkerologie/vault/internal/replication"
+	"github.com/tinkerologie/vault/internal/restorerequest"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/ws"
 )
@@ -32,8 +35,10 @@ type ServerConfig struct {
 	ReadOnly  bool   // When true, write endpoints return 403 (replica mode).
 	// AllowedOrigins lists the exact browser origins that may call the API
 	// cross-origin. Empty by default; those callers still need the API key.
-	AllowedOrigins []string
-	CredentialDir  string // durable directory containing vault.key
+	AllowedOrigins      []string
+	CredentialDir       string       // durable directory containing vault.key
+	RestoreRequestFlush func() error // synchronous durability barrier for request transitions
+	RestoreRequestClock func() time.Time
 }
 
 type Server struct {
@@ -47,6 +52,7 @@ type Server struct {
 	runStarted           atomic.Bool
 	mcp                  *mcpserver.MCPServer
 	assistantRevocations *db.AssistantRevocations
+	restoreRequests      *restorerequest.Service
 	timedReads           sync.WaitGroup
 
 	// nextRunResolver looks up the next scheduled run time for a job.
@@ -117,6 +123,14 @@ func NewServer(database *db.DB, cfg ServerConfig) *Server {
 	}
 	s.router = s.setupRoutes()
 	return s
+}
+
+// ReconcileRestoreRequests applies overdue request expiry in daemon mode.
+func (s *Server) ReconcileRestoreRequests(ctx context.Context) error {
+	if s.restoreRequests == nil {
+		return nil
+	}
+	return s.restoreRequests.ReconcileExpiry(ctx)
 }
 
 // ScheduleReloader is a function that reloads the scheduler after job changes.

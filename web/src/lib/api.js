@@ -250,8 +250,16 @@ export const api = {
 
   // API Key
   getAPIKeyStatus: () => request('GET', '/settings/api-key'),
+  listRestoreRequests: ({ status = 'pending', before } = {}) => {
+    const params = new URLSearchParams({ status })
+    if (before) params.set('before', before)
+    return request('GET', `/restore-requests?${params}`)
+  },
+  getRestoreRequest: (id) => request('GET', `/restore-requests/${encodeURIComponent(id)}`),
+
   listAssistantKeys: () => request('GET', '/settings/assistant-keys'),
   createAssistantKey: (name) => request('POST', '/settings/assistant-keys', { name }),
+  setAssistantRestoreRequest: (id, enabled) => request('PATCH', `/settings/assistant-keys/${id}`, { restore_request: enabled }),
   revokeAssistantKey: (id) => request('DELETE', `/settings/assistant-keys/${id}`),
   generateAPIKey: () => request('POST', '/settings/api-key/generate'),
   revealAPIKey: () => request('GET', '/settings/api-key/key'),
