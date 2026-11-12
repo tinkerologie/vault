@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.11.02] - 2026-11-12
+
 ### Fixed
 
 - Include committed SQLite WAL changes in Destination Database Backups. Report export failures separately and keep the previous latest copy when snapshot creation fails (#648).
