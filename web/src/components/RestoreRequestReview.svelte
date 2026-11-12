@@ -141,6 +141,7 @@
     prune_replayed_entries: 'If Vault can read the final file listing and the earlier Backup Chain indexes, it removes entries the replay wrote that are absent from the final listing.',
     unverified_backup: 'This backup has no recorded Verification.',
     artifact_evidence_unavailable: 'Vault could not confirm all required storage artifacts.',
+    folder_replay_evidence_unavailable: 'Vault could not confirm the folder replay index or final listing. Replay pruning may be skipped.',
     item_type_evidence_unavailable: 'The recorded evidence does not confirm the Backup Item type.',
     target_too_shallow_to_clear: 'The requested target is too close to the filesystem root to clear. Vault would use merge.',
     latest_verification_failed: 'The most recent Verification failed.',

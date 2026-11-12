@@ -92,7 +92,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                                |
 | GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                      |
 | POST   | `/jobs/{id}/run`                                   | Start a backup immediately                                                                |
-| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup or manual restore, or remove a queued operation                    |
+| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup or manual restore, or remove a queued operation                   |
 | POST   | `/jobs/{id}/restore`                               | Start a restore. Set `destination` to an absolute path or, for a ZFS item, a dataset name |
 | GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                            |
 
@@ -276,7 +276,7 @@ In daemon mode, Assistant Keys can use both Restore Point endpoints. Supply `ite
 
 Evidence for a selected point lists its Backup Chain from oldest to newest. Each step shows membership, whether restore uses its stored data and the result of a metadata probe for required data. Deduplicated restore uses the selected point's manifest. An imported deduplicated point without a recorded parent uses its complete manifest. Vault checks the repository header and the pack range for the manifest using the local chunk index. Classic evidence checks the recorded item directory or object metadata. VM disk evidence requires a recorded object inventory. Classic Docker volume coverage is unknown without an object inventory and volume manifest. Vault reads the saved configuration and checks the volume archives during operator review. Vault reports `unknown` if a probe cannot finish within its time or object limit or if the Destination cannot provide the necessary metadata.
 
-Verification shows the latest recorded mode, status and times, plus any backup-time Verification flag. Missing prerequisites and known unusable artifacts prevent approval eligibility. Unavailable artifact evidence or a failed Verification produces a warning. Storage probes check metadata without reading backup payloads.
+Verification shows the latest recorded mode, status and times, plus any backup-time Verification flag. Missing prerequisites and known unusable artifacts prevent approval eligibility. Unavailable artifact evidence or a failed Verification produces a warning. If the required folder archive is available but its replay index or final listing is unavailable, Vault reports `folder_replay_evidence_unavailable`. The folder remains eligible and replay pruning may be skipped. Storage probes check metadata without reading backup payloads.
 
 ### Restore approvals (`/jobs/{id}/restore`)
 

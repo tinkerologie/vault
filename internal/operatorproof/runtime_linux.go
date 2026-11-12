@@ -14,20 +14,31 @@ import (
 // NewRuntime writes a boot-random key for the installed native PHP plugin.
 func NewRuntime() (*Verifier, error) {
 	const path = "/run/vault-operator/approval.key"
-	dir := filepath.Dir(path)
-	if os.Geteuid() != 0 {
-		return nil, errors.New("native approval requires a root-owned runtime directory")
-	}
-	for _, nativeFile := range []string{
+	if err := requireNativeRuntime(os.Geteuid(),
 		"/etc/unraid-version",
 		"/usr/local/emhttp/plugins/dynamix/include/local_prepend.php",
 		"/usr/local/emhttp/plugins/vault/include/restore-request.php",
-	} {
+	); err != nil {
+		return nil, err
+	}
+	return createRuntimeVerifier(path, 0)
+}
+
+func requireNativeRuntime(uid int, nativeFiles ...string) error {
+	if uid != 0 {
+		return errors.New("native approval requires a root-owned runtime directory")
+	}
+	for _, nativeFile := range nativeFiles {
 		info, err := os.Stat(nativeFile)
 		if err != nil || !info.Mode().IsRegular() {
-			return nil, errors.New("native Unraid approval requires the installed Vault plugin")
+			return errors.New("native Unraid approval requires the installed Vault plugin")
 		}
 	}
+	return nil
+}
+
+func createRuntimeVerifier(path string, owner uint32) (*Verifier, error) {
+	dir := filepath.Dir(path)
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, fmt.Errorf("create operator approval directory: %w", err)
 	}
@@ -36,7 +47,7 @@ func NewRuntime() (*Verifier, error) {
 		return nil, err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Uid != 0 || info.Mode() != os.ModeDir|0o700 {
+	if !ok || stat.Uid != owner || info.Mode() != os.ModeDir|0o700 {
 		return nil, errors.New("unsafe operator approval directory")
 	}
 	var key [32]byte

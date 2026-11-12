@@ -58,6 +58,33 @@ func TestReviewedFolderPreflightStopsReadingWhenCancelled(t *testing.T) {
 	}
 }
 
+func TestReviewedFolderPreflightChecksHardLinkTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name, target string
+		wantError    bool
+	}{
+		{name: "relative target", target: "fixture.txt"},
+		{name: "empty target", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var staged bytes.Buffer
+			archive := tar.NewWriter(&staged)
+			if err := archive.WriteHeader(&tar.Header{Name: "fixture.txt", Typeflag: tar.TypeReg, Mode: 0o600}); err != nil {
+				t.Fatal(err)
+			}
+			if err := archive.WriteHeader(&tar.Header{Name: "fixture-link", Typeflag: tar.TypeLink, Linkname: tc.target}); err != nil {
+				t.Fatal(err)
+			}
+			if err := archive.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := validateStagedFolderTar(t.Context(), &staged, t.TempDir()); (err != nil) != tc.wantError {
+				t.Fatalf("archive preflight error = %v, want error %t", err, tc.wantError)
+			}
+		})
+	}
+}
+
 type cancellingArchiveBody struct {
 	cancel context.CancelFunc
 	left   int
