@@ -227,6 +227,7 @@ export const createInitialMockStorage = (): MockStorageDestination[] => [
  */
 export interface VaultMockOptions {
   restoreRequestFixtures?: boolean;
+  restoreRequestRun?: () => Record<string, unknown>;
   /** Body served for GET /runner/status; defaults to an idle runner. */
   runnerStatus?: Record<string, unknown>;
   /** Report replica mode from GET /health, so the UI runs read-only. */
@@ -382,7 +383,7 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
         return route.fulfill({ json: { requests, ...(history && !before && { next_before: 'withdrawn' }) } });
       }
       if (requestPath === '/review-replace' || requestPath === '/review-merge') {
-        return route.fulfill({ json: requestPath === '/review-replace' ? review : merge });
+        return route.fulfill({ json: requestPath === '/review-replace' ? { ...review, ...options.restoreRequestRun?.() } : merge });
       }
       return route.fulfill({ status: requestPath === '/denied' ? 403 : 404, json: { error: 'unavailable' } });
     }

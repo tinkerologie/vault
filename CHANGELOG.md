@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Find Restore Points for a Backup Item and inspect its recorded membership, required Backup Chain, storage metadata and Verification over REST and MCP (#640).
 - Grant an Assistant Key permission to prepare a folder Restore Request. Review the selected Restore Point and write effects in Restore, and see withdrawn or expired requests in History (#641).
 - Approve a folder Restore Request from the signed-in Unraid Vault page, then follow its linked Restore Run in Vault or through the requesting Assistant Key (#642).
+- Stop an active approved Restore Run by its exact ID from the signed-in Unraid Vault page. The linked request records whether the restore stopped or finished (#643).
 
 ## [v2026.11.02] - 2026-11-12
 

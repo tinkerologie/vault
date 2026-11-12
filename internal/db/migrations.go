@@ -290,6 +290,8 @@ var alterMigrations = []string{
 	"ALTER TABLE jobs ADD COLUMN compression_level TEXT DEFAULT ''",
 	"ALTER TABLE restore_points ADD COLUMN source_id INTEGER DEFAULT 0",
 	"ALTER TABLE job_runs ADD COLUMN run_type TEXT DEFAULT 'backup'",
+	"ALTER TABLE job_runs ADD COLUMN stop_requested_at DATETIME",
+	"ALTER TABLE job_runs ADD COLUMN stopped_by TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE replication_sources ADD COLUMN type TEXT DEFAULT 'remote_vault'",
 	"ALTER TABLE replication_sources ADD COLUMN config TEXT DEFAULT '{}'",
 	"ALTER TABLE jobs ADD COLUMN defer_remote_upload INTEGER DEFAULT 0",

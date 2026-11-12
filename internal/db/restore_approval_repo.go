@@ -68,7 +68,28 @@ func (d *DB) InvalidateRestoreRequest(ctx context.Context, id string, now time.T
 		WHERE id = ? AND status = 'pending' AND expires_at > ?`, now.UnixNano(), id, now.UnixNano()))
 }
 
+var errApprovedRestoreInactive = errors.New("linked Restore Request and Run are no longer active")
+
+// FinishApprovedRestore retries a failed transaction as a unit. Rewriting
+// either row alone could leave the run and its request with different outcomes.
 func (d *DB) FinishApprovedRestore(ctx context.Context, requestID string, run JobRun, requestStatus, reason string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for _, delay := range []time.Duration{25 * time.Millisecond, 50 * time.Millisecond} {
+		err := d.finishApprovedRestoreOnce(ctx, requestID, run, requestStatus, reason)
+		if err == nil || errors.Is(err, errApprovedRestoreInactive) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-time.After(delay):
+		}
+	}
+	return d.finishApprovedRestoreOnce(ctx, requestID, run, requestStatus, reason)
+}
+
+func (d *DB) finishApprovedRestoreOnce(ctx context.Context, requestID string, run JobRun, requestStatus, reason string) error {
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -83,16 +104,18 @@ func (d *DB) FinishApprovedRestore(ctx context.Context, requestID string, run Jo
 		return err
 	}
 	if !changed {
-		return errors.New("linked Restore Request is no longer active")
+		return errApprovedRestoreInactive
 	}
 	changed, err = restoreRequestsChanged(tx.ExecContext(ctx, `UPDATE job_runs
-		SET status = ?, completed_at = CURRENT_TIMESTAMP, log = ?, items_done = ?, items_failed = ?, size_bytes = ?
-		WHERE id = ? AND status = 'running'`, run.Status, run.Log, run.ItemsDone, run.ItemsFailed, run.SizeBytes, run.ID))
+		SET status = ?, completed_at = CURRENT_TIMESTAMP, log = ?, items_done = ?, items_failed = ?, size_bytes = ?,
+			stop_requested_at = ?, stopped_by = ?
+		WHERE id = ? AND status = 'running'`, run.Status, run.Log, run.ItemsDone, run.ItemsFailed, run.SizeBytes,
+		run.StopRequestedAt, run.StoppedBy, run.ID))
 	if err != nil {
 		return err
 	}
 	if !changed {
-		return errors.New("linked Restore Run is no longer active")
+		return errApprovedRestoreInactive
 	}
 	return tx.Commit()
 }
@@ -125,4 +148,15 @@ func (d *DB) cleanupStaleRuns(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return count, tx.Commit()
+}
+
+func (d *DB) GetApprovedRestoreRunStatus(ctx context.Context, runID int64) (string, error) {
+	var status string
+	err := d.QueryRowContext(ctx, `SELECT CASE WHEN q.status = 'interrupted' THEN q.status ELSE COALESCE(r.status, q.status) END
+		FROM restore_request_approvals a JOIN restore_requests q ON q.id = a.request_id
+		LEFT JOIN job_runs r ON r.id = a.run_id WHERE a.run_id = ?`, runID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return status, err
 }

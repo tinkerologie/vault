@@ -296,6 +296,10 @@ This removes both the backup files from storage and the restore point record fro
 
 ---
 
+## Stop an approved Restore Run
+
+Open the Restore Request on the signed-in Unraid Vault page. While the run is active, select **Stop Restore Run** and confirm the run ID and restore location. Stopping can leave the restore location partly restored. Check the recorded outcome in the request. If the restore finishes before it can stop, Vault shows the outcome of that restore.
+
 ## Restoring Across Backup Jobs
 
 The Restore wizard supports selecting items that belong to different backup jobs (for example, restoring containers from an appdata job together with a VM from a virtualisation job):

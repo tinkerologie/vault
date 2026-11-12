@@ -13,14 +13,24 @@
   let approvalError = $state('')
   let approving = $state(false)
   let confirm = $state(false)
+  let confirmStop = $state(false)
+  let sendingStop = $state(false)
+  let stopStatus = $state('')
+  let stopError = $state('')
   let passphrase = $state('')
   let logs = $state([])
   let logsLoading = $state(false)
   let logsError = $state(false)
   const nativeApproval = canApproveRestoreRequest()
+  let runStatus = $derived(request?.run?.status || request?.status)
+  let stopping = $derived(runStatus === 'running' && (stopStatus === 'stopping' || request?.run?.stopping))
+  let canStop = $derived(nativeApproval && request?.run_id && request.run?.active &&
+    runStatus === 'running' && !stopping && !stopStatus)
+  let displayedStatus = $derived(runStatus === 'running' && stopStatus && stopStatus !== 'stopping' ? stopStatus : runStatus)
 
   const lifetime = new AbortController()
   let refreshTimer
+  let refreshVersion = 0
 
   onMount(() => {
     void refresh()
@@ -32,15 +42,17 @@
   })
 
   async function refresh() {
+    clearTimeout(refreshTimer)
+    const version = ++refreshVersion
     try {
       const result = await api.getRestoreRequest(requestId)
-      if (lifetime.signal.aborted) return
+      if (lifetime.signal.aborted || version !== refreshVersion) return
       request = result
       loadError = ''
     } catch (error) {
-      if (!lifetime.signal.aborted) loadError = reviewError(error)
+      if (!lifetime.signal.aborted && version === refreshVersion) loadError = reviewError(error)
     } finally {
-      if (!lifetime.signal.aborted) {
+      if (!lifetime.signal.aborted && version === refreshVersion) {
         loading = false
         if (request?.status === 'running') refreshTimer = setTimeout(refresh, 1500)
       }
@@ -59,6 +71,29 @@
       passphrase = ''
       confirm = false
       approving = false
+      if (!lifetime.signal.aborted) await refresh()
+    }
+  }
+
+  async function stop() {
+    if (!canStop || sendingStop) return
+    const runId = request.run_id
+    sendingStop = true
+    stopError = ''
+    try {
+      const result = await api.stopRestoreRun(runId)
+      if (lifetime.signal.aborted || request.run_id !== runId) return
+      if (result?.run_id !== runId) throw new Error('Could not confirm the stop request.')
+      if (result.status === 'running') {
+        stopError = 'This Restore Run is no longer active. Refresh its status to check the outcome.'
+      } else {
+        stopStatus = result.status
+      }
+    } catch (error) {
+      if (!lifetime.signal.aborted) stopError = error.message
+    } finally {
+      confirmStop = false
+      sendingStop = false
       if (!lifetime.signal.aborted) await refresh()
     }
   }
@@ -108,6 +143,7 @@
     approval_persistence_failed: 'The approval could not be saved to flash. The Restore did not start.',
     daemon_restarted: 'The daemon restarted during this Restore. The target may be partially restored.',
     restore_failed: 'The Restore failed. Check the Restore Run log for details.',
+    stopped_by_operator: 'The operator stopped the Restore Run. The restore location may be partly restored.',
     reviewed_operation_revalidated: 'Reviewed operation revalidated',
     required_backup_data_staged: 'Required backup data staged',
     folder_restore_completed: 'Folder Restore completed',
@@ -204,9 +240,19 @@
     {#if request.run_id}
       <div class="mt-4 border-t border-border pt-3 text-sm">
         <h3 class="font-medium text-text">Restore Run #{request.run_id}</h3>
-        <p role="status" class="mt-1 capitalize text-text">{request.run?.status || request.status}
-          {#if request.run?.percent != null} · {request.run.percent}%{/if}
+        <p role="status" class="mt-1 capitalize text-text">{stopping ? 'Stopping…' : displayedStatus}
+          {#if !stopping && displayedStatus === 'running' && request.run?.percent != null} · {request.run.percent}%{/if}
         </p>
+        {#if canStop}
+          <button type="button" class="mt-2 hit-target rounded-lg border border-danger px-3 py-1 font-medium text-danger"
+            onclick={() => { confirmStop = true }}>Stop Restore Run</button>
+        {/if}
+        <ConfirmDialog show={confirmStop} title={`Stop Restore Run #${request.run_id}`}
+          message="Stopping can leave the restore location partly restored."
+          confirmLabel="Stop Restore Run" busy={sendingStop} confirmDisabled={!canStop}
+          source={[{ label: 'Restore location', value: request.resolved_path }]}
+          onconfirm={stop} oncancel={() => { confirmStop = false }} />
+        {#if stopError}<p role="alert" class="mt-2 text-danger">{stopError}</p>{/if}
         {#if request.run}
           <p class="mt-1 text-text-muted">{request.run.items_done} of {request.run.items_total} items restored
             {#if request.run.items_failed} · {request.run.items_failed} failed{/if}

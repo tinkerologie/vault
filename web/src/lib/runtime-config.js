@@ -140,15 +140,22 @@ export function canApproveRestoreRequest() {
 }
 
 export function buildRestoreApprovalRequest(method, id, { body }) {
-  if (!canApproveRestoreRequest()) throw new Error('Open the signed-in Unraid Vault page to approve.')
-  const cfg = getRuntimeConfig()
-  const form = new URLSearchParams({
+  return buildNativeRestoreAction(method, {
     action: 'approve',
     id,
     review_digest: body.reviewDigest,
     passphrase: body.passphrase,
-    csrf_token: cfg.csrfToken,
   })
+}
+
+export function buildRestoreStopRequest(method, id) {
+  return buildNativeRestoreAction(method, { action: 'stop', id })
+}
+
+function buildNativeRestoreAction(method, fields) {
+  if (!canApproveRestoreRequest()) throw new Error('Open the signed-in Unraid Vault page.')
+  const cfg = getRuntimeConfig()
+  const form = new URLSearchParams({ ...fields, csrf_token: cfg.csrfToken })
   return {
     url: cfg.restoreRequestActionPath,
     options: {

@@ -514,7 +514,8 @@ export function handleProgressMessage(msg, jobNameResolver) {
       return true
     }
     case 'job_cancelling': {
-      if (activeRun && msg.job_id === activeRun.job_id) cancelling = true
+      if (activeRun && msg.job_id === activeRun.job_id &&
+          (msg.run_id == null || msg.run_id === activeRun.run_id)) cancelling = true
       return true
     }
     case 'job_run_completed': {
