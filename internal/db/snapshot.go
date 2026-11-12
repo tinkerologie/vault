@@ -604,36 +604,7 @@ func (sm *SnapshotManager) backupWorkingDBToPath(dest string) error {
 	tmp := dest + ".tmp"
 	_ = removeValidated(tmp)
 
-	conn, err := sm.db.Conn(context.Background())
-	if err != nil {
-		return fmt.Errorf("acquire connection: %w", err)
-	}
-	defer conn.Close()
-
-	err = conn.Raw(func(driverConn any) error {
-		type backuper interface {
-			NewBackup(string) (*sqlite.Backup, error)
-		}
-		bk, ok := driverConn.(backuper)
-		if !ok {
-			return fmt.Errorf("driver connection does not support online backup")
-		}
-		bck, err := bk.NewBackup(tmp)
-		if err != nil {
-			return fmt.Errorf("init backup: %w", err)
-		}
-		for more := true; more; {
-			more, err = bck.Step(-1)
-			if err != nil {
-				// Finish releases the backup handle and destination lock
-				// even when a step failed; the step error stays primary.
-				_ = bck.Finish()
-				return err
-			}
-		}
-		return bck.Finish()
-	})
-	if err != nil {
+	if err := sm.db.onlineBackup(context.Background(), tmp, -1); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}

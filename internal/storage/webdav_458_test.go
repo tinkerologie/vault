@@ -372,7 +372,7 @@ func TestWebDAV458_MkdirRetryAndFatal(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.set(failWhen("MKCOL", func(string) bool { return true }, http.StatusConflict))
-	if err := mkdirAllWithRetry(a.client(), "/exists"); err != nil {
+	if err := mkdirAllWithRetry(t.Context(), a.client(), "/exists"); err != nil {
 		t.Errorf("mkdirAllWithRetry on existing dir: %v", err)
 	}
 }

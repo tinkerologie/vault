@@ -171,9 +171,11 @@ type Runner struct {
 	escrowMu        sync.Mutex
 	escrowed        map[int64]string
 	snapshotManager *db.SnapshotManager
-	backgroundWork  sync.WaitGroup
-	breaker         *Breaker
-	mu              sync.Mutex
+	// backupDatabaseSnapshot makes snapshot failures deterministic in tests.
+	backupDatabaseSnapshot func(context.Context, string) error
+	backgroundWork         sync.WaitGroup
+	breaker                *Breaker
+	mu                     sync.Mutex
 	// onAdmitted runs, under activeMu, whenever a task is counted active;
 	// tests use it to catch a task admitted after Drain returned. Nil in
 	// production.
@@ -256,12 +258,13 @@ const (
 // New creates a new Runner.
 func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 	r := &Runner{
-		db:                database,
-		hub:               hub,
-		serverKey:         serverKey,
-		queueCancelledIDs: make(map[string]struct{}),
-		drainStarted:      make(chan struct{}),
-		progress:          newProgressTracker(nil),
+		db:                     database,
+		hub:                    hub,
+		serverKey:              serverKey,
+		queueCancelledIDs:      make(map[string]struct{}),
+		drainStarted:           make(chan struct{}),
+		progress:               newProgressTracker(nil),
+		backupDatabaseSnapshot: database.BackupToFile,
 	}
 	failThreshold, _ := database.GetSettingInt("breaker_fail_threshold", docsmeta.DefaultInt("breaker_fail_threshold"))
 	closeSuccesses, _ := database.GetSettingInt("breaker_close_successes", docsmeta.DefaultInt("breaker_close_successes"))
@@ -2205,7 +2208,7 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 		// hold the run-slot mutex indefinitely.
 		localDest := dest // stable copy for closure
 		r.runFinalizationStep("database-backup", jobID, runID, finalizeDBBackupTimeout, func(stepCtx context.Context) {
-			r.backupDatabase(stepCtx, localDest)
+			r.finalizeDatabaseBackup(stepCtx, localDest, jobID, runID)
 		})
 
 		// Persist database to cache drive and USB backup after successful backup.

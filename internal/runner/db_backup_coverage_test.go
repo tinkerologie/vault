@@ -69,7 +69,9 @@ func TestBackupDatabase_HappyPath(t *testing.T) {
 	}
 
 	jobDest := db.StorageDestination{ID: destID, Type: "local", Config: cfg}
-	r.backupDatabase(t.Context(), jobDest)
+	if err := r.backupDatabase(t.Context(), jobDest); err != nil {
+		t.Fatal(err)
+	}
 
 	// Confirm both timestamped + latest pointer files were written.
 	entries, err := os.ReadDir(filepath.Join(storageDir, dbBackupBaseDir))
@@ -91,8 +93,9 @@ func TestBackupDatabaseToDest_BadConfig(t *testing.T) {
 	if err := writeFileSafe(t, dbPath, []byte("dummy")); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	// Should not panic; just logs and returns.
-	r.backupDatabaseToDest(t.Context(), dest, dbPath, "")
+	if err := r.backupDatabaseToDest(t.Context(), dest, dbPath, "2026-11-12T00-00-00", ""); err == nil {
+		t.Fatal("expected invalid adapter configuration error")
+	}
 }
 
 // Tiny unique-name helper isolated from other tests' counters.
