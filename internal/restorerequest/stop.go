@@ -1,6 +1,11 @@
 package restorerequest
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var ErrStopPersistence = errors.New("the stop was sent, but its audit record could not be saved to flash")
 
 type StopResult struct {
 	RunID  int64  `json:"run_id"`
@@ -10,7 +15,14 @@ type StopResult struct {
 // StopRun is called only after the native proof has been verified for this run.
 func (s *Service) StopRun(ctx context.Context, runID int64, operator string) (StopResult, error) {
 	result := StopResult{RunID: runID, Status: "stopping"}
-	if s.runner.StopRestoreRun(runID, operator) {
+	stopping, err := s.runner.StopRestoreRun(ctx, runID, operator)
+	if err != nil {
+		return StopResult{}, err
+	}
+	if stopping {
+		if s.flushChange(true) != "" {
+			return StopResult{}, ErrStopPersistence
+		}
 		return result, nil
 	}
 	status, err := s.db.GetApprovedRestoreRunStatus(ctx, runID)

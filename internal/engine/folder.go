@@ -665,10 +665,18 @@ func (h *FolderHandler) restoreChunkedEntries(ctx context.Context, item BackupIt
 		}
 		var written int64
 		for _, cid := range e.Chunks {
+			if err := ctx.Err(); err != nil {
+				_ = out.Close()
+				return err
+			}
 			body, err := get(cid)
 			if err != nil {
 				_ = out.Close()
 				return fmt.Errorf("restore %s: %w", fp, err)
+			}
+			if err := ctx.Err(); err != nil {
+				_ = out.Close()
+				return err
 			}
 			if _, err := out.Write(body); err != nil {
 				_ = out.Close()

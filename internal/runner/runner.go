@@ -208,8 +208,7 @@ type Runner struct {
 	cancellingJobID          int64
 	cancellingRunID          int64
 	cancellingRestoreRequest string
-	restoreStopRequestedAt   *time.Time
-	restoreStoppedBy         string
+	restoreStopRequested     bool
 
 	// lastProgress tracks the last progress update time for stall detection.
 	lastProgressMu sync.Mutex

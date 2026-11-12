@@ -31,6 +31,15 @@ type ApprovedRestoreStep struct {
 	Objects []storage.FileInfo
 }
 
+// An adapter closed by cancellation may report a transport error instead of
+// the context error. Preserve the context outcome at the storage boundary.
+func approvedRestoreStorageError(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return changedApprovedRestore(err)
+}
+
 func (plan ApprovedRestorePlan) RequiresPassphrase() bool {
 	if plan.Work != nil && plan.Work.RequiresPassphrase() {
 		return true

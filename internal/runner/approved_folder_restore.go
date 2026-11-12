@@ -66,10 +66,7 @@ func (work FolderRestoreWork) restore(ctx context.Context, r *Runner, approved *
 		}
 		start, end := i*40/len(plan.Steps), (i+1)*40/len(plan.Steps)
 		if err := r.stageRestorePointItemFrom(ctx, plan.Job, plan.Destination, step.Point, plan.Item.ItemName, dir, passphrase, start, end, reporter, step.Objects); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return changedApprovedRestore(err)
+			return approvedRestoreStorageError(ctx, err)
 		}
 		if err := engine.ValidateStagedFolder(ctx, dir, work.Target.Resolved); err != nil {
 			return changedApprovedRestore(err)
@@ -79,11 +76,9 @@ func (work FolderRestoreWork) restore(ctx context.Context, r *Runner, approved *
 	if len(steps) == 0 {
 		return ErrReviewedRestoreChanged
 	}
-	approved.checks = append(approved.checks, FolderDataStaged)
-	if err := approved.Revalidate(ctx); err != nil {
+	if err := approved.revalidateStaged(ctx); err != nil {
 		return err
 	}
-	approved.checks = append(approved.checks, FolderReviewRevalidated)
 
 	writes := make(map[string]os.FileInfo)
 	ctx = engine.WithRestoreWrites(engine.WithReviewedFolderTarget(ctx, work.Target), writes)
@@ -199,18 +194,18 @@ func (p *preparedFolderChunks) get(id dedup.ID) ([]byte, error) {
 func (r *Runner) stageApprovedFolderChunks(ctx context.Context, plan ApprovedRestorePlan, target string, manifestID dedup.ID, stage, passphrase string) (*preparedFolderChunks, error) {
 	adapter, err := newRunAdapter(ctx, plan.Destination)
 	if err != nil {
-		return nil, changedApprovedRestore(err)
+		return nil, approvedRestoreStorageError(ctx, err)
 	}
 	defer storage.CloseAdapter(adapter)
 	stopOnCancel := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
 	defer stopOnCancel()
 	repo, err := OpenDedupRepoWithFallback(r.db, adapter, plan.Destination.ID, r.serverKey, passphrase)
 	if err != nil {
-		return nil, changedApprovedRestore(err)
+		return nil, approvedRestoreStorageError(ctx, err)
 	}
 	manifest, err := repo.GetManifest(manifestID)
 	if err != nil {
-		return nil, changedApprovedRestore(err)
+		return nil, approvedRestoreStorageError(ctx, err)
 	}
 	cache, err := os.CreateTemp(stage, "chunks-")
 	if err != nil {
@@ -237,7 +232,7 @@ func (r *Runner) stageApprovedFolderChunks(ctx context.Context, plan ApprovedRes
 			if !found {
 				data, err := repo.Get(id)
 				if err != nil {
-					return nil, changedApprovedRestore(err)
+					return nil, approvedRestoreStorageError(ctx, err)
 				}
 				if _, err := cache.Write(data); err != nil {
 					return nil, err

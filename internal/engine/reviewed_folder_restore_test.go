@@ -10,7 +10,42 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tinkerologie/vault/internal/dedup"
 )
+
+func TestReviewedChunkedFolderStopsBeforeWritingNextChunk(t *testing.T) {
+	configured := t.TempDir()
+	resolved, err := ResolveFolderRestoreTarget(configured, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := ReviewedFolderTarget{Configured: configured, Resolved: resolved, Original: true}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	first, second, third := dedup.ID{1}, dedup.ID{2}, dedup.ID{3}
+	manifest := dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+		"restored.txt": {Size: 3, Mode: 0o600, Chunks: []dedup.ID{first, second, third}},
+	}}
+	get := func(id dedup.ID) ([]byte, error) {
+		if id == third {
+			t.Error("read another chunk after cancellation")
+		}
+		if id == second {
+			cancel()
+		}
+		return []byte{'a' + id[0] - 1}, nil
+	}
+	folder := &FolderHandler{}
+	err = folder.RestorePreparedChunked(ctx, BackupItem{Name: "archive"}, target, manifest, get, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("restore error = %v, want cancellation", err)
+	}
+	data, err := os.ReadFile(filepath.Join(configured, "restored.txt"))
+	if err != nil || string(data) != "a" {
+		t.Fatalf("restore wrote beyond the first chunk: %q %v", data, err)
+	}
+}
 
 func TestReviewedFolderPreflightRejectsOversizedArchiveEntry(t *testing.T) {
 	staging := t.TempDir()

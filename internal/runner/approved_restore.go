@@ -99,14 +99,11 @@ func (r *Runner) persistTrackedRestore(run db.JobRun, approved *ApprovedRestore,
 	// stop that loses this race reads the committed outcome.
 	r.cancelMu.Lock()
 	defer r.cancelMu.Unlock()
-	run.StopRequestedAt = r.restoreStopRequestedAt
-	run.StoppedBy = r.restoreStoppedBy
 	r.cancelFn = nil
 	r.cancellingJobID = 0
 	r.cancellingRunID = 0
 	r.cancellingRestoreRequest = ""
-	r.restoreStopRequestedAt = nil
-	r.restoreStoppedBy = ""
+	r.restoreStopRequested = false
 	if approved == nil {
 		return r.db.UpdateJobRun(run)
 	}
