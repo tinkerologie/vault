@@ -6,10 +6,14 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/net/webdav"
 
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
@@ -219,4 +223,111 @@ func TestDatabaseBackupTimestampedFailurePreservesLatest(t *testing.T) {
 	if got := readDatabaseExport(t, latest, ""); string(got) != previous {
 		t.Error("timestamped write failure replaced the previous latest copy")
 	}
+}
+
+func TestDatabaseBackupLatestFailureKeepsTimestampedSnapshot(t *testing.T) {
+	r, database := a458Runner(t)
+	root := t.TempDir()
+	dest := a458LocalDest(t, database, "job destination", root)
+	dir := filepath.Join(root, dbBackupBaseDir)
+	if err := os.MkdirAll(filepath.Join(dir, "vault.db.latest.db"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := filepath.Join(t.TempDir(), "snapshot.db")
+	if err := database.BackupToFile(t.Context(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	const stamp = "2026-11-12T01-00-00"
+	err := r.backupDatabaseToDest(t.Context(), dest, snapshot, stamp, "")
+	if err == nil || !strings.Contains(err.Error(), "latest write") {
+		t.Fatalf("expected latest write failure, got %v", err)
+	}
+	if got, want := readDatabaseExport(t, filepath.Join(dir, "vault.db."+stamp+".db"), ""), readDatabaseExport(t, snapshot, ""); !bytes.Equal(got, want) {
+		t.Error("timestamped snapshot differs after latest write failed")
+	}
+}
+
+func TestDatabaseBackupCancellationStopsPublication(t *testing.T) {
+	t.Run("before Destination open", func(t *testing.T) {
+		r, database := a458Runner(t)
+		root := t.TempDir()
+		dest := a458LocalDest(t, database, "job destination", root)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		r.backupDatabaseSnapshot = func(ctx context.Context, path string) error {
+			err := database.BackupToFile(ctx, path)
+			cancel()
+			return err
+		}
+		if err := r.backupDatabase(ctx, dest); !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected cancellation after snapshot, got %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(root, dbBackupBaseDir)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("canceled export touched the Destination: %v", err)
+		}
+		if err := r.backupDatabaseToDest(ctx, dest, "", "", ""); !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled Destination open returned %v", err)
+		}
+	})
+
+	t.Run("during timestamped upload", func(t *testing.T) {
+		r, database := a458Runner(t)
+		root := t.TempDir()
+		extraRoot := t.TempDir()
+		extra := a458LocalDest(t, database, "opted-in destination", extraRoot)
+		extra.BackupDatabaseEnabled = true
+		if err := database.UpdateStorageDestination(extra); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		dav := &webdav.Handler{FileSystem: webdav.Dir(root), LockSystem: webdav.NewMemLS()}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if req.Method == http.MethodPut && strings.HasPrefix(filepath.Base(req.URL.Path), "vault.db.2") {
+				cancel()
+			}
+			dav.ServeHTTP(w, req)
+		}))
+		defer server.Close()
+		dest := db.StorageDestination{Type: "webdav", Config: `{"url":"` + server.URL + `"}`}
+		if err := r.backupDatabase(ctx, dest); !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected cancellation during upload, got %v", err)
+		}
+		dir := filepath.Join(root, dbBackupBaseDir)
+		if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 ||
+			!strings.HasPrefix(entries[0].Name(), "vault.db.2") {
+			t.Errorf("expected only a timestamped snapshot: %v, %v", entries, err)
+		}
+		if _, err := os.Stat(filepath.Join(extraRoot, dbBackupBaseDir)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("canceled export wrote to the opted-in Destination: %v", err)
+		}
+	})
+}
+
+func TestDatabaseBackupReportsStagingAndDestinationListingErrors(t *testing.T) {
+	r, database := a458Runner(t)
+	root := t.TempDir()
+	dest := a458LocalDest(t, database, "job destination", root)
+	t.Run("private staging unavailable", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "not-a-directory")
+		if err := os.WriteFile(file, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("TMPDIR", file)
+		t.Setenv("TMP", file)
+		if err := r.backupDatabase(t.Context(), dest); err == nil || !strings.Contains(err.Error(), "staging database snapshot") {
+			t.Fatalf("expected staging error, got %v", err)
+		}
+	})
+	t.Run("opted-in Destination listing unavailable", func(t *testing.T) {
+		if _, err := database.Exec("ALTER TABLE storage_destinations RENAME TO fixture_destinations"); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.backupDatabase(t.Context(), dest); err == nil || !strings.Contains(err.Error(), "listing opt-in destinations") {
+			t.Fatalf("expected Destination listing error, got %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(root, dbBackupBaseDir, "vault.db.latest.db")); err != nil {
+			t.Fatalf("job Destination did not receive its snapshot: %v", err)
+		}
+	})
 }

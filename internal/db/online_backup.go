@@ -88,17 +88,18 @@ func (d *DB) onlineBackup(ctx context.Context, dest string, pagesPerStep int32) 
 				err = finishErr
 			}
 		}()
-		for {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			more, err := backup.Step(pagesPerStep)
-			if err != nil {
-				return err
-			}
-			if !more {
-				return ctx.Err()
-			}
-		}
+		return copyOnlineBackupPages(ctx, pagesPerStep, backup.Step)
 	})
+}
+
+func copyOnlineBackupPages(ctx context.Context, pagesPerStep int32, step func(int32) (bool, error)) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		more, err := step(pagesPerStep)
+		if err != nil || !more {
+			return err
+		}
+	}
 }
