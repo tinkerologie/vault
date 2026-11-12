@@ -96,7 +96,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | POST   | `/jobs/{id}/restore`                               | Start a restore. Set `destination` to an absolute path or, for a ZFS item, a dataset name |
 | GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                            |
 
-A Restore Request run uses the [exact-run stop action](#folder-restore-requests).
+A Restore Request run uses the [exact-run stop action](#restore-requests).
 
 ## Storage
 

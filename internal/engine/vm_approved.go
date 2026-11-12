@@ -176,7 +176,7 @@ func inspectVMBackup(xmlData, metadata []byte, files []string) (VMBackupEvidence
 			return evidence, meta, inventory, ErrVMBackupArtifactMissing
 		}
 		usedFiles[record.BackupFile] = true
-		evidence.Disks = append(evidence.Disks, VMBackupDisk{record.Target, record.BackupFile, record.Format})
+		evidence.Disks = append(evidence.Disks, VMBackupDisk(record))
 	}
 	return evidence, meta, inventory, nil
 }
@@ -302,7 +302,9 @@ func validVMTargetName(target string) bool {
 		return false
 	}
 	for _, c := range target {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.') {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '-', c == '.':
+		default:
 			return false
 		}
 	}
