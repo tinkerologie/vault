@@ -7,8 +7,8 @@ import (
 )
 
 var (
-	errOperatorRestoreStop = errors.New("Restore Run stopped by the operator")
-	errRestoreWatchdog     = errors.New("Restore Run stalled")
+	errOperatorRestoreStop = errors.New("restore run stopped by the operator")
+	errRestoreWatchdog     = errors.New("restore run stalled")
 )
 
 func (r *Runner) publishRestoreCancellation(status *RunStatus, cancel context.CancelCauseFunc) {

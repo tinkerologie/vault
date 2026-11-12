@@ -92,7 +92,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                                |
 | GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                      |
 | POST   | `/jobs/{id}/run`                                   | Start a backup immediately                                                                |
-| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup or manual restore, or remove a queued operation                    |
+| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup or manual restore, or remove a queued operation                   |
 | POST   | `/jobs/{id}/restore`                               | Start a restore. Set `destination` to an absolute path or, for a ZFS item, a dataset name |
 | GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                            |
 
