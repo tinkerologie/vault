@@ -1923,6 +1923,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 // (tar-on-disk) and dedup-chunked restore paths so the two share one
 // container-recreation pipeline.
 type restoreInspect struct {
+	ID     string `json:"Id"`
 	Name   string `json:"Name"`
 	Config struct {
 		Hostname     string            `json:"Hostname"`
@@ -1935,6 +1936,7 @@ type restoreInspect struct {
 		Labels       map[string]string `json:"Labels"`
 		WorkingDir   string            `json:"WorkingDir"`
 		ExposedPorts map[string]any    `json:"ExposedPorts"`
+		MacAddress   string            `json:"MacAddress"` // legacy Docker inspect field
 	} `json:"Config"`
 	HostConfig struct {
 		Binds        []string `json:"Binds"`
@@ -1966,11 +1968,7 @@ type restoreInspect struct {
 		Memory     int64             `json:"Memory"`
 	} `json:"HostConfig"`
 	NetworkSettings struct {
-		Networks map[string]struct {
-			IPAMConfig *struct {
-				IPv4Address string `json:"IPv4Address"`
-			} `json:"IPAMConfig"`
-		} `json:"Networks"`
+		Networks map[string]restoreNetworkEndpoint `json:"Networks"`
 	} `json:"NetworkSettings"`
 	State struct {
 		Running bool `json:"Running"`
@@ -2021,9 +2019,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 //     inspect struct (rewriting bind source paths when restoring to an
 //     alternate destination).
 //  3. Create the container.
-//  4. Restore the Unraid template XML (if sourceDir is non-empty and a
-//     template.xml sidecar exists). The dedup-chunked path passes
-//     sourceDir="" because no template is captured in that scope.
+//  4. Restore the Unraid template XML if the backup contains the sidecar.
 //  5. Repopulate Unraid's docker update-status cache so the "Check for
 //     Updates" UI badge works after restore.
 //  6. Start the container if it was originally running.
@@ -2172,27 +2168,19 @@ func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item
 		})
 	}
 
-	// Build networking config with endpoint settings.
-	networkConfig := &network.NetworkingConfig{}
-	if len(inspect.NetworkSettings.Networks) > 0 {
-		networkConfig.EndpointsConfig = make(map[string]*network.EndpointSettings)
-		for netName, netCfg := range inspect.NetworkSettings.Networks {
-			es := &network.EndpointSettings{}
-			if netCfg.IPAMConfig != nil && netCfg.IPAMConfig.IPv4Address != "" {
-				if addr, err := netip.ParseAddr(netCfg.IPAMConfig.IPv4Address); err == nil {
-					es.IPAMConfig = &network.EndpointIPAMConfig{
-						IPv4Address: addr,
-					}
-				}
-			}
-			networkConfig.EndpointsConfig[netName] = es
+	// The DockerMan sidecar records an explicitly configured primary MAC.
+	// Read it before Docker create, then reuse it when restoring the template.
+	var template []byte
+	if sourceDir != "" {
+		if data, err := os.ReadFile(filepath.Join(sourceDir, containerTemplateFile)); err == nil { // #nosec G304 — sourceDir is vault-controlled
+			template = data
 		}
 	}
 
 	created, err := h.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config:           containerConfig,
 		HostConfig:       hostConfig,
-		NetworkingConfig: networkConfig,
+		NetworkingConfig: inspect.restoreNetworkingConfig(template),
 		Name:             containerName,
 	})
 	if err != nil {
@@ -2203,21 +2191,17 @@ func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item
 	// path: the classic backup writes the template into its source directory,
 	// and the chunked restore materialises the template it captured into a
 	// directory of the same shape (see writeChunkedRestoreSidecars).
-	if sourceDir != "" {
+	if template != nil {
 		progress(item.Name, 80, "restoring template")
-		templateSrc := filepath.Join(sourceDir, containerTemplateFile)
-		if data, readErr := os.ReadFile(templateSrc); readErr == nil { // #nosec G304 — sourceDir is vault-controlled temp directory
-			// Keep the template in step with the binds the restore created.
-			// With no custom destination there is nothing to rewrite and the
-			// template is copied back byte-for-byte, as before (issue #336).
-			if len(templateRewrites) > 0 {
-				data = rewriteTemplateVolumePaths(data, templateRewrites)
-				log.Printf("engine: restore: rewrote %d volume path(s) in the Unraid template for %s so Edit shows the same mappings as the running container", len(templateRewrites), containerName)
-			}
-			templateDest := containerTemplatePath(containerName) // #nosec G703 //nolint:gosec // path is constructed from trusted container name
-			if mkErr := os.MkdirAll(filepath.Dir(templateDest), 0750); mkErr == nil {
-				_ = os.WriteFile(templateDest, data, 0600) // #nosec G703 //nolint:gosec // best-effort restore of template
-			}
+		// Keep the template in step with the binds the restore created.
+		// With no custom destination, copy the template byte-for-byte (#336).
+		if len(templateRewrites) > 0 {
+			template = rewriteTemplateVolumePaths(template, templateRewrites)
+			log.Printf("engine: restore: rewrote %d volume path(s) in the Unraid template for %s so Edit shows the same mappings as the running container", len(templateRewrites), containerName)
+		}
+		templateDest := containerTemplatePath(containerName) // #nosec G703 //nolint:gosec // path is constructed from trusted container name
+		if mkErr := os.MkdirAll(filepath.Dir(templateDest), 0750); mkErr == nil {
+			_ = os.WriteFile(templateDest, template, 0600) // #nosec G703 //nolint:gosec // best-effort restore of template
 		}
 	}
 
