@@ -120,9 +120,9 @@ func TestClosedDatabasePathsA458(t *testing.T) {
 		t.Fatal("ScanStorageOrphans: want list-jobs error")
 	}
 
-	// DB backup still writes the file to the job destination but the
-	// opt-in listing fails.
-	r.backupDatabase(context.Background(), dest)
+	if err := r.backupDatabase(context.Background(), dest); err == nil {
+		t.Fatal("expected database snapshot to fail after close")
+	}
 
 	b := NewBreaker(2, 2)
 	b.RecordFailure(d, db.StorageDestination{ID: dest.ID, BreakerState: "closed"})                         // RecordDestinationFailure error
@@ -151,28 +151,35 @@ func TestBackupDatabaseFanOutA458(t *testing.T) {
 	}
 
 	// Job destination is also opted in → deduplicated; extra gets a copy.
-	r.backupDatabase(context.Background(), jobDest)
+	if err := r.backupDatabase(context.Background(), jobDest); err != nil {
+		t.Fatal(err)
+	}
 	if entries, err := os.ReadDir(filepath.Join(extraDir, dbBackupBaseDir)); err != nil || len(entries) == 0 {
 		t.Fatalf("extra destination got no DB backup: %v", err)
 	}
 
-	// A cancelled context stops the fan-out before the extra destination
-	// and closes the job adapter immediately.
+	// A cancelled context prevents snapshot creation and publication.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	r.backupDatabase(ctx, extra)
+	if err := r.backupDatabase(ctx, extra); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation, got %v", err)
+	}
 
-	// A destination whose root is a regular file makes both writes fail.
+	// A destination whose root is a regular file rejects the timestamped copy.
 	blocker := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r.backupDatabaseToDest(context.Background(), db.StorageDestination{
+	if err := r.backupDatabaseToDest(context.Background(), db.StorageDestination{
 		Name: "broken", Type: "local", Config: `{"path":"` + filepath.ToSlash(blocker) + `"}`,
-	}, d.Path(), "")
+	}, d.Path(), "2026-11-12T00-00-00", ""); err == nil {
+		t.Fatal("expected an error from the blocked destination")
+	}
 
 	// An in-memory / pathless DB is never backed up.
-	(&Runner{db: &db.DB{}}).backupDatabase(context.Background(), jobDest)
+	if err := (&Runner{db: &db.DB{}}).backupDatabase(context.Background(), jobDest); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestPruneDBBackupsErrorsA458(t *testing.T) {

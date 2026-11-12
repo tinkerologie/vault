@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Include committed SQLite WAL changes in Destination Database Backups. Report export failures separately and keep the previous latest copy when snapshot creation fails (#648).
 - Preserve static IPv6 addresses, network aliases, gateway priorities, and the configured DockerMan MAC in classic and chunked container restores (#649).
 
 ## [v2026.11.01] - 2026-11-10

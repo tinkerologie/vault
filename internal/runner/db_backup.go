@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -27,59 +28,57 @@ const dbBackupBaseDir = "_vault"
 // kept in addition.
 const dbBackupsKept = 14
 
-// backupDatabase copies the working database to (a) the job's own
-// destination AND (b) any other destination flagged with
-// backup_database_enabled. Both timestamped and "latest" pointer
-// files are written. Encrypted with the global passphrase when one
-// is configured; plaintext + warning otherwise.
-//
-// All failures are logged but never propagated — DB backup is
-// best-effort and must never fail the user's backup job.
-func (r *Runner) backupDatabase(ctx context.Context, jobDest db.StorageDestination) {
+// backupDatabase publishes one standalone snapshot to the job destination
+// and every opted-in destination. The caller reports errors separately from
+// the workload backup outcome.
+func (r *Runner) backupDatabase(ctx context.Context, jobDest db.StorageDestination) error {
 	dbPath := r.db.Path()
 	if dbPath == "" || dbPath == ":memory:" {
-		return
+		return nil
 	}
-
-	// Checkpoint the WAL so the on-disk file is self-contained when we read
-	// it byte-by-byte. Best-effort: a busy checkpoint is fine, the file is
-	// still readable via SQLite's recovery on the destination side, just
-	// slightly larger.
-	if conn, err := r.db.Conn(context.Background()); err == nil {
-		if _, ckErr := conn.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`); ckErr != nil {
-			log.Printf("db_backup: wal_checkpoint failed: %v (continuing)", ckErr)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	dir, err := os.MkdirTemp("", "vault-db-backup-*")
+	if err != nil {
+		return fmt.Errorf("staging database snapshot: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(dir); err != nil {
+			log.Printf("db_backup: warning — removing snapshot staging directory: %v", err)
 		}
-		_ = conn.Close()
+	}()
+	snapshot := filepath.Join(dir, "vault.db")
+	if err := r.backupDatabaseSnapshot(ctx, snapshot); err != nil {
+		return fmt.Errorf("snapshot: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
+	stamp := time.Now().UTC().Format("2006-01-02T15-04-05")
 	passphrase := r.resolvePassphrase()
 	if passphrase == "" {
 		log.Printf("db_backup: warning — no encryption passphrase configured; DB backup will be written in plaintext")
 	}
 
-	seen := make(map[int64]struct{})
-
-	// (a) Always write to the job's own destination.
-	r.backupDatabaseToDest(ctx, jobDest, dbPath, passphrase)
-	seen[jobDest.ID] = struct{}{}
-
-	// (b) Fan out to opted-in destinations.
+	result := r.backupDatabaseToDest(ctx, jobDest, snapshot, stamp, passphrase)
+	if err := ctx.Err(); err != nil {
+		return errors.Join(result, err)
+	}
 	extras, err := r.db.ListDBBackupDestinations()
 	if err != nil {
-		log.Printf("db_backup: listing opt-in destinations: %v", err)
-		return
+		return errors.Join(result, fmt.Errorf("listing opt-in destinations: %w", err))
 	}
 	for _, d := range extras {
 		if ctx.Err() != nil {
-			log.Printf("db_backup: cancelled before destination %q; skipping remaining fan-out", d.Name)
-			return
+			return errors.Join(result, ctx.Err())
 		}
-		if _, dup := seen[d.ID]; dup {
-			continue
+		if d.ID != jobDest.ID {
+			result = errors.Join(result, r.backupDatabaseToDest(ctx, d, snapshot, stamp, passphrase))
 		}
-		r.backupDatabaseToDest(ctx, d, dbPath, passphrase)
-		seen[d.ID] = struct{}{}
 	}
+	return result
 }
 
 // backupDatabaseToDest writes the DB file to a single destination.
@@ -87,11 +86,13 @@ func (r *Runner) backupDatabase(ctx context.Context, jobDest db.StorageDestinati
 //
 // Two paths are written: a timestamped historical copy and a stable
 // "latest" pointer. Both are encrypted when passphrase is non-empty.
-func (r *Runner) backupDatabaseToDest(ctx context.Context, dest db.StorageDestination, dbPath, passphrase string) {
+func (r *Runner) backupDatabaseToDest(ctx context.Context, dest db.StorageDestination, snapshot, stamp, passphrase string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		log.Printf("db_backup: adapter for %q: %v", dest.Name, err)
-		return
+		return fmt.Errorf("destination %d (%q) adapter: %w", dest.ID, dest.Name, err)
 	}
 	defer storage.CloseAdapter(adapter)
 	// Closing the adapter on cancellation aborts an in-flight write so a
@@ -99,24 +100,42 @@ func (r *Runner) backupDatabaseToDest(ctx context.Context, dest db.StorageDestin
 	stopOnCancel := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
 	defer stopOnCancel()
 
-	stamp := time.Now().UTC().Format("2006-01-02T15-04-05")
 	ext := ".db"
 	if passphrase != "" {
 		ext = ".age"
 	}
 
 	timestampedPath := filepath.Join(dbBackupBaseDir, fmt.Sprintf("vault.db.%s%s", stamp, ext))
-	if err := writeDBOnce(adapter, dbPath, timestampedPath, passphrase); err != nil {
-		log.Printf("db_backup: write timestamped to %q: %v", dest.Name, err)
-		// Don't return — still try the latest pointer.
+	if err := writeDBOnce(adapter, snapshot, timestampedPath, passphrase); err != nil {
+		// Keep the previous latest copy when publishing the history failed.
+		return fmt.Errorf("destination %d (%q) timestamped write: %w", dest.ID, dest.Name, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	latestPath := filepath.Join(dbBackupBaseDir, "vault.db.latest"+ext)
-	if err := writeDBOnce(adapter, dbPath, latestPath, passphrase); err != nil {
-		log.Printf("db_backup: write latest pointer to %q: %v", dest.Name, err)
+	err = writeDBOnce(adapter, snapshot, latestPath, passphrase)
+	if ctx.Err() == nil {
+		pruneDBBackups(adapter, dest.Name)
 	}
+	if err != nil {
+		return fmt.Errorf("destination %d (%q) latest write: %w", dest.ID, dest.Name, err)
+	}
+	return nil
+}
 
-	pruneDBBackups(adapter, dest.Name)
+func (r *Runner) finalizeDatabaseBackup(ctx context.Context, dest db.StorageDestination, jobID, runID int64) {
+	if err := r.backupDatabase(ctx, dest); err != nil {
+		detail := redactStorageError(err.Error())
+		message := "Database Backup failed: " + detail
+		data := map[string]any{
+			"job_id": jobID, "run_id": runID, "stage": "database-backup", "error": detail,
+		}
+		log.Printf("db_backup: error: run %d: %s", runID, detail)
+		r.runLog(runID, runLogLevelWarn, message, data)
+		r.logActivity("warn", "backup", "Database Backup failed", structuredDetails(data))
+	}
 }
 
 // pruneDBBackups deletes the oldest timestamped vault.db copies beyond
@@ -158,8 +177,8 @@ func pruneDBBackups(adapter storage.Adapter, destName string) {
 // writeDBOnce opens the DB file and streams it (optionally encrypted) to
 // the adapter at remotePath. Each call opens a fresh handle so the reader
 // can be consumed without seek tricks.
-func writeDBOnce(adapter storage.Adapter, dbPath, remotePath, passphrase string) error {
-	f, err := os.Open(dbPath) // #nosec G304 — dbPath from daemon startup
+func writeDBOnce(adapter storage.Adapter, snapshot, remotePath, passphrase string) error {
+	f, err := os.Open(snapshot) // #nosec G304 — snapshot in private staging directory
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}

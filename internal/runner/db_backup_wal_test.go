@@ -1,0 +1,222 @@
+package runner
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/tinkerologie/vault/internal/crypto"
+	"github.com/tinkerologie/vault/internal/db"
+)
+
+func TestDatabaseBackupIncludesCommittedWAL(t *testing.T) {
+	for _, tc := range []struct {
+		name, passphrase, extension string
+	}{
+		{name: "plaintext", extension: ".db"},
+		{name: "encrypted", passphrase: "database backup fixture", extension: ".age"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, database := a458Runner(t)
+			jobDir, extraDir := t.TempDir(), t.TempDir()
+			dest := a458LocalDest(t, database, "job destination", jobDir)
+			extra := a458LocalDest(t, database, "catalogue destination", extraDir)
+			extra.BackupDatabaseEnabled = true
+			if err := database.UpdateStorageDestination(extra); err != nil {
+				t.Fatal(err)
+			}
+			a458SetSetting(t, database, "encryption_passphrase", tc.passphrase)
+			jobID, err := database.CreateJob(db.Job{Name: "WAL fixture", StorageDestID: dest.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runID, err := database.CreateJobRun(db.JobRun{JobID: jobID, Status: "success", BackupType: "full"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, pragma := range []string{"PRAGMA wal_autocheckpoint=0", "PRAGMA busy_timeout=0", "PRAGMA wal_checkpoint(TRUNCATE)"} {
+				if _, err := database.Exec(pragma); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			reader, err := sql.Open("sqlite", database.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			tx, err := reader.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			var count int
+			if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM restore_points").Scan(&count); err != nil || count != 0 {
+				t.Fatalf("pinning snapshot: restore points=%d, error=%v", count, err)
+			}
+			const storagePath = "job/committed-in-wal"
+			rpID, err := database.CreateRestorePoint(db.RestorePoint{JobRunID: runID, JobID: jobID, BackupType: "full", StoragePath: storagePath})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var busy, frames, checkpointed int
+			err = database.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &frames, &checkpointed)
+			if err != nil || busy != 1 || frames <= checkpointed {
+				t.Fatalf("expected committed WAL frames behind a busy checkpoint: %d %d %d, error=%v", busy, frames, checkpointed, err)
+			}
+
+			if err := r.backupDatabase(t.Context(), dest); err != nil {
+				t.Fatal(err)
+			}
+			var canonical []byte
+			var datedName string
+			for _, root := range []string{jobDir, extraDir} {
+				dir := filepath.Join(root, dbBackupBaseDir)
+				latest := filepath.Join(dir, "vault.db.latest"+tc.extension)
+				entries, err := filepath.Glob(filepath.Join(dir, "vault.db.2*"+tc.extension))
+				if err != nil || len(entries) != 1 {
+					t.Fatalf("expected one timestamped snapshot, got %v: %v", entries, err)
+				}
+				if datedName == "" {
+					datedName = filepath.Base(entries[0])
+				}
+				if filepath.Base(entries[0]) != datedName {
+					t.Fatal("destinations used different timestamps for one export")
+				}
+				for _, path := range []string{entries[0], latest} {
+					data := readDatabaseExport(t, path, tc.passphrase)
+					if canonical == nil {
+						canonical = data
+					}
+					if !bytes.Equal(canonical, data) {
+						t.Error("timestamped, latest, and fan-out snapshots differ")
+					}
+					isolated := filepath.Join(t.TempDir(), "recovered.db")
+					if err := os.WriteFile(isolated, data, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					recovered, err := db.Open(isolated)
+					if err != nil {
+						t.Fatal(err)
+					}
+					rp, err := recovered.GetRestorePoint(rpID)
+					_ = recovered.Close()
+					if err != nil || rp.JobID != jobID || rp.StoragePath != storagePath {
+						t.Errorf("recovered %s is missing committed restore point %d: %+v, %v", filepath.Base(path), rpID, rp, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func readDatabaseExport(t *testing.T, path, passphrase string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path) // #nosec G304 -- temporary test artifact
+	if err != nil {
+		t.Fatal(err)
+	}
+	if passphrase == "" {
+		return data
+	}
+	decrypted, err := crypto.DecryptReader(passphrase, bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decrypted.Close()
+	result, err := io.ReadAll(decrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func TestDatabaseBackupSnapshotFailurePreservesLatestAndReportsWarning(t *testing.T) {
+	r, database := a458Runner(t)
+	root := t.TempDir()
+	dest := a458LocalDest(t, database, "job destination", root)
+	extraRoot := t.TempDir()
+	extra := a458LocalDest(t, database, "catalogue destination", extraRoot)
+	extra.BackupDatabaseEnabled = true
+	if err := database.UpdateStorageDestination(extra); err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := database.CreateJob(db.Job{Name: "Snapshot failure fixture", StorageDestID: dest.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := database.CreateJobRun(db.JobRun{JobID: jobID, Status: "success", BackupType: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.backupDatabase(t.Context(), dest); err != nil {
+		t.Fatal(err)
+	}
+	latest := filepath.Join(dbBackupBaseDir, "vault.db.latest.db")
+	previous := readDatabaseExport(t, filepath.Join(root, latest), "")
+	r.backupDatabaseSnapshot = func(_ context.Context, _ string) error {
+		return errors.New("fixture snapshot failure from https://user:fixture-value@example.invalid/private")
+	}
+
+	r.finalizeDatabaseBackup(t.Context(), dest, jobID, runID)
+
+	for _, path := range []string{root, extraRoot} {
+		if got := readDatabaseExport(t, filepath.Join(path, latest), ""); !bytes.Equal(got, previous) {
+			t.Errorf("snapshot failure changed the previous latest copy in %s", path)
+		}
+		entries, err := os.ReadDir(filepath.Join(path, dbBackupBaseDir))
+		if err != nil || len(entries) != 2 {
+			t.Errorf("snapshot failure changed the published copies in %s: %v", path, err)
+		}
+	}
+	run, err := database.GetJobRun(runID)
+	if err != nil || run.Status != "success" {
+		t.Errorf("workload outcome changed to %q: %v", run.Status, err)
+	}
+	runLogs, err := database.ListRunLogEntries(t.Context(), runID, 0, 10)
+	if err != nil || len(runLogs) != 1 || runLogs[0].Level != runLogLevelWarn ||
+		!strings.Contains(runLogs[0].Message, "fixture snapshot failure") ||
+		strings.Contains(runLogs[0].Message, "fixture-value") {
+		t.Errorf("expected one redacted export warning: %+v, %v", runLogs, err)
+	}
+	activity, err := database.ListActivityLogs(10, "backup", 0)
+	if err != nil || len(activity) != 1 || activity[0].Level != "warn" ||
+		activity[0].Message != "Database Backup failed" ||
+		strings.Contains(activity[0].Details, "fixture-value") ||
+		strings.Contains(activity[0].Details, "run_log") {
+		t.Errorf("expected a separate redacted activity warning: %+v, %v", activity, err)
+	}
+}
+
+func TestDatabaseBackupTimestampedFailurePreservesLatest(t *testing.T) {
+	r, database := a458Runner(t)
+	root := t.TempDir()
+	dest := a458LocalDest(t, database, "job destination", root)
+	dir := filepath.Join(root, dbBackupBaseDir)
+	const stamp = "2026-11-12T01-00-00"
+	if err := os.MkdirAll(filepath.Join(dir, "vault.db."+stamp+".db"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	latest := filepath.Join(dir, "vault.db.latest.db")
+	const previous = "previous snapshot"
+	if err := os.WriteFile(latest, []byte(previous), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := filepath.Join(t.TempDir(), "snapshot.db")
+	if err := database.BackupToFile(t.Context(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	err := r.backupDatabaseToDest(t.Context(), dest, snapshot, stamp, "")
+	if err == nil || !strings.Contains(err.Error(), "timestamped write") {
+		t.Fatalf("expected a timestamped write failure, got %v", err)
+	}
+	if got := readDatabaseExport(t, latest, ""); string(got) != previous {
+		t.Error("timestamped write failure replaced the previous latest copy")
+	}
+}
