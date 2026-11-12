@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve static IPv6 addresses, network aliases, gateway priorities, and the configured DockerMan MAC in classic and chunked container restores (#649).
+
 ## [v2026.11.01] - 2026-11-10
 
 ### Added
