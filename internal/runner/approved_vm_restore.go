@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,20 @@ import (
 )
 
 const maxVMReviewObjects = 128
+
+// VMRestoreHost is the local hypervisor boundary used by approved VM restores.
+type VMRestoreHost interface {
+	ReviewVMRestore(ctx context.Context, name, destination string, xmlData, metadata []byte, artifacts []string, key []byte) (engine.VMRestoreEffects, string, error)
+	Restore(context.Context, engine.BackupItem, string, engine.ProgressFunc) error
+	Close() error
+}
+
+func (r *Runner) openVMRestoreHost() (VMRestoreHost, error) {
+	if r.vmRestoreHost != nil {
+		return r.vmRestoreHost()
+	}
+	return engine.NewVMHandler()
+}
 
 // VMRestoreReview contains the required VM chain and the operator's preview.
 type VMRestoreReview struct {
@@ -79,7 +94,7 @@ func (r *Runner) InspectVMRestoreRequest(ctx context.Context, plan ApprovedResto
 		return result, nil
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	select {
 	case approvedReadSlots <- struct{}{}:
@@ -98,13 +113,22 @@ func (r *Runner) InspectVMRestoreRequest(ctx context.Context, plan ApprovedResto
 				done <- response{err: ErrApprovedStorageUnavailable}
 			}
 		}()
-		err := r.inspectVMRestore(ctx, &result, destination, passphrase)
+		err := r.inspectVMRestore(probeCtx, &result, destination, passphrase)
 		done <- response{review: result, err: err}
 	}()
 	select {
 	case answer := <-done:
+		if ctx.Err() != nil {
+			return VMRestoreReview{}, ctx.Err()
+		}
+		if probeCtx.Err() != nil {
+			return VMRestoreReview{}, ErrApprovedStorageUnavailable
+		}
 		return answer.review, answer.err
-	case <-ctx.Done():
+	case <-probeCtx.Done():
+		if ctx.Err() != nil {
+			return VMRestoreReview{}, ctx.Err()
+		}
 		return VMRestoreReview{}, ErrApprovedStorageUnavailable
 	}
 }
@@ -141,7 +165,7 @@ func (r *Runner) inspectVMRestore(ctx context.Context, result *VMRestoreReview, 
 	if err != nil || result.Chain.Status != Confirmed {
 		return err
 	}
-	handler, err := engine.NewVMHandler()
+	handler, err := r.openVMRestoreHost()
 	if err != nil {
 		result.Reasons = append(result.Reasons, "vm_host_unavailable")
 		return nil
@@ -525,6 +549,9 @@ func (work vmRestoreWork) restore(ctx context.Context, r *Runner, approved *Appr
 			return err
 		}
 		if err := flattenVMChainDisks(ctx, source, assembled, disks); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return err
 		}
 		source = assembled
@@ -532,7 +559,7 @@ func (work vmRestoreWork) restore(ctx context.Context, r *Runner, approved *Appr
 	if err := approved.revalidateStaged(ctx); err != nil {
 		return err
 	}
-	handler, err := engine.NewVMHandler()
+	handler, err := r.openVMRestoreHost()
 	if err != nil {
 		return err
 	}
@@ -567,7 +594,7 @@ func (step vmReviewedStep) checkStaged(dir string, key []byte) error {
 		return ErrReviewedRestoreChanged
 	}
 	for _, disk := range step.evidence.Disks {
-		if !isStagedVMFile(dir, disk.BackupFile) {
+		if !isStagedVMFile(dir, disk.BackupFile) || (disk.Format == "qcow2" && !isSelfContainedQCOW2(filepath.Join(dir, disk.BackupFile))) {
 			return ErrReviewedRestoreChanged
 		}
 	}
@@ -589,6 +616,34 @@ func readStagedVMReviewSidecar(dir, name string) ([]byte, error) {
 func isStagedVMFile(dir, name string) bool {
 	info, err := os.Lstat(filepath.Join(dir, name))
 	return err == nil && info.Mode().IsRegular() && info.Size() > 0
+}
+
+// QCOW2 backups are independent files. For an incremental restore, Vault
+// links the reviewed layers itself. Reject external backing or data file
+// references before qemu-img or libvirt can open a staged image.
+func isSelfContainedQCOW2(path string) bool {
+	f, err := os.Open(path) // #nosec G304 -- recorded regular file in private restore staging
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var header [104]byte
+	if _, err := io.ReadFull(f, header[:72]); err != nil ||
+		string(header[:4]) != "QFI\xfb" || binary.BigEndian.Uint64(header[8:16]) != 0 {
+		return false
+	}
+	switch binary.BigEndian.Uint32(header[4:8]) {
+	case 2:
+		return true
+	case 3:
+		if _, err := io.ReadFull(f, header[72:]); err != nil {
+			return false
+		}
+		const corruptOrExternalData = (1 << 1) | (1 << 2)
+		return binary.BigEndian.Uint64(header[72:80])&corruptOrExternalData == 0
+	default:
+		return false
+	}
 }
 
 func (work vmRestoreWork) stagedChainDisks(dirs []string) ([]vmChainDisk, error) {

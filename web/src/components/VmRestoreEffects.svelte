@@ -40,14 +40,14 @@
     </div>
   {/if}
   {#if effects.unsupported_disks?.length}
-    <p class="mt-2 text-warning">Disk data unavailable for {effects.unsupported_disks.map(disk => `${disk.target} (${disk.source_type})`).join(', ')}.</p>
+    <p class="mt-2 text-warning">Vault restores device settings without disk data for {effects.unsupported_disks.map(disk => `${disk.target} (${disk.source_type})`).join(', ')}.</p>
   {/if}
   <ul class="mt-2 list-disc space-y-1 pl-5 text-text-muted">
     {#if effects.domain.stop}
       <li>Vault will shut down the existing VM and may force-stop it.</li>
     {/if}
     {#if effects.domain.replace}
-      <li>Vault will remove the existing domain definition. Current state is {effects.domain.state}.</li>
+      <li>Vault will remove the existing domain definition and may remove snapshot and checkpoint metadata. Current state is {effects.domain.state}.</li>
     {/if}
     {#if effects.domain.remove_managed_save}
       <li>Vault will remove the existing managed save.</li>

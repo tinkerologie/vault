@@ -280,7 +280,7 @@ func validRequestID(id string) bool {
 // temporary inability to read it. Exact classic objects can be checked by
 // the workload planner even when the catalog alone cannot establish coverage.
 func (op Operation) sourceProbeUnavailable() bool {
-	if op.Chain.Reason == "catalog_unavailable" {
+	if op.Chain.Reason == "catalog_unavailable" || slices.Contains(op.Reasons, "vm_host_unavailable") {
 		return true
 	}
 	if op.Chain.Status != runner.Confirmed {

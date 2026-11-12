@@ -41,6 +41,7 @@ type ServerConfig struct {
 	RestoreRequestFlush func() error // synchronous durability barrier for request transitions
 	RestoreRequestClock func() time.Time
 	OperatorProof       *operatorproof.Verifier
+	vmRestoreHost       func() (runner.VMRestoreHost, error)
 }
 
 type Server struct {
@@ -111,7 +112,7 @@ func NewServer(database *db.DB, cfg ServerConfig) *Server {
 		hub:    ws.NewHub(),
 		config: cfg,
 	}
-	s.runner = runner.New(database, s.hub, cfg.ServerKey)
+	s.runner = runner.New(database, s.hub, cfg.ServerKey, cfg.vmRestoreHost)
 	s.mountMgr = mount.NewManager(database, s.hub, cfg.ServerKey)
 	if !cfg.ReadOnly {
 		dir := cfg.CredentialDir

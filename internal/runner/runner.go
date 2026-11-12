@@ -162,9 +162,10 @@ type anomalyEnqueuer interface {
 
 // Runner executes backup and restore operations for jobs.
 type Runner struct {
-	db        *db.DB
-	hub       *ws.Hub
-	serverKey []byte // AES-256 key for unsealing secrets.
+	db            *db.DB
+	hub           *ws.Hub
+	serverKey     []byte // AES-256 key for unsealing secrets.
+	vmRestoreHost func() (VMRestoreHost, error)
 	// escrowed remembers, per dedup destination, the backup passphrase whose
 	// escrow has been confirmed, so the scrypt check runs once per passphrase
 	// rather than once per backed-up item (#451). It is the passphrase
@@ -261,7 +262,7 @@ const (
 )
 
 // New creates a new Runner.
-func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
+func New(database *db.DB, hub *ws.Hub, serverKey []byte, vmHost ...func() (VMRestoreHost, error)) *Runner {
 	r := &Runner{
 		db:                     database,
 		hub:                    hub,
@@ -270,6 +271,9 @@ func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 		drainStarted:           make(chan struct{}),
 		progress:               newProgressTracker(nil),
 		backupDatabaseSnapshot: database.BackupToFile,
+	}
+	if len(vmHost) != 0 {
+		r.vmRestoreHost = vmHost[0]
 	}
 	failThreshold, _ := database.GetSettingInt("breaker_fail_threshold", docsmeta.DefaultInt("breaker_fail_threshold"))
 	closeSuccesses, _ := database.GetSettingInt("breaker_close_successes", docsmeta.DefaultInt("breaker_close_successes"))
