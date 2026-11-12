@@ -115,6 +115,13 @@ func validateStagedFolderTar(ctx context.Context, body io.Reader, dest string) e
 		if _, err := joinArchiveTarget(dest, entry.Name); err != nil {
 			return err
 		}
+		if entry.Typeflag == tar.TypeLink {
+			// Apply the extraction path check before a replacement can
+			// clear existing files.
+			if _, err := joinArchiveTarget(dest, entry.Linkname); err != nil {
+				return err
+			}
+		}
 		if entry.Typeflag == tar.TypeReg && entry.Size > maxExtractSize {
 			return ErrRestoreArchiveEntryTooLarge
 		}

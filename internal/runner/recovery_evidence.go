@@ -14,6 +14,7 @@ import (
 
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/engine"
 	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/storage"
 )
@@ -176,11 +177,13 @@ func InspectRecovery(ctx context.Context, database *db.DB, id int64, item ItemSe
 			result.Chain.Status, result.Chain.Reason = Unknown, "unknown_step_membership"
 		}
 	}
+	replayEvidenceUnavailable := false
 	if result.Membership == Confirmed && failure == nil && selectedManifestErr == nil {
 		statuses := probeRecoveryArtifacts(ctx, database, point.JobID, points, result.Chain.Steps, item, deduplicated, wrap)
 		for i, probe := range statuses {
 			status := probe.status
 			if status != "" {
+				replayEvidenceUnavailable = replayEvidenceUnavailable || probe.replayEvidenceUnavailable
 				result.Chain.Steps[i].ClassicObjects = probe.objects
 				result.Chain.Steps[i].Artifacts = status
 				if _, manifest, manifestErr := lookupItemManifest(points[i], item.ItemName); !manifest && manifestErr == nil && status == Confirmed {
@@ -205,6 +208,9 @@ func InspectRecovery(ctx context.Context, database *db.DB, id int64, item ItemSe
 	}
 	if hasUnknownArtifacts {
 		result.Warnings = append(result.Warnings, "artifact_evidence_unavailable")
+	}
+	if replayEvidenceUnavailable {
+		result.Warnings = append(result.Warnings, "folder_replay_evidence_unavailable")
 	}
 	switch result.Verification.Status {
 	case "passed":
@@ -263,9 +269,10 @@ func recoveryVerification(ctx context.Context, database *db.DB, point db.Restore
 var recoveryProbeSlots = make(chan struct{}, 8)
 
 type stepProbeResult struct {
-	index   int
-	status  Status
-	objects []storage.FileInfo
+	index                     int
+	status                    Status
+	objects                   []storage.FileInfo
+	replayEvidenceUnavailable bool
 }
 
 func probeRecoveryArtifacts(ctx context.Context, database *db.DB, jobID int64, points []db.RestorePoint, steps []RecoveryChainStep, item ItemSelection, deduplicated bool, wrap func(storage.Adapter) RecoveryMetadata) []stepProbeResult {
@@ -313,8 +320,9 @@ func probeRecoveryArtifacts(ctx context.Context, database *db.DB, jobID int64, p
 			}
 			if step.Artifacts == Unknown && step.Membership == Confirmed {
 				probe.classicObjects = nil
+				probe.replayEvidenceUnavailable = false
 				status := probe.inspect(ctx, database, dest.ID, points[i], item, deduplicated)
-				updates <- stepProbeResult{i, status, probe.classicObjects}
+				updates <- stepProbeResult{i, status, probe.classicObjects, probe.replayEvidenceUnavailable}
 			}
 		}
 	}()
@@ -350,9 +358,10 @@ type RecoveryMetadata interface {
 }
 
 type evidenceProbe struct {
-	adapter        RecoveryMetadata
-	remaining      int
-	classicObjects []storage.FileInfo
+	adapter                   RecoveryMetadata
+	remaining                 int
+	classicObjects            []storage.FileInfo
+	replayEvidenceUnavailable bool
 }
 
 func (p *evidenceProbe) inspect(ctx context.Context, database *db.DB, destID int64, point db.RestorePoint, item ItemSelection, selectedDeduplicated bool) Status {
@@ -430,13 +439,19 @@ func (p *evidenceProbe) classic(point db.RestorePoint, item ItemSelection) Statu
 	case storage.IsNotExist(err):
 		return Missing
 	case err != nil:
-		if len(expected) == 0 || len(expected) > p.remaining {
+		if len(expected) == 0 || (item.ItemType != "folder" && len(expected) > p.remaining) {
 			return Unknown
 		}
 		unknown := false
 		for name := range expected {
 			if name != path.Base(name) || name == "." || name == ".." || strings.Contains(name, `\`) {
 				return Broken
+			}
+			if optionalFolderReplayObject(item, name) {
+				// Without a complete listing, reserve the Stat budget for data
+				// that is required to restore the selected folder.
+				p.replayEvidenceUnavailable = true
+				continue
 			}
 			info, status := p.stat(path.Join(prefix, name))
 			switch status {
@@ -457,8 +472,19 @@ func (p *evidenceProbe) classic(point db.RestorePoint, item ItemSelection) Statu
 	if err != nil {
 		return Broken
 	}
-	if len(selected) == 0 || (len(expected) != 0 && len(selected) != len(expected)) {
+	if len(selected) == 0 {
 		return Missing
+	}
+	if len(expected) != 0 && len(selected) != len(expected) {
+		for name := range expected {
+			if slices.ContainsFunc(selected, func(file storage.FileInfo) bool { return path.Base(file.Path) == name }) {
+				continue
+			}
+			if !optionalFolderReplayObject(item, name) {
+				return Missing
+			}
+			p.replayEvidenceUnavailable = true
+		}
 	}
 	required := []string{"data.tar"}
 	switch item.ItemType {
@@ -493,6 +519,11 @@ func (p *evidenceProbe) classic(point db.RestorePoint, item ItemSelection) Statu
 		p.classicObjects = selected
 	}
 	return Confirmed
+}
+
+func optionalFolderReplayObject(item ItemSelection, name string) bool {
+	return item.ItemType == "folder" && name == path.Base(name) && !strings.Contains(name, `\`) &&
+		(isSidecarBase(name, engine.IndexSuffix) || isSidecarBase(name, engine.ListingSuffix))
 }
 
 // VM backups record their disks as vdisk<index>[.<format>]. A directory

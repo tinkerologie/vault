@@ -685,7 +685,7 @@ func TestRecoveryEvidenceFallsBackToNamedObjectMetadata(t *testing.T) {
 	dest = requireFixture(t, dest, err)
 	job, err := d.CreateJob(db.Job{Name: "Job", StorageDestID: dest})
 	job = requireFixture(t, job, err)
-	point := evidencePoint(t, d, job, 0, "full", "job/full", `{"item_sizes":{"archive":1024},"checksums":{"archive":{"data.tar":"fixture-private-hash"}}}`)
+	point := evidencePoint(t, d, job, 0, "full", "job/full", `{"item_sizes":{"archive":1024},"checksums":{"archive":{"data.tar":"fixture-private-hash","data.tar.index.json":"fixture-private-index-hash"}}}`)
 	srv := NewServer(d, ServerConfig{})
 	key := issueAssistantKey(t, srv, "Named storage reader")
 	for _, tc := range []struct {
@@ -710,6 +710,9 @@ func TestRecoveryEvidenceFallsBackToNamedObjectMetadata(t *testing.T) {
 		}
 		if len(result.Chain.Steps) != 1 || result.Chain.Steps[0].Artifacts != tc.artifact || requests.Load() < 1 || requests.Load() > tc.requests {
 			t.Errorf("storage status %d made %d probes: %s", tc.status, requests.Load(), w.Body.String())
+		}
+		if tc.artifact == runner.Confirmed && (!result.EligibleForApproval || !slices.Contains(result.Warnings, "folder_replay_evidence_unavailable")) {
+			t.Errorf("named archive metadata should remain eligible with a replay warning: %s", w.Body.String())
 		}
 	}
 }
@@ -801,12 +804,14 @@ func TestClassicRecoveryEvidenceDetectsMissingAndUnusableArtifacts(t *testing.T)
 		jobID         int64
 		files         map[string]string
 		status        runner.Status
+		replayWarning bool
 		pointID       int64
 	}{
 		{run: "job/missing", itemType: "folder", jobID: job, status: "missing"},
 		{run: "job/sidecars-only", itemType: "folder", jobID: job, files: map[string]string{"listing.json": "{}"}, status: "missing"},
 		{run: "job/empty", itemType: "folder", jobID: job, files: map[string]string{"data.tar": ""}, status: "broken"},
 		{run: "job/collision", itemType: "folder", jobID: job, files: map[string]string{"data.tar": "backup", "data.tar.gz": "duplicate"}, status: "broken"},
+		{run: "job/optional-sidecar-missing", itemType: "folder", jobID: job, files: map[string]string{"data.tar": "backup"}, status: "confirmed", replayWarning: true},
 		{run: "job/container-no-image", itemType: "container", jobID: job, files: map[string]string{"config.json": "{}"}, status: "missing"},
 		{run: "job/deleted-destination", itemType: "folder", jobID: noDest, status: "missing"},
 	}
@@ -823,7 +828,11 @@ func TestClassicRecoveryEvidenceDetectsMissingAndUnusableArtifacts(t *testing.T)
 				}
 			}
 		}
-		tc.pointID = evidencePoint(t, d, tc.jobID, 0, "full", tc.run, fmt.Sprintf(`{"item_sizes":{"archive":1024},"item_types":{"archive":%q}}`, tc.itemType))
+		metadata := fmt.Sprintf(`{"item_sizes":{"archive":1024},"item_types":{"archive":%q}}`, tc.itemType)
+		if tc.replayWarning {
+			metadata = `{"item_sizes":{"archive":1024},"checksums":{"archive":{"data.tar":"fixture-archive-hash","data.tar.index.json":"fixture-index-hash"}}}`
+		}
+		tc.pointID = evidencePoint(t, d, tc.jobID, 0, "full", tc.run, metadata)
 	}
 
 	srv := NewServer(d, ServerConfig{})
@@ -839,7 +848,8 @@ func TestClassicRecoveryEvidenceDetectsMissingAndUnusableArtifacts(t *testing.T)
 		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 			t.Fatal(err)
 		}
-		if len(result.Chain.Steps) != 1 || result.Chain.Steps[0].Artifacts != tc.status || result.EligibleForApproval {
+		if len(result.Chain.Steps) != 1 || result.Chain.Steps[0].Artifacts != tc.status ||
+			result.EligibleForApproval != tc.replayWarning || slices.Contains(result.Warnings, "folder_replay_evidence_unavailable") != tc.replayWarning {
 			t.Errorf("expected %s artifact evidence: %s", tc.status, w.Body.String())
 		}
 	}
