@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 
 	"github.com/tinkerologie/vault/internal/engine"
 	"github.com/tinkerologie/vault/internal/runner"
@@ -34,6 +35,13 @@ func (op *Operation) captureContainer(ctx context.Context, r *runner.Runner, pas
 		return nil
 	}
 	effects := work.Reviewed.Effects
+	for i := range op.Chain.Steps {
+		step := &op.Chain.Steps[i]
+		if step.Artifacts == runner.Unknown && len(step.ClassicObjects) != 0 {
+			step.Artifacts = runner.Confirmed
+		}
+	}
+	op.Warnings = slices.DeleteFunc(op.Warnings, func(warning string) bool { return warning == "artifact_evidence_unavailable" })
 	op.Container = &effects
 	op.ResolvedPath = effects.Destination
 	op.plan.Work = work

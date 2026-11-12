@@ -117,7 +117,11 @@ func (s *Service) capture(ctx context.Context, in Input, passphrase string) (Ope
 		op.Reasons = append(op.Reasons, "chain_unconfirmed")
 	}
 	for _, step := range evidence.Chain.Steps {
-		if step.DataRequired && step.Artifacts != runner.Confirmed {
+		// A classic Docker listing can give us the exact storage objects
+		// without knowing which mounts they cover. Resolve that here from
+		// the saved configuration before the request can be approved.
+		checkContainerVolumes := itemType == "container" && step.Artifacts == runner.Unknown && len(step.ClassicObjects) != 0
+		if step.DataRequired && step.Artifacts != runner.Confirmed && !checkContainerVolumes {
 			op.Reasons = appendOnce(op.Reasons, "required_data_unusable")
 		}
 		if step.DataRequired && step.ItemTypeEvidence != runner.Confirmed {

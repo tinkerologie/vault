@@ -82,7 +82,7 @@ func (h *ContainerHandler) ReviewClassicRestore(ctx context.Context, item Backup
 		if step.Template != nil {
 			template = step.Template
 		}
-		archives, err := containerArchiveMapping(step.Volumes, step.Files, len(steps) > 1)
+		archives, err := reviewedContainerArchives(step, len(steps) > 1)
 		if err != nil {
 			return ContainerRestoreReview{}, err
 		}
@@ -100,17 +100,21 @@ func (h *ContainerHandler) ReviewClassicRestore(ctx context.Context, item Backup
 	hasDump := len(steps) == 1 && (files[DatabaseDumpFile] || files[DatabaseDumpFile+".gz"] || files[DatabaseDumpFile+".zst"])
 	replay := hasDump && files[DatabaseReplayMarker]
 	result, err := h.reviewContainerRestore(ctx, item, config, template, nil, destination, clean, hasDump, replay,
-		func(mount mountInfo, i int) string {
+		func(mount mountInfo, i int) (string, error) {
 			entry, found := findVolumeManifestEntry(manifest, mount.Source, i)
 			for _, base := range volumeArchiveCandidates(entry.Archive, mount.Source, legacyVolumeIndex(entry, found, volumes != nil, i)) {
 				if files[base] {
 					if entry.IsFile {
-						return "overwrite_file"
+						return "overwrite_file", nil
 					}
-					return "directory"
+					return "directory", nil
 				}
 			}
-			return "configuration_only"
+			if restorableVolume(mount.Type, mount.Name) &&
+				(!found || entry.BackedUp || entry.SkipReason == "" || entry.SkipReason == "unchanged since reference") {
+				return "", errors.New("required container volume archive is missing")
+			}
+			return "configuration_only", nil
 		})
 	result.VolumeMetaDigest = sha256.Sum256(volumes)
 	return result, err
@@ -149,14 +153,14 @@ func (h *ContainerHandler) ReviewChunkedRestore(ctx context.Context, item Backup
 	hasDump = hasDump && len(dump.Chunks) > 0
 	_, replay := m.Files[ContainerDBReplayKey]
 	return h.reviewContainerRestore(ctx, item, config, template, digests, destination, clean, hasDump, hasDump && replay,
-		func(mount mountInfo, _ int) string {
+		func(mount mountInfo, _ int) (string, error) {
 			if e, ok := m.Files[containerVolFilePrefix+mount.Destination]; ok && e.Size >= 0 && (e.Size == 0 || len(e.Chunks) > 0) {
-				return "overwrite_file"
+				return "overwrite_file", nil
 			}
 			if e, ok := m.Files[containerVolPrefix+mount.Destination]; ok && e.Size != volumeSkippedSize && len(e.Chunks) > 0 {
-				return "directory"
+				return "directory", nil
 			}
-			return "configuration_only"
+			return "configuration_only", nil
 		})
 }
 
@@ -178,7 +182,7 @@ func containerReviewBlob(repo ContainerRestoreRepository, manifest dedup.Manifes
 	return data, nil
 }
 
-func (h *ContainerHandler) reviewContainerRestore(ctx context.Context, item BackupItem, config, template []byte, digests []string, destination string, clean, hasDump, replay bool, volumeMode func(mountInfo, int) string) (ContainerRestoreReview, error) {
+func (h *ContainerHandler) reviewContainerRestore(ctx context.Context, item BackupItem, config, template []byte, digests []string, destination string, clean, hasDump, replay bool, volumeMode func(mountInfo, int) (string, error)) (ContainerRestoreReview, error) {
 	var inspect restoreInspect
 	if err := json.Unmarshal(config, &inspect); err != nil {
 		return ContainerRestoreReview{}, err
@@ -228,7 +232,10 @@ func (h *ContainerHandler) reviewContainerRestore(ctx context.Context, item Back
 		if !backupableMount(mount.Type) || mount.Source == "" || mount.Destination == "" {
 			continue
 		}
-		mode := volumeMode(mount, i)
+		mode, err := volumeMode(mount, i)
+		if err != nil {
+			return ContainerRestoreReview{}, err
+		}
 		target, err := volumeRestoreTarget(destination, mount.Type, mount.Name, mount.Source)
 		if err != nil {
 			return ContainerRestoreReview{}, err
@@ -272,8 +279,8 @@ func decodeContainerVolumes(body []byte) ([]volumeManifestEntry, error) {
 
 // containerArchiveMapping reproduces the classic chain merge's stable volume
 // keys from the same manifests without extracting archives during review.
-func containerArchiveMapping(body []byte, files []string, merged bool) (map[string]string, error) {
-	manifest, err := decodeContainerVolumes(body)
+func reviewedContainerArchives(step ContainerBackupMetadata, merged bool) (map[string]string, error) {
+	manifest, err := decodeContainerVolumes(step.Volumes)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +291,7 @@ func containerArchiveMapping(body []byte, files []string, merged bool) (map[stri
 		}
 	}
 	out := map[string]string{}
-	for _, file := range files {
+	for _, file := range step.Files {
 		base := TarBaseName(filepath.Base(file))
 		if strings.HasPrefix(base, "volume_") && !strings.HasSuffix(file, ".tar") &&
 			!strings.HasSuffix(file, ".tar.gz") && !strings.HasSuffix(file, ".tar.zst") {
@@ -295,6 +302,25 @@ func containerArchiveMapping(body []byte, files []string, merged bool) (map[stri
 			canonical = volumeArchiveBase(source)
 		}
 		out[canonical] = base
+	}
+	for _, entry := range manifest {
+		if !entry.BackedUp {
+			continue
+		}
+		available := false
+		for _, base := range volumeArchiveCandidates(entry.Archive, entry.Source, entry.Index) {
+			key := base
+			if source := sources[base]; merged && source != "" {
+				key = volumeArchiveBase(source)
+			}
+			if _, ok := out[key]; ok {
+				available = true
+				break
+			}
+		}
+		if !available {
+			return nil, errors.New("recorded container volume archive is missing")
+		}
 	}
 	return out, nil
 }

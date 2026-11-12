@@ -313,3 +313,16 @@ func fakeContainerRestoreDaemon(t *testing.T) func() []string {
 		return slices.Clone(calls)
 	}
 }
+
+func TestContainerRequestRefusesMissingRecordedVolumeArchive(t *testing.T) {
+	database := testDB(t)
+	server := NewServer(database, ServerConfig{})
+	assistant := issueAssistantKey(t, server, "Container assistant")
+	grantRestoreRequests(t, server, assistant.ID, true)
+	job, point, dir := containerRequestFixture(t, database, `,"Mounts":[{"Type":"bind","Source":"/mnt/user/appdata/web/config","Destination":"/config"}]`, false)
+	writeContainerFixture(t, filepath.Join(dir, "volumes.json"), []byte(`[{"index":0,"source":"/mnt/user/appdata/web/config","destination":"/config","backed_up":true,"archive":"volume_0.tar"}]`))
+	_, review := submitContainerFixture(t, server, assistant.Key, job, point, "")
+	if review.Eligible || !slices.Contains(review.Reasons, "container_metadata_unusable") {
+		t.Fatalf("container with a missing volume archive was offered for approval: %+v", review)
+	}
+}
