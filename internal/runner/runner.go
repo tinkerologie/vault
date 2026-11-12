@@ -4277,12 +4277,14 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 		diagBefore := runDiag.Snapshot()
 		itemCtx := engine.WithRestoreTrust(engine.WithRestoreTally(ctx, tally), engine.RestoreTrust{AllowHostPrivileges: t.AllowHostPrivileges, AllowUnpinnedImage: t.AllowUnpinnedImage})
 		var restoreErr error
+		var operatorDiagnostic string
 		if approved == nil {
 			restoreErr = r.restoreItemWithReporter(itemCtx, restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
 		} else {
 			restoreErr = r.restoreApprovedFolder(itemCtx, approved, passphrase, reporter)
 			if restoreErr != nil {
 				requestReason = approvedRestoreFailure(restoreErr)
+				operatorDiagnostic = approvedRestoreOperatorDiagnostic(restoreErr)
 				restoreErr = errors.New(requestReason)
 			}
 			r.sendRestoreNotification(t.Name, t.Type, restoreErr)
@@ -4315,9 +4317,13 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 				"items_failed": itemsFailed,
 				"items_total":  len(targets),
 			})
+			logMessage := restoreErr.Error()
+			if operatorDiagnostic != "" {
+				logMessage = operatorDiagnostic
+			}
 			r.runLog(runID, runLogLevelError,
-				fmt.Sprintf("Restore failed: %s (%s): %v", t.Name, t.Type, restoreErr),
-				map[string]any{"item_name": t.Name, "item_type": t.Type, "error": restoreErr.Error()})
+				fmt.Sprintf("Restore failed: %s (%s): %s", t.Name, t.Type, logMessage),
+				map[string]any{"item_name": t.Name, "item_type": t.Type, "error": logMessage})
 		} else {
 			itemsDone++
 			result["status"] = "ok"
