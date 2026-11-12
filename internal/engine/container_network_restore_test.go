@@ -106,9 +106,12 @@ func TestRestorePrimaryMACRequiresExplicitConfiguration(t *testing.T) {
 	}{
 		{name: "stopped container", template: template, network: "primary", want: configured},
 		{name: "stale template", template: template, network: "primary", observed: generated},
+		{name: "stale template with legacy MAC", template: template, network: "primary", observed: generated, legacy: generated, want: generated},
 		{name: "other network", template: template, network: "secondary", observed: configured},
 		{name: "generated MAC only", network: "primary", observed: generated},
 		{name: "legacy explicit MAC", network: "primary", observed: configured, legacy: configured, want: configured},
+		{name: "malformed template", template: "<Container>", network: "primary"},
+		{name: "invalid MAC", template: `<Container><Network>primary</Network><MyMAC>invalid</MyMAC></Container>`, network: "primary", legacy: "invalid"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := restorePrimaryMAC([]byte(tc.template), tc.network, tc.observed, tc.legacy).String()
@@ -116,5 +119,61 @@ func TestRestorePrimaryMACRequiresExplicitConfiguration(t *testing.T) {
 				t.Errorf("MAC = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRestoreNetworkingConfigLegacyNetworkModes(t *testing.T) {
+	const configuredMAC = "02:42:64:09:00:50"
+	for _, tc := range []struct {
+		mode, endpoint, wantMAC string
+	}{
+		{mode: "", endpoint: "bridge", wantMAC: configuredMAC},
+		{mode: "default", endpoint: "bridge", wantMAC: configuredMAC},
+		{mode: "host", endpoint: "host"},
+		{mode: "none", endpoint: "none"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			var inspect restoreInspect
+			inspect.HostConfig.NetworkMode = tc.mode
+			inspect.Config.MacAddress = configuredMAC
+			inspect.NetworkSettings.Networks = map[string]restoreNetworkEndpoint{tc.endpoint: {}}
+			endpoints := inspect.restoreNetworkingConfig(nil).EndpointsConfig
+			got := endpoints[tc.endpoint]
+			if len(endpoints) != 1 || got == nil || got.MacAddress.String() != tc.wantMAC {
+				t.Errorf("restored network %q with unexpected settings: %+v", tc.endpoint, got)
+			}
+		})
+	}
+	if got := (restoreInspect{}).restoreNetworkingConfig(nil).EndpointsConfig; len(got) != 0 {
+		t.Errorf("backup without network metadata produced endpoints: %v", got)
+	}
+}
+
+func TestRestoreNetworkingConfigRejectsInvalidStaticAddresses(t *testing.T) {
+	const saved = `{
+		"Id": "123456789abc123456789abc123456789abc123456789abc123456789abc1234",
+		"NetworkSettings": {"Networks": {
+			"ipv6-only": {"IPAMConfig": {"IPv4Address": "invalid", "IPv6Address": "2001:db8::50"}},
+			"mapped": {"IPAMConfig": {"IPv6Address": "::ffff:192.0.2.50"}, "Aliases": [
+				"123456789abc123456789abc123456789abc123456789abc123456789abc1234", "service"
+			]},
+			"zoned": {"IPAMConfig": {"IPv6Address": "fe80::1%eth0"}}
+		}}
+	}`
+	inspect := inspectFromJSON(t, saved)
+	endpoints := inspect.restoreNetworkingConfig(nil).EndpointsConfig
+	ipam := endpoints["ipv6-only"].IPAMConfig
+	if ipam == nil || ipam.IPv4Address.IsValid() || ipam.IPv6Address.String() != "2001:db8::50" {
+		t.Errorf("expected only the valid IPv6 address, got %+v", ipam)
+	}
+	if endpoints["mapped"].IPAMConfig != nil || endpoints["zoned"].IPAMConfig != nil {
+		t.Error("restore replayed mapped or scoped IPv6 as a static address")
+	}
+	if got := endpoints["mapped"].Aliases; !slices.Equal(got, []string{"service"}) {
+		t.Errorf("expected only the configured alias, got %v", got)
+	}
+	inspect.ID = ""
+	if got := inspect.restoreNetworkingConfig(nil).EndpointsConfig["mapped"].Aliases; len(got) != 2 {
+		t.Errorf("expected both aliases when the backup omits the container ID, got %v", got)
 	}
 }
