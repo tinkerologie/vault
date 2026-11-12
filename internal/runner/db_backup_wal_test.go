@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/net/webdav"
 
@@ -270,38 +271,72 @@ func TestDatabaseBackupCancellationStopsPublication(t *testing.T) {
 		}
 	})
 
-	t.Run("during timestamped upload", func(t *testing.T) {
-		r, database := a458Runner(t)
-		root := t.TempDir()
-		extraRoot := t.TempDir()
-		extra := a458LocalDest(t, database, "opted-in destination", extraRoot)
-		extra.BackupDatabaseEnabled = true
-		if err := database.UpdateStorageDestination(extra); err != nil {
-			t.Fatal(err)
-		}
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		dav := &webdav.Handler{FileSystem: webdav.Dir(root), LockSystem: webdav.NewMemLS()}
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if req.Method == http.MethodPut && strings.HasPrefix(filepath.Base(req.URL.Path), "vault.db.2") {
-				cancel()
+	for _, tc := range []struct {
+		name, uploadPrefix string
+		expectedDated      int
+	}{
+		{"during timestamped upload", "vault.db.2", 0},
+		{"during latest upload", "vault.db.latest", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, database := a458Runner(t)
+			root := t.TempDir()
+			extraRoot := t.TempDir()
+			extra := a458LocalDest(t, database, "opted-in destination", extraRoot)
+			extra.BackupDatabaseEnabled = true
+			if err := database.UpdateStorageDestination(extra); err != nil {
+				t.Fatal(err)
 			}
-			dav.ServeHTTP(w, req)
-		}))
-		defer server.Close()
-		dest := db.StorageDestination{Type: "webdav", Config: `{"url":"` + server.URL + `"}`}
-		if err := r.backupDatabase(ctx, dest); !errors.Is(err, context.Canceled) {
-			t.Fatalf("expected cancellation during upload, got %v", err)
-		}
-		dir := filepath.Join(root, dbBackupBaseDir)
-		if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 ||
-			!strings.HasPrefix(entries[0].Name(), "vault.db.2") {
-			t.Errorf("expected only a timestamped snapshot: %v, %v", entries, err)
-		}
-		if _, err := os.Stat(filepath.Join(extraRoot, dbBackupBaseDir)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("canceled export wrote to the opted-in Destination: %v", err)
-		}
-	})
+			dir := filepath.Join(root, dbBackupBaseDir)
+			if err := os.Mkdir(dir, 0750); err != nil {
+				t.Fatal(err)
+			}
+			latest := filepath.Join(dir, "vault.db.latest.db")
+			previous := []byte("previous snapshot")
+			if err := os.WriteFile(latest, previous, 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			aborted := make(chan struct{})
+			dav := &webdav.Handler{FileSystem: webdav.Dir(root), LockSystem: webdav.NewMemLS()}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.Method != http.MethodPut || !strings.HasPrefix(filepath.Base(req.URL.Path), tc.uploadPrefix) {
+					dav.ServeHTTP(w, req)
+					return
+				}
+				_, _ = io.Copy(io.Discard, req.Body)
+				cancel()
+				select {
+				case <-req.Context().Done():
+					close(aborted)
+				case <-time.After(5 * time.Second):
+					w.WriteHeader(http.StatusServiceUnavailable)
+				}
+			}))
+			defer server.Close()
+			dest := db.StorageDestination{Type: "webdav", Config: `{"url":"` + server.URL + `"}`}
+			if err := r.backupDatabase(ctx, dest); !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected cancellation during upload, got %v", err)
+			}
+			select {
+			case <-aborted:
+			case <-time.After(5 * time.Second):
+				t.Fatal("WebDAV PUT did not observe cancellation")
+			}
+			if got := readDatabaseExport(t, latest, ""); !bytes.Equal(got, previous) {
+				t.Error("canceled upload changed latest")
+			}
+			dated, err := filepath.Glob(filepath.Join(dir, "vault.db.2*.db"))
+			if err != nil || len(dated) != tc.expectedDated {
+				t.Errorf("expected %d timestamped snapshots, got %v (%v)", tc.expectedDated, dated, err)
+			}
+			if _, err := os.Stat(filepath.Join(extraRoot, dbBackupBaseDir)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("canceled export wrote to the opted-in Destination: %v", err)
+			}
+		})
+	}
 }
 
 func TestDatabaseBackupReportsStagingAndDestinationListingErrors(t *testing.T) {

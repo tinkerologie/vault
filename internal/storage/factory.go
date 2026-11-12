@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -12,6 +13,9 @@ import (
 type Options struct {
 	VerboseLogging bool
 	DestLabel      string // human destination name for logs/metrics
+	// WebDAVContext bounds requests made by a WebDAV adapter for a single
+	// operation. Nil leaves requests subject to the usual transport timeouts.
+	WebDAVContext context.Context
 	// Diag, when set, receives retry and transient-error counts from the
 	// retry middleware so a run log can report them (#455).
 	Diag *DiagStats
@@ -54,6 +58,9 @@ func NewAdapterWithOptions(storageType, configJSON string, opts Options) (Adapte
 	provider, err := newRawAdapter(storageType, configJSON)
 	if err != nil {
 		return nil, err
+	}
+	if webdav, ok := provider.(*WebDAVAdapter); ok {
+		webdav.requestContext = opts.WebDAVContext
 	}
 
 	a := provider

@@ -116,7 +116,7 @@ func httpErrorCode(err error) int {
 //     payload too large). Retrying just wastes time and bandwidth.
 //   - Errors without a status (network, dial, TLS, EOF) are retriable.
 func isWebDAVRetriable(err error) bool {
-	if err == nil {
+	if err == nil || errors.Is(err, context.Canceled) {
 		return false
 	}
 	if errors.Is(err, ErrUploadStalled) {
@@ -213,7 +213,8 @@ func (c WebDAVConfig) MarshalJSON() ([]byte, error) {
 // request, so reusing a client across goroutines is not strictly safe; each
 // operation also makes very few requests, so the cost is negligible.
 type WebDAVAdapter struct {
-	config WebDAVConfig
+	config         WebDAVConfig
+	requestContext context.Context
 }
 
 // NewWebDAVAdapter validates the config and returns an adapter.
@@ -297,6 +298,11 @@ func warnPlaintextWebDAV(rawURL string) {
 func (w *WebDAVAdapter) client() *gowebdav.Client {
 	c := gowebdav.NewAuthClient(w.config.URL, gowebdav.NewAutoAuth(w.config.Username, w.config.Password))
 	c.SetTransport(&mkcolExistsTransport{base: w.guardedTransport()})
+	if ctx := w.requestContext; ctx != nil {
+		c.SetInterceptor(func(_ string, req *http.Request) {
+			*req = *req.WithContext(ctx)
+		})
+	}
 
 	if w.config.TimeoutSeconds > 0 {
 		c.SetTimeout(time.Duration(w.config.TimeoutSeconds) * time.Second)

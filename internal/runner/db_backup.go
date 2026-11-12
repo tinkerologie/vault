@@ -90,13 +90,12 @@ func (r *Runner) backupDatabaseToDest(ctx context.Context, dest db.StorageDestin
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	adapter, err := storage.NewAdapterWithOptions(dest.Type, dest.Config, storage.Options{WebDAVContext: ctx})
 	if err != nil {
 		return fmt.Errorf("destination %d (%q) adapter: %w", dest.ID, dest.Name, err)
 	}
 	defer storage.CloseAdapter(adapter)
-	// Closing the adapter on cancellation aborts an in-flight write so a
-	// timed-out finalization step's goroutine exits instead of leaking.
+	// Also close adapters that can cancel requests or connections on Close.
 	stopOnCancel := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
 	defer stopOnCancel()
 
