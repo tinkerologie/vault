@@ -280,6 +280,7 @@ CREATE INDEX IF NOT EXISTS idx_capacity_samples_dest_time ON destination_capacit
 // alterMigrations are idempotent ALTER TABLE statements for columns added
 // after the initial schema. Errors (e.g. duplicate column) are expected.
 var alterMigrations = []string{
+	"ALTER TABLE restore_requests ADD COLUMN withdrawal_flush_after INTEGER NOT NULL DEFAULT 0",
 	"ALTER TABLE assistant_keys ADD COLUMN restore_request_grant TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE jobs ADD COLUMN verify_backup INTEGER DEFAULT 1",
 	"ALTER TABLE job_items ADD COLUMN sort_order INTEGER DEFAULT 0",

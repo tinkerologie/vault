@@ -144,6 +144,13 @@ func TestOperatorApprovesEncryptedContainerAndTracksActualStartup(t *testing.T) 
 	if len(calls()) != 0 {
 		t.Fatalf("review mutated Docker: %v", calls())
 	}
+	payload := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"web","item_type":"container","write_mode":"replace","destination":%q}`, job, point, target)
+	retry := callRestoreRequest(server, http.MethodPost, restoreRequestsPath, remotePeer, assistant.Key, payload)
+	var reused restorerequest.View
+	if retry.Code != http.StatusOK || json.Unmarshal(retry.Body.Bytes(), &reused) != nil ||
+		!reused.Reused || reused.ID != unlocked.ID || !reused.Eligible || reused.RequiresMetadataReview || reused.Container != nil {
+		t.Fatalf("retry after native metadata review: %d %s", retry.Code, retry.Body)
+	}
 	bad = postContainerAction(t, server, proof, path, "approve", unlocked, "incorrect passphrase", "3")
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("wrong approval passphrase: %d %s", bad.Code, bad.Body)
