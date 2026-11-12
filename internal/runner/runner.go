@@ -2128,6 +2128,23 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 		if len(itemSizes) > 0 {
 			rpMeta["item_sizes"] = itemSizes
 		}
+		itemTypes := make(map[string]string, len(itemSizes))
+		for _, result := range itemResults {
+			name, _ := result["name"].(string)
+			kind, _ := result["type"].(string)
+			if result["status"] != "ok" || name == "" || kind == "" {
+				continue
+			}
+			if prior, found := itemTypes[name]; found && prior != kind {
+				// A name shared by different types cannot identify one item.
+				itemTypes[name] = ""
+				continue
+			}
+			itemTypes[name] = kind
+		}
+		if len(itemTypes) > 0 {
+			rpMeta["item_types"] = itemTypes
+		}
 		if job.VerifyBackup && len(itemChecksums) > 0 {
 			rpMeta["checksums"] = itemChecksums
 		}
@@ -4558,9 +4575,9 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 
 	// For incremental/differential, walk the chain and restore in order.
 	if restorePoint.BackupType == "incremental" || restorePoint.BackupType == "differential" {
-		chain, err := r.buildRestoreChain(restorePoint)
-		if err != nil {
-			return fmt.Errorf("building restore chain: %w", err)
+		chain, failure := walkRestoreChain(ctx, r.db, restorePoint, 0)
+		if failure != nil {
+			return fmt.Errorf("building restore chain: %w", failure)
 		}
 		// Dedup restore points (folder, container, plugin) carry a COMPLETE
 		// manifest — BackupChunked walks the item and, for differential/
@@ -5671,7 +5688,7 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 	itemStoragePath := filepath.Join(restorePoint.StoragePath, itemName)
 
 	// Parse checksums from restore point metadata for verification.
-	expectedChecksums := r.parseItemChecksums(restorePoint.Metadata, itemName)
+	expectedChecksums := parseItemChecksums(restorePoint.Metadata, itemName)
 
 	files, err := adapter.List(itemStoragePath)
 	if err != nil {
@@ -7830,7 +7847,7 @@ func itemCapturedInParentRP(parentRP *db.RestorePoint, itemName string) bool {
 
 // parseItemChecksums extracts the SHA-256 checksums for a specific item from
 // restore point metadata JSON. Returns filename→hash map, or empty if unavailable.
-func (r *Runner) parseItemChecksums(metadata, itemName string) map[string]string {
+func parseItemChecksums(metadata, itemName string) map[string]string {
 	var meta map[string]any
 	if err := json.Unmarshal([]byte(metadata), &meta); err != nil {
 		return nil
@@ -7959,22 +7976,9 @@ func (r *Runner) BuildRestoreChain(rp db.RestorePoint) ([]db.RestorePoint, error
 // list of restore points from the base full backup to the given restore point.
 // The returned slice is ordered oldest (full) first.
 func (r *Runner) buildRestoreChain(rp db.RestorePoint) ([]db.RestorePoint, error) {
-	chain := []db.RestorePoint{rp}
-	current := rp
-	for current.ParentRestorePointID > 0 {
-		parent, err := r.db.GetRestorePoint(current.ParentRestorePointID)
-		if err != nil {
-			if errors.Is(err, db.ErrNotFound) {
-				return nil, fmt.Errorf("missing parent restore point %d for restore point %d", current.ParentRestorePointID, current.ID)
-			}
-			return nil, fmt.Errorf("getting parent restore point %d: %w", current.ParentRestorePointID, err)
-		}
-		chain = append(chain, parent)
-		current = parent
-	}
-	// Reverse to get oldest (full) first.
-	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
-		chain[i], chain[j] = chain[j], chain[i]
+	chain, failure := walkRestoreChain(context.Background(), r.db, rp, 0)
+	if failure != nil {
+		return nil, failure
 	}
 	return chain, nil
 }

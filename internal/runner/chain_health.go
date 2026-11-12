@@ -142,8 +142,13 @@ func retainedDependencyCounts(points []db.RestorePoint, directKeep map[int64]str
 }
 
 // RestorePointChainHealth reports the recorded parent chain without accessing storage.
-func RestorePointChainHealth(point db.RestorePoint, byID map[int64]db.RestorePoint) (status string, depth int, warning string) {
-	status, depth, _, warning, _ = restorePointChainState(point, byID)
+func RestorePointChainHealth(point db.RestorePoint, byID map[int64]db.RestorePoint, linksTruncated bool) (status string, depth int, warning string) {
+	status, depth, missingID, warning, _ := restorePointChainState(point, byID)
+	if linksTruncated && missingID > 0 {
+		if _, loaded := byID[missingID]; !loaded {
+			return "unknown", depth, "The catalog reached its Backup Chain limit."
+		}
+	}
 	return status, depth, warning
 }
 

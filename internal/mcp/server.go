@@ -171,6 +171,7 @@ func (s *MCPServer) registerTools() {
 
 	// Restore tools
 	registerRecoveryCatalog(s.server, s.db)
+	registerRecoveryEvidence(s.server, s.db)
 	s.addListRestorePointsTool()
 	s.addRestoreItemTool()
 

@@ -24,7 +24,7 @@ The access rules apply to every API route, including `/health`.
 | Anyone else, including an MCP bridge or script on another machine         | Send the API key. Vault returns `401` until a key exists                                        |
 | A web page on another origin, on any method and from any address          | Vault returns `403` for origins outside the allowlist. Send the API key from a permitted origin |
 
-Send an [Assistant Key](mcp.md#assistant-keys) in the same header to read the recovery catalog. The key limits access on remote connections, loopback connections and SSH tunnels. Vault returns `401` for an invalid or revoked key and `403` for operations outside its permissions. Connect directly to the daemon. The Unraid plugin proxy refuses Assistant Key headers.
+Send an [Assistant Key](mcp.md#assistant-keys) in the same header to read the recovery catalog and Backup Item evidence. The key limits access on remote connections, loopback connections and SSH tunnels. Vault returns `401` for an invalid or revoked key and `403` for operations outside its permissions. Connect directly to the daemon. The Unraid plugin proxy refuses Assistant Key headers.
 
 A local request must come from an address on the Vault host. Its `Host` header must contain an IP address, `localhost`, or the Vault host name. A domain that points to `127.0.0.1` does not get local access. This prevents DNS rebinding.
 
@@ -253,18 +253,28 @@ Responses never contain a source's API key: `config` shows `••••••�
 
 ## Recovery
 
-| Method | Endpoint               | Description                                                                                                      |
-| ------ | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| GET    | `/recovery/catalog`    | List recorded Job and Restore Point metadata (daemon mode, available to Assistant Keys)                          |
-| GET    | `/recovery/plan`       | Get the recovery plan and item status for each step. A step has status `warning` if an item has no restore point |
-| GET    | `/recovery/path-audit` | Find job and item paths that do not exist on this server. The Recover Vault wizard uses this operation           |
-| POST   | `/recovery/path-remap` | Rewrite audited paths to new locations (e.g. after a share or disk was renamed)                                  |
+| Method | Endpoint                                   | Description                                                                                                      |
+| ------ | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| GET    | `/recovery/catalog`                        | List recorded Job and Restore Point metadata (daemon mode, available to Assistant Keys)                          |
+| GET    | `/recovery/restore-points`                 | Find Restore Points across Jobs and check recorded Backup Item membership                                        |
+| GET    | `/recovery/restore-points/{rpid}/evidence` | Inspect one Backup Item at a Restore Point                                                                       |
+| GET    | `/recovery/plan`                           | Get the recovery plan and item status for each step. A step has status `warning` if an item has no restore point |
+| GET    | `/recovery/path-audit`                     | Find job and item paths that do not exist on this server. The Recover Vault wizard uses this operation           |
+| POST   | `/recovery/path-remap`                     | Rewrite audited paths to new locations (e.g. after a share or disk was renamed)                                  |
 
 ### Recovery catalog
 
 `GET /recovery/catalog` returns the same data as the MCP tool `list_recovery_catalog`. Optional query parameters are `job_id` and `limit_per_job`. The default limit is 200 Restore Points per Job. The maximum is 1000. Each Job has a `truncated` flag.
 
-The response contains Job IDs, names, enabled and replicated flags, Restore Point metadata and recorded item membership. Membership is `recorded` or `unknown`. Chain status describes recorded parent links. Vault reads this catalog from the database. The catalog excludes storage paths, configuration and backup file contents.
+The response contains Job IDs, names, enabled and replicated flags, Restore Point metadata and recorded item membership. Membership is `recorded` or `unknown`. Chain status describes recorded parent links. If the chain exceeds the catalog limit, Vault reports an unknown chain. Vault reads this catalog from the database. The catalog excludes storage paths, configuration and backup file contents.
+
+### Backup Item evidence
+
+In daemon mode, Assistant Keys can use both Restore Point endpoints. Supply `item_type` (`folder`, `container` or `vm`) and the exact `item_name`. Discovery returns Restore Points in descending ID order with membership `confirmed`, `missing` or `unknown`. The default page size is 100 and the maximum is 200. Pass the response's `next_before_id` as `before_id` to read the next page. Older records can confirm a name without confirming its type.
+
+Evidence for a selected point lists its Backup Chain from oldest to newest. Each step shows membership, whether restore uses its stored data and the result of a metadata probe for required data. Deduplicated restore uses the selected point's manifest. Vault checks the repository header and the pack range for the manifest using the local chunk index. Classic evidence checks the recorded item directory or object metadata. Vault reports `unknown` if a probe cannot finish within its time or object limit or if the Destination cannot provide the necessary metadata.
+
+Verification shows the latest recorded mode, status and times, plus any backup-time Verification flag. Missing prerequisites and known unusable artifacts prevent approval eligibility. Unavailable artifact evidence or a failed Verification produces a warning. Storage probes check metadata without reading backup payloads.
 
 ### Restore approvals (`/jobs/{id}/restore`)
 

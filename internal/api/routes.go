@@ -45,7 +45,11 @@ func keyByRemoteAddr(r *http.Request) (string, error) {
 // submitted passphrase with bcrypt (issue #564).
 const setEncryptionRatePerMinute = 10
 
-const recoveryCatalogRoute = "/recovery/catalog"
+const (
+	recoveryCatalogRoute  = "/recovery/catalog"
+	restorePointsRoute    = "/recovery/restore-points"
+	recoveryEvidenceRoute = restorePointsRoute + "/{rpid}/evidence"
+)
 
 func assistantRouteGuard(router chi.Router) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -60,7 +64,7 @@ func assistantRouteGuard(router chi.Router) func(http.Handler) http.Handler {
 						next.ServeHTTP(w, r)
 						return
 					}
-				case recoveryCatalogRoute:
+				case recoveryCatalogRoute, restorePointsRoute, recoveryEvidenceRoute:
 					if r.Method == http.MethodGet {
 						next.ServeHTTP(w, r)
 						return
@@ -378,6 +382,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// Assistant Keys and MCP are available in daemon mode.
 		if !s.config.ReadOnly {
 			r.Get(recoveryCatalogRoute, recoveryH.Catalog)
+			r.Get(restorePointsRoute, recoveryH.FindRestorePoints)
+			r.Get(recoveryEvidenceRoute, recoveryH.GetRecoveryEvidence)
 			assistantKeys := handlers.NewAssistantKeyHandler(s.db, s.assistantRevocations, storageH.MaintenanceLock(), func() {
 				if s.configChangeHook != nil {
 					s.configChangeHook()

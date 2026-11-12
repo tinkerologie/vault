@@ -67,7 +67,7 @@ func TestListTools(t *testing.T) {
 		"list_storage", "get_storage", "create_storage", "update_storage", "delete_storage", "test_storage", "list_storage_files",
 		"list_containers", "list_vms", "list_folders", "list_plugins",
 		"get_health", "get_health_summary", "get_runner_status", "get_activity_log", "get_run_logs",
-		"list_recovery_catalog", "list_restore_points", "restore_item",
+		"list_recovery_catalog", "find_restore_points", "get_recovery_evidence", "list_restore_points", "restore_item",
 		"list_replication", "get_replication", "delete_replication",
 		"list_anomalies", "get_anomaly", "acknowledge_anomaly",
 	}

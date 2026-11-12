@@ -10,6 +10,7 @@ import (
 
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/recovery"
+	"github.com/tinkerologie/vault/internal/runner"
 )
 
 type assistantTransport struct {
@@ -62,6 +63,7 @@ func (s *MCPServer) assistantTransport(keyID int64, permitted func() bool) *assi
 	server := mcp.NewServer(&mcp.Implementation{Name: "vault", Version: s.config.Version}, nil)
 	stopSubscriptionsOnShutdown(server, stop)
 	registerRecoveryCatalog(server, s.db)
+	registerRecoveryEvidence(server, s.db)
 	entry := &assistantTransport{
 		server: server,
 		handler: mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server { return server },
@@ -95,5 +97,40 @@ func registerRecoveryCatalog(server *mcp.Server, database *db.DB) {
 			err = errors.New("could not read recovery catalog")
 		}
 		return nil, catalog, err
+	})
+}
+
+func registerRecoveryEvidence(server *mcp.Server, database *db.DB) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "find_restore_points",
+		Description: "Find recorded Restore Points across Jobs and check selected Backup Item membership",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, opts recovery.FindOptions) (*mcp.CallToolResult, recovery.FindResult, error) {
+		result, err := recovery.FindRestorePoints(ctx, database, opts)
+		if err != nil && !errors.Is(err, runner.ErrInvalidSelection) && !errors.Is(err, recovery.ErrInvalidFindOptions) {
+			err = errors.New("could not find Restore Points")
+		}
+		return nil, result, err
+	})
+	type evidenceInput struct {
+		runner.ItemSelection
+		RestorePointID int64 `json:"restore_point_id" jsonschema:"Restore Point ID"`
+	}
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_recovery_evidence",
+		Description: "Inspect recorded Backup Item membership, required Backup Chain, storage evidence and Verification for one Restore Point",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input evidenceInput) (*mcp.CallToolResult, runner.RecoveryEvidence, error) {
+		if input.RestorePointID <= 0 {
+			return nil, runner.RecoveryEvidence{}, errors.New("restore_point_id must be positive")
+		}
+		result, err := recovery.GetEvidence(ctx, database, input.RestorePointID, input.ItemSelection)
+		switch {
+		case errors.Is(err, db.ErrNotFound):
+			err = errors.New("restore point not found")
+		case err != nil && !errors.Is(err, runner.ErrInvalidSelection):
+			err = errors.New("could not read recovery evidence")
+		}
+		return nil, result, err
 	})
 }

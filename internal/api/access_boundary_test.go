@@ -653,6 +653,7 @@ func TestRouteInventoryDeniesByDefault(t *testing.T) {
 					t.Errorf("%s from a cross-origin page = %d, want 403 (readOnly=%v withKey=%v)", id, w.Code, readOnly, withKey)
 				}
 				scopedAllowed := id == "GET /api/v1/recovery/catalog" ||
+					id == "GET /api/v1/recovery/restore-points" || id == "GET /api/v1/recovery/restore-points/{rpid}/evidence" ||
 					((route == "/api/v1/mcp" || route == "/api/v1/mcp/*") &&
 						(method == http.MethodGet || method == http.MethodPost || method == http.MethodDelete))
 				if assistantKey != "" && !scopedAllowed {

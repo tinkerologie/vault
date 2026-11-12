@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS restore_points (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX IF NOT EXISTS idx_restore_points_job_created ON restore_points(job_id, created_at DESC, id DESC);
+
 CREATE TABLE IF NOT EXISTS settings (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL DEFAULT ''
@@ -114,6 +116,8 @@ CREATE TABLE IF NOT EXISTS verify_runs (
 	completed_at DATETIME,
 	error_summary TEXT DEFAULT ''
 );
+
+CREATE INDEX IF NOT EXISTS idx_verify_runs_point_started ON verify_runs(restore_point_id, started_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS replication_sources (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,

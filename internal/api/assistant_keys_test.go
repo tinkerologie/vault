@@ -160,7 +160,7 @@ func TestRevokedAssistantKeyStaysDeniedAfterDatabaseRollback(t *testing.T) {
 	}
 }
 
-func TestAssistantMCPExposesOnlyRecoveryCatalog(t *testing.T) {
+func TestAssistantMCPExposesOnlyRecoveryInspection(t *testing.T) {
 	srv := NewServer(testDB(t), ServerConfig{})
 	key := issueAssistantKey(t, srv, "MCP catalog")
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +173,7 @@ func TestAssistantMCPExposesOnlyRecoveryCatalog(t *testing.T) {
 	mcp := &assistantMCPClient{t: t, baseURL: ts.URL + "/api/v1/mcp", key: key.Key}
 	mcp.initialize()
 	status, body := mcp.post(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
-	if status != http.StatusOK || !strings.Contains(body, `"name":"list_recovery_catalog"`) || strings.Count(body, `"inputSchema"`) != 1 {
+	if status != http.StatusOK || !strings.Contains(body, `"name":"list_recovery_catalog"`) || !strings.Contains(body, `"name":"find_restore_points"`) || !strings.Contains(body, `"name":"get_recovery_evidence"`) || strings.Count(body, `"inputSchema"`) != 3 {
 		t.Fatalf("scoped tools/list = %d: %s", status, body)
 	}
 	status, body = mcp.post(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_recovery_catalog","arguments":{"limit_per_job":1001}}}`)

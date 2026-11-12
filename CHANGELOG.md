@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - Create and revoke named Assistant Keys in Settings. Each key grants read-only access to the recovery catalog over REST and MCP (#639).
+- Find Restore Points for a Backup Item and inspect its recorded membership, required Backup Chain, storage metadata and Verification over REST and MCP (#640).
 
 ## [v2026.11.02] - 2026-11-12
 

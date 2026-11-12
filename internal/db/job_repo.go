@@ -51,7 +51,11 @@ func insertJob(ctx context.Context, q jobSQL, job Job) (int64, error) {
 }
 
 func (d *DB) GetJob(id int64) (Job, error) {
-	return getJob(context.Background(), d, id)
+	return d.GetJobContext(context.Background(), id)
+}
+
+func (d *DB) GetJobContext(ctx context.Context, id int64) (Job, error) {
+	return getJob(ctx, d, id)
 }
 
 const selectJob = `SELECT id, name, description, enabled, schedule, backup_type_chain,
@@ -784,11 +788,20 @@ func (d *DB) ListRestorePoints(jobID int64) ([]RestorePoint, error) {
 }
 
 func (d *DB) ListRestorePointsContext(ctx context.Context, jobID int64) ([]RestorePoint, error) {
-	rows, err := d.QueryContext(ctx,
-		`SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
+	return d.ListRestorePointsPage(ctx, jobID, 0)
+}
+
+// ListRestorePointsPage returns the newest Restore Points for a Job.
+func (d *DB) ListRestorePointsPage(ctx context.Context, jobID int64, limit int) ([]RestorePoint, error) {
+	query := `SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
 			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), manifest_id, created_at
-		FROM restore_points WHERE job_id = ? ORDER BY created_at DESC, id DESC`, jobID,
-	)
+		FROM restore_points WHERE job_id = ? ORDER BY created_at DESC, id DESC`
+	args := []any{jobID}
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := d.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -888,8 +901,12 @@ func (d *DB) DeleteExpiredRestorePoints(jobID int64, olderThanDays int) error {
 
 // GetRestorePoint returns a single restore point by ID.
 func (d *DB) GetRestorePoint(id int64) (RestorePoint, error) {
+	return d.GetRestorePointContext(context.Background(), id)
+}
+
+func (d *DB) GetRestorePointContext(ctx context.Context, id int64) (RestorePoint, error) {
 	var rp RestorePoint
-	err := d.QueryRow(
+	err := d.QueryRowContext(ctx,
 		`SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
 			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), manifest_id, created_at
 		FROM restore_points WHERE id = ?`, id,

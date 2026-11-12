@@ -18,9 +18,11 @@ Vault exposes a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP)
 
 Open **Settings** → **Security** → **Assistant Keys** in the Unraid web UI. Enter a name and create a key. Copy the value before you dismiss it. Give each assistant its own key so you can revoke access separately.
 
-Send the key in the `X-API-Key` header on every request to the daemon. An Assistant Key can use only `list_recovery_catalog`. The same permissions apply through an SSH tunnel. Use TLS or a trusted network to protect the key in transit.
+Send the key in the `X-API-Key` header on every request to the daemon. An Assistant Key can use `list_recovery_catalog`, `find_restore_points` and `get_recovery_evidence`. The same permissions apply through an SSH tunnel. Use TLS or a trusted network to protect the key in transit.
 
 The catalog lists Jobs, Restore Points, recorded parent links and recorded backup item names. Vault reports `unknown` when a Restore Point has no item membership records. The tool accepts optional `job_id` and `limit_per_job` fields. The default limit is 200 Restore Points per Job. The maximum is 1000. The tool reads catalog metadata from the database and makes no storage changes.
+
+Use `find_restore_points` with the exact `item_name` and `item_type` (`folder`, `container` or `vm`). Use `get_recovery_evidence` with those same fields and a `restore_point_id` to check the required Backup Chain, artifact metadata and Verification for a candidate. Both tools return the same structured evidence as the [REST endpoints](api.md#backup-item-evidence).
 
 ## Configuration
 
@@ -135,11 +137,13 @@ The tools below are available to local and administrator clients. For settings, 
 
 ### Restore
 
-| Tool                    | Description                                                    |
-| ----------------------- | -------------------------------------------------------------- |
-| `list_recovery_catalog` | List recorded recovery metadata across Jobs and Restore Points |
-| `list_restore_points`   | List restore points for a job                                  |
-| `restore_item`          | Restore a backup item                                          |
+| Tool                    | Description                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `list_recovery_catalog` | List recorded recovery metadata across Jobs and Restore Points                                                |
+| `find_restore_points`   | Find Restore Points across Jobs and check recorded Backup Item membership                                     |
+| `get_recovery_evidence` | Inspect recorded membership, the required Backup Chain, storage metadata and Verification for one Backup Item |
+| `list_restore_points`   | List restore points for a job                                                                                 |
+| `restore_item`          | Restore a backup item                                                                                         |
 
 `restore_item` returns after the restore passes the approval checks. The restore continues in the background.
 

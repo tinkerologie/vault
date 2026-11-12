@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -137,14 +138,18 @@ func (d *DB) ListVerifyRunsForJob(jobID int64, limit int) ([]VerifyRun, error) {
 // ListVerifyRunsForRestorePoint returns the most recent verify runs for a
 // given restore point, newest first.
 func (d *DB) ListVerifyRunsForRestorePoint(restorePointID int64, limit int) ([]VerifyRun, error) {
+	return d.ListVerifyRunsForRestorePointContext(context.Background(), restorePointID, limit)
+}
+
+func (d *DB) ListVerifyRunsForRestorePointContext(ctx context.Context, restorePointID int64, limit int) ([]VerifyRun, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := d.Query(
+	rows, err := d.QueryContext(ctx,
 		`SELECT id, restore_point_id, mode, status, files_checked, files_failed, bytes_read,
 		started_at, completed_at, COALESCE(error_summary, '')
 		FROM verify_runs WHERE restore_point_id = ?
-		ORDER BY started_at DESC LIMIT ?`,
+		ORDER BY started_at DESC, id DESC LIMIT ?`,
 		restorePointID, limit,
 	)
 	if err != nil {
