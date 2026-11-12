@@ -89,7 +89,7 @@ func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase 
 		fresh, err := revalidate(ctx)
 		if err == nil {
 			probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			err = s.runner.CheckFolderRestorePassphrase(probeCtx, fresh.plan, passphrase)
+			err = s.runner.CheckApprovedRestorePassphrase(probeCtx, fresh.plan, passphrase)
 			cancel()
 		}
 		if errors.Is(err, runner.ErrReviewedRestoreChanged) {

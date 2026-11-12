@@ -21,7 +21,7 @@ var (
 type ApprovedRestore struct {
 	RequestID  string
 	Run        db.JobRun
-	Plan       FolderRestorePlan
+	Plan       ApprovedRestorePlan
 	Passphrase string
 	Revalidate func(context.Context) error
 	Flush      func() error
@@ -64,7 +64,7 @@ func (r *Runner) AdmitApprovedRestore(prepare func() (ApprovedRestore, error)) e
 	r.backgroundWork.Go(func() {
 		defer release()
 		plan := approved.Plan
-		r.runTrackedRestore(approved.Run, plan.Point, []RestoreTarget{{Name: plan.ItemName, Type: "folder"}},
+		r.runTrackedRestore(approved.Run, plan.Point, []RestoreTarget{{Name: plan.Item.ItemName, Type: plan.Item.ItemType}},
 			"", approved.Passphrase, plan.Job.Name, &approved)
 	})
 	return nil
@@ -113,6 +113,6 @@ func approvedRestoreFailure(err error) string {
 	}
 }
 
-func changedFolderRestore(err error) error {
+func changedApprovedRestore(err error) error {
 	return fmt.Errorf("%w: %v", ErrReviewedRestoreChanged, err)
 }

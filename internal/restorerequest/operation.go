@@ -33,7 +33,7 @@ type Operation struct {
 	SourceDigest   string `json:"source_digest"`
 	ConfiguredPath string `json:"configured_path,omitempty"`
 	ResolvedPath   string `json:"resolved_path,omitempty"`
-	plan           runner.FolderRestorePlan
+	plan           runner.ApprovedRestorePlan
 }
 
 type Review struct {
@@ -85,7 +85,7 @@ func Capture(ctx context.Context, database *db.DB, in Input) (Operation, error) 
 	}
 	op := Operation{
 		Input: in, StorageDestID: job.StorageDestID,
-		plan: runner.FolderRestorePlan{Job: job, Point: point, ItemName: in.ItemName},
+		plan: runner.ApprovedRestorePlan{Job: job, Point: point, Item: item},
 		Review: Review{
 			JobName: job.Name, Item: item, RestorePoint: evidence.Point, Membership: evidence.Membership,
 			ItemTypeEvidence: evidence.ItemTypeEvidence, Chain: evidence.Chain, Verification: evidence.Verification,
@@ -157,7 +157,7 @@ func captureSource(ctx context.Context, database *db.DB, op *Operation) (string,
 			return "", err
 		}
 		if step.DataRequired {
-			op.plan.Steps = append(op.plan.Steps, runner.FolderRestoreStep{Point: point, Objects: step.ClassicObjects})
+			op.plan.Steps = append(op.plan.Steps, runner.ApprovedRestoreStep{Point: point, Objects: step.ClassicObjects})
 		}
 		if point.ID == op.plan.Point.ID {
 			op.plan.Point = point
@@ -204,9 +204,9 @@ func (op *Operation) captureTarget(ctx context.Context, database *db.DB) error {
 			}
 		}
 	}
-	op.plan.Target = engine.ReviewedFolderTarget{
+	op.plan.Work = runner.FolderRestoreWork{Target: engine.ReviewedFolderTarget{
 		Configured: target, Resolved: op.ResolvedPath, Original: original, Clean: op.EffectiveWriteMode == "replace",
-	}
+	}}
 	if op.EffectiveWriteMode == "replace" {
 		op.Effects = []string{"clear_target_contents", "write_backed_up_entries"}
 	} else {
