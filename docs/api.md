@@ -24,6 +24,8 @@ The access rules apply to every API route, including `/health`.
 | Anyone else, including an MCP bridge or script on another machine         | Send the API key. Vault returns `401` until a key exists                                        |
 | A web page on another origin, on any method and from any address          | Vault returns `403` for origins outside the allowlist. Send the API key from a permitted origin |
 
+Send an [Assistant Key](mcp.md#assistant-keys) in the same header to read the recovery catalog and Backup Item evidence. The key limits access on remote connections, loopback connections and SSH tunnels. Vault returns `401` for an invalid or revoked key and `403` for operations outside its permissions. Connect directly to the daemon. The Unraid plugin proxy refuses Assistant Key headers.
+
 A local request must come from an address on the Vault host. Its `Host` header must contain an IP address, `localhost`, or the Vault host name. A domain that points to `127.0.0.1` does not get local access. This prevents DNS rebinding.
 
 To make a key, open **Settings** → **Security** → **API Access** in Vault through the Unraid web UI. Generate the key. Copy the key to the client. On a headless server or Docker replica, use the CLI.
@@ -90,9 +92,11 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                                |
 | GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                      |
 | POST   | `/jobs/{id}/run`                                   | Start a backup immediately                                                                |
-| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup job                                                               |
+| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup or manual restore, or remove a queued operation                   |
 | POST   | `/jobs/{id}/restore`                               | Start a restore. Set `destination` to an absolute path or, for a ZFS item, a dataset name |
 | GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                            |
+
+A Restore Request run uses the [exact-run stop action](#restore-requests).
 
 ## Storage
 
@@ -141,7 +145,12 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | POST   | `/settings/api-key/generate`      | Generate a new API key (local only, rate-limited)                                                      |
 | POST   | `/settings/api-key/rotate`        | Rotate the existing API key (local only, rate-limited)                                                 |
 | DELETE | `/settings/api-key`               | Revoke the API key, refusing remote clients until a new one exists (local only)                        |
+| GET    | `/settings/assistant-keys`        | List key IDs, names and creation times (daemon mode)                                                   |
+| POST   | `/settings/assistant-keys`        | Create a key with `{"name":"<assistant-name>"}` (daemon mode, local only, rate limited)                |
+| DELETE | `/settings/assistant-keys/{id}`   | Revoke the specified key (daemon mode, local only)                                                     |
 | GET    | `/settings/diagnostics`           | Download a diagnostics ZIP (system info, schema, runs, scheduler, daemon log — credentials redacted)   |
+
+Create returns `201` with `id`, `name`, `created_at` and the one-time `assistant_key` value. The response sets `Cache-Control: no-store`. A duplicate name returns `409`. A database restore in progress also returns `409` to a create or revoke request. Revoke returns `204` and closes that key's MCP sessions.
 
 ## Discovery
 
@@ -246,11 +255,28 @@ Responses never contain a source's API key: `config` shows `••••••�
 
 ## Recovery
 
-| Method | Endpoint               | Description                                                                                                      |
-| ------ | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| GET    | `/recovery/plan`       | Get the recovery plan and item status for each step. A step has status `warning` if an item has no restore point |
-| GET    | `/recovery/path-audit` | Find job and item paths that do not exist on this server. The Recover Vault wizard uses this operation           |
-| POST   | `/recovery/path-remap` | Rewrite audited paths to new locations (e.g. after a share or disk was renamed)                                  |
+| Method | Endpoint                                   | Description                                                                                                      |
+| ------ | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| GET    | `/recovery/catalog`                        | List recorded Job and Restore Point metadata (daemon mode, available to Assistant Keys)                          |
+| GET    | `/recovery/restore-points`                 | Find Restore Points across Jobs and check recorded Backup Item membership                                        |
+| GET    | `/recovery/restore-points/{rpid}/evidence` | Inspect one Backup Item at a Restore Point                                                                       |
+| GET    | `/recovery/plan`                           | Get the recovery plan and item status for each step. A step has status `warning` if an item has no restore point |
+| GET    | `/recovery/path-audit`                     | Find job and item paths that do not exist on this server. The Recover Vault wizard uses this operation           |
+| POST   | `/recovery/path-remap`                     | Rewrite audited paths to new locations (e.g. after a share or disk was renamed)                                  |
+
+### Recovery catalog
+
+`GET /recovery/catalog` returns the same data as the MCP tool `list_recovery_catalog`. Optional query parameters are `job_id` and `limit_per_job`. The default limit is 200 Restore Points per Job. The maximum is 1000. Each Job has a `truncated` flag.
+
+The response contains Job IDs, names, enabled and replicated flags, Restore Point metadata and recorded item membership. Membership is `recorded` or `unknown`. Chain status describes recorded parent links. If the chain exceeds the catalog limit, Vault reports an unknown chain. Vault reads this catalog from the database. The catalog excludes storage paths, configuration and backup file contents.
+
+### Backup Item evidence
+
+In daemon mode, Assistant Keys can use both Restore Point endpoints. Supply `item_type` (`folder`, `container` or `vm`) and the exact `item_name`. Discovery returns Restore Points in descending ID order with membership `confirmed`, `missing` or `unknown`. The default page size is 100 and the maximum is 200. Pass the response's `next_before_id` as `before_id` to read the next page. Older records can confirm a name without confirming its type.
+
+Evidence for a selected point lists its Backup Chain from oldest to newest. Each step shows membership, whether restore uses its stored data and the result of a metadata probe for required data. Deduplicated restore uses the selected point's manifest. An imported deduplicated point without a recorded parent uses its complete manifest. Vault checks the repository header and the pack range for the manifest using the local chunk index. Classic evidence checks the recorded item directory or object metadata. VM disk evidence requires a recorded object inventory. Classic Docker volume coverage is unknown without an object inventory and volume manifest. Vault reads the saved configuration and checks the volume archives during operator review. Vault reports `unknown` if a probe cannot finish within its time or object limit or if the Destination cannot provide the necessary metadata.
+
+Verification shows the latest recorded mode, status and times, plus any backup-time Verification flag. Missing prerequisites and known unusable artifacts prevent approval eligibility. Unavailable artifact evidence or a failed Verification produces a warning. If the required folder archive is available but its replay index or final listing is unavailable, Vault reports `folder_replay_evidence_unavailable`. The folder remains eligible and replay pruning may be skipped. Storage probes check metadata without reading backup payloads.
 
 ### Restore approvals (`/jobs/{id}/restore`)
 
@@ -271,7 +297,7 @@ The MCP `restore_item` tool has no approval fields. The tool waits for the appro
 
 List the available backups first with `GET /storage/{id}/db-backups`.
 
-If this server has an API key, the restored database keeps that key rather than the one in the backup.
+Restoring a database preserves the configured API Key and the current Assistant Key set. The daemon keeps Assistant Key revocations alongside `vault.key` so an older snapshot cannot reactivate a revoked key.
 
 The response's `locked_credentials` counts restored storage destinations and replication sources sealed with a different `vault.key`. See [Stored credentials and vault.key](guides/disaster-recovery.md#stored-credentials-and-vaultkey).
 
@@ -291,6 +317,40 @@ An empty passphrase returns status without changes. The response is
 While a destination is still sealed with another key, browsing its restore
 points (`GET /jobs/{id}/restore-points/{rpid}/contents`) returns
 **424** with `{"code": "dedup_key_mismatch", "error": "…"}`.
+
+### Restore Requests
+
+In daemon mode, use `PATCH /settings/assistant-keys/{id}` from the Vault host with `{"restore_request":true}` to grant a named Assistant Key permission to prepare, follow and withdraw its own requests. Send `false` to remove the permission and keep recovery inspection. Reconnect the assistant's MCP session after changing permission.
+
+| Method | Endpoint                          | Access                                                             |
+| ------ | --------------------------------- | ------------------------------------------------------------------ |
+| POST   | `/restore-requests`               | Assistant Key with Restore Request permission                      |
+| GET    | `/restore-requests`               | Vault host operator review                                         |
+| GET    | `/restore-requests/{id}`          | Owning Assistant Key with permission or Vault host operator review |
+| POST   | `/restore-requests/{id}/withdraw` | Owning Assistant Key with permission                               |
+| POST   | `/restore-runs/{runID}/stop`      | Signed-in Unraid operator via the native Vault action              |
+
+To submit, send positive `job_id` and `restore_point_id` values, the exact folder `item_name`, and `write_mode` of `replace` or `merge`. Omit `destination` to review the configured original location, or supply a path allowed by the alternate location policy. The request covers one whole folder. Vault returns `201` with a pending `id`, `review_link`, evidence, effects, and eligibility. The link opens the review in the Unraid UI and carries no authorization. Submission performs no restore. A signed-in Unraid operator can select **Approve and run** in the review. Vault verifies the native Unraid session and the reviewed operation before it admits the run. Enter any required Backup Passphrase in the review. The general API proxy and standalone Vault interface cannot approve a request.
+
+An exact repeat of a pending submission returns `200` with `reused: true`, the existing ID, captured review and original expiry. The response reports the working ledger. Check the initial submission for any flash persistence warning. Withdraw the pending request and submit again to capture a new review. Each Assistant Key can hold five unexpired pending requests and submit six new requests per rolling hour. Withdrawn requests count towards the rolling limit. When a new operation exceeds either limit, Vault returns `429`. Follow a pending request, withdraw one to free a pending slot, or retry after the rolling window.
+
+During classic Backup Chain replay, Vault can remove earlier writes that the final listing excludes when it can read the listing and the earlier steps' indexes.
+
+Vault retains requests after withdrawal or expiry. The review window is 24 hours from creation. At the exact expiry time, a pending request becomes expired even if withdrawal arrives first. Repeated withdrawal returns the recorded state. If flash persistence failed, the warning stays visible until Vault confirms the withdrawal is saved. A repeated withdrawal can retry the flash write at most once per minute. List defaults to `status=pending`. Use `status=withdrawn,expired,invalidated,completed,failed,interrupted,cancelled` to see terminal requests, and pass `next_before` from the result as `before` for the next page. The default `limit` is 50, with a maximum of 200.
+
+Vault returns `400` for invalid inputs or a folder known to be absent, `403` for insufficient permission, and `404` for unknown or non-owned requests. A database maintenance conflict returns `409`. A committed change with a failed hybrid flash flush includes `persistence_warning`. Assistant responses omit resolved paths, raw point metadata, credentials, and internal source identifiers. The operator review includes the resolved target path. The submission schema has no passphrase or file-selection field.
+
+An approved request includes a stable `run_id` and a `run` summary with status, item counts, live progress when available, and readiness checks. Folder application health is `unchecked`. The operator view also shows the verified approval time and Unraid account name when present. A busy Runner leaves the request pending. A change to the reviewed source or write effects invalidates the request. A repeated approval returns the existing Restore Run. After a restart, an unfinished run is marked interrupted. Prepare a new request to retry.
+
+The native Unraid stop action verifies operator proof bound to the exact Restore Run ID. It returns `202` with `run_id` and `status: stopping` when the Runner accepts the stop, `409` with the recorded status when that run is no longer active, or `404` when the ID has no approved Restore Request. An API key, direct local connection, or the general Unraid API proxy cannot authorize this action. Use the Restore Request status to distinguish `cancelled` from a restore that finished before the stop took effect. The requesting assistant can follow the redacted outcome and stop request time.
+
+#### VM Restore Requests
+
+Set `item_type` to `vm` and `write_mode` to `replace`. A request covers one VM at the selected Restore Point. Vault uses the VM's recorded full backup and any required checkpoint layers. A full VM backup can be recorded in a Job's incremental Restore Point. Use `destination` to put the backed-up disks and NVRAM in an allowed alternate directory. Both location choices use the saved VM name and UUID.
+
+The operator's `vm` review shows disk targets, NVRAM, existing-domain actions, and the saved start policy. Assistant responses omit this projection. Vault requires the recorded disk and firmware artifacts and refuses a path used by another domain. For encrypted configuration, an operator enters the Backup Passphrase to see the effects and enters it again when approving.
+
+A tracked VM run can include `vm_readiness` in the request result, the per-item run log, and the terminal item event. It reports `startup`, `running` and `cleanup_stop`, with `guest_check` and `guest_outcome` for a configured QEMU guest agent or TCP check. Outcomes are `passed`, `failed` or `not_attempted`. A TCP result includes the port. Application health is `unchecked`.
 
 ## MCP (Model Context Protocol)
 

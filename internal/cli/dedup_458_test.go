@@ -205,7 +205,7 @@ func TestRunDedupGC458_CollectError(t *testing.T) {
 	// manifest query fails.
 	for _, q := range []string{
 		`DROP TABLE restore_points`,
-		`CREATE TABLE restore_points (id INTEGER PRIMARY KEY, job_id INTEGER)`,
+		`CREATE TABLE restore_points (id INTEGER PRIMARY KEY, job_id INTEGER, created_at DATETIME)`,
 	} {
 		if _, err := d.Exec(q); err != nil {
 			t.Fatal(err)

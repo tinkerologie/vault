@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,6 +17,7 @@ import (
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/engine"
 	jobintake "github.com/tinkerologie/vault/internal/jobs"
+	"github.com/tinkerologie/vault/internal/restorerequest"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/storage"
 )
@@ -31,14 +33,20 @@ type MCPServer struct {
 	intake *jobintake.Intake
 	server *mcp.Server
 	config Config
+
+	assistantMu      sync.Mutex
+	assistants       map[int64]*assistantTransport
+	assistantStop    context.Context
+	assistantsClosed bool
 	// startRestore starts a restore_item restore; tests stand in for the runner.
 	startRestore func(ctx context.Context, rp db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...runner.RestoreItemOptions) error
 }
 
 // Config controls MCP metadata exposed to clients.
 type Config struct {
-	Version  string
-	ReadOnly bool
+	Version         string
+	ReadOnly        bool
+	RestoreRequests *restorerequest.Service
 }
 
 // New creates a new MCP server with all Vault tools registered.
@@ -52,10 +60,12 @@ func New(database *db.DB, r *runner.Runner, intake *jobintake.Intake, configs ..
 	}
 
 	s := &MCPServer{
-		db:     database,
-		runner: r,
-		intake: intake,
-		config: cfg,
+		db:            database,
+		runner:        r,
+		intake:        intake,
+		config:        cfg,
+		assistants:    make(map[int64]*assistantTransport),
+		assistantStop: context.Background(),
 	}
 	s.startRestore = r.StartRestoreItem
 
@@ -88,7 +98,14 @@ func (s *MCPServer) HTTPHandler() http.Handler {
 // SetShutdownContext stops subscriptions whose RPC contexts outlive their
 // HTTP requests. The runtime calls this before it starts serving.
 func (s *MCPServer) SetShutdownContext(stop context.Context) {
-	s.server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+	s.assistantMu.Lock()
+	s.assistantStop = stop
+	s.assistantMu.Unlock()
+	stopSubscriptionsOnShutdown(s.server, stop)
+}
+
+func stopSubscriptionsOnShutdown(server *mcp.Server, stop context.Context) {
+	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			if method == "subscriptions/listen" {
 				listenCtx, cancel := context.WithCancel(ctx)
@@ -104,7 +121,19 @@ func (s *MCPServer) SetShutdownContext(stop context.Context) {
 
 // Close closes and joins sessions after the HTTP transport has stopped.
 func (s *MCPServer) Close() {
-	for session := range s.server.Sessions() {
+	s.assistantMu.Lock()
+	s.assistantsClosed = true
+	assistants := s.assistants
+	s.assistants = nil
+	s.assistantMu.Unlock()
+	for _, entry := range assistants {
+		entry.close()
+	}
+	closeSessions(s.server)
+}
+
+func closeSessions(server *mcp.Server) {
+	for session := range server.Sessions() {
 		_ = session.Close()
 	}
 }
@@ -143,6 +172,8 @@ func (s *MCPServer) registerTools() {
 	s.addGetRunLogsTool()
 
 	// Restore tools
+	registerRecoveryCatalog(s.server, s.db)
+	registerRecoveryEvidence(s.server, s.db)
 	s.addListRestorePointsTool()
 	s.addRestoreItemTool()
 

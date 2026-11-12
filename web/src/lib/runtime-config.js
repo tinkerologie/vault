@@ -7,6 +7,7 @@ const defaultConfig = Object.freeze({
   daemonBindAddress: '127.0.0.1',
   daemonPort: '24085',
   proxyPath: '',
+  restoreRequestActionPath: '',
   csrfToken: '',
   liveMode: 'websocket',
   timeFormat: 'auto',
@@ -130,5 +131,48 @@ export function buildApiRequest(method, path, { body = null, headers = {} } = {}
   return {
     url: `${cfg.apiBase || defaultConfig.apiBase}${normalizedPath}`,
     options,
+  }
+}
+
+export function canApproveRestoreRequest() {
+  const cfg = getRuntimeConfig()
+  return isProxyMode() && Boolean(cfg.restoreRequestActionPath && cfg.csrfToken)
+}
+
+export function buildRestoreApprovalRequest(method, id, { body }) {
+  return buildNativeRestoreAction(method, {
+    action: 'approve',
+    id,
+    review_digest: body.reviewDigest,
+    passphrase: body.passphrase,
+  })
+}
+
+export function buildRestoreReviewRequest(method, id, { body }) {
+  return buildNativeRestoreAction(method, {
+    action: 'review',
+    id,
+    review_digest: body.reviewDigest,
+    passphrase: body.passphrase,
+  })
+}
+
+export function buildRestoreStopRequest(method, id) {
+  return buildNativeRestoreAction(method, { action: 'stop', id })
+}
+
+function buildNativeRestoreAction(method, fields) {
+  if (!canApproveRestoreRequest()) throw new Error('Open the signed-in Unraid Vault page.')
+  const cfg = getRuntimeConfig()
+  const form = new URLSearchParams({ ...fields, csrf_token: cfg.csrfToken })
+  return {
+    url: cfg.restoreRequestActionPath,
+    options: {
+      method,
+      credentials: 'same-origin',
+      redirect: 'error',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body: form.toString(),
+    },
   }
 }

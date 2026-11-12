@@ -22,6 +22,12 @@ Select the items to include in this job. Vault lists items from your server.
 | **Folders**          | Any arbitrary path on your server (e.g. `/mnt/user/appdata`, `/boot/config`)                         |
 | **Plugins**          | Installed Unraid plugins                                                                             |
 
+#### VM Restore Requests
+
+A VM Restore Request shows the disks and NVRAM Vault will write and the domain definition Vault will create. The required chain starts at the VM's recorded full backup. Each required disk layer must be available before Vault stops or removes an existing domain. An alternate directory changes the disk and NVRAM paths for the same VM identity.
+
+Vault checks the reviewed source and destination effects before execution. Libvirt actions and disk writes occur separately and can leave a partially restored VM if they fail or are interrupted. History shows whether Vault started the VM and which configured readiness checks ran. Application health stays unchecked.
+
 #### Notes on containers
 
 - Vault backs up the container image, its XML template, and the included host paths.
@@ -295,6 +301,10 @@ To delete a specific backup without touching the job or other restore points:
 This removes both the backup files from storage and the restore point record from the database.
 
 ---
+
+## Stop an approved Restore Run
+
+Open the Restore Request on the signed-in Unraid Vault page. While the run is active, select **Stop Restore Run** and confirm the run ID and restore location. Stopping can leave the restore location partly restored. Check the recorded outcome in the request. If the restore finishes before it can stop, Vault shows the outcome of that restore.
 
 ## Restoring Across Backup Jobs
 

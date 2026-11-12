@@ -7,6 +7,8 @@
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getProgress, handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
+  import RestoreRequestList from '../components/RestoreRequestList.svelte'
+  import VmReadinessResult from '../components/VmReadinessResult.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import SizeChart from '../components/SizeChart.svelte'
   import DurationChart from '../components/DurationChart.svelte'
@@ -372,6 +374,10 @@
       </div>
     {/if}
   </div>
+
+  {#if !isReplicaMode()}
+    <RestoreRequestList history />
+  {/if}
 
   {#if isReplicaMode()}
     <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
@@ -765,6 +771,9 @@
                                 <span class="text-xs text-danger ml-auto min-w-0 break-words">{item.error}</span>
                               {/if}
                             </div>
+                            {#if run.run_type === 'restore' && item.type === 'vm' && item.vm_readiness}
+                              <div class="ml-6 text-xs"><VmReadinessResult readiness={item.vm_readiness} /></div>
+                            {/if}
                           {/each}
                         </div>
                       {:else if hasLogDetails(run)}

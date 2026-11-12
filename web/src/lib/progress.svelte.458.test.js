@@ -159,6 +159,14 @@ describe('queue and cancel', () => {
     expect(p.cancelling).toBe(true)
   })
 
+  it('ignores a stop for an older Restore Run of the same Job', () => {
+    start({ run_type: 'restore' })
+    handleProgressMessage({ type: 'job_cancelling', job_id: 1, run_id: 9 })
+    expect(p.cancelling).toBe(false)
+    handleProgressMessage({ type: 'job_cancelling', job_id: 1, run_id: 10 })
+    expect(p.cancelling).toBe(true)
+  })
+
   it('ignores job_cancelling with no active run', () => {
     expect(handleProgressMessage({ type: 'job_cancelling', job_id: 1 })).toBe(true)
     expect(p.cancelling).toBe(false)

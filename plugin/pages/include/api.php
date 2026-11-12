@@ -272,7 +272,8 @@ function vault_is_long_request($method, $path) {
     }
     $method = strtoupper((string) $method);
     return ($method === 'GET' && preg_match('#^/api/v1/jobs/[^/]+/restore-points/[^/]+/contents$#', $route) === 1)
-        || ($method === 'POST' && $route === '/api/v1/storage/dedup-keys/rewrap');
+        || ($method === 'POST' && $route === '/api/v1/storage/dedup-keys/rewrap')
+        || ($method === 'POST' && preg_match('#^/api/v1/restore-requests/[a-f0-9]{32}/(approve|review)$#', $route) === 1);
 }
 
 // Returns the cURL CURLOPT_TIMEOUT (seconds) for a daemon request.
@@ -295,6 +296,9 @@ function vault_http_request($method, $path, $payload = null, $extraHeaders = [])
     curl_setopt($ch, CURLOPT_TIMEOUT, vault_request_timeout($method, $path));
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, VAULT_HTTP_CONNECT_TIMEOUT);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+    // Native prepend can set proxy environment variables. This request is
+    // always to Vault on this host, including when it contains an approval.
+    curl_setopt($ch, CURLOPT_PROXY, '');
     curl_setopt($ch, CURLOPT_HEADERFUNCTION, static function($curl, $headerLine) use (&$responseHeaders) {
         $length = strlen($headerLine);
         $parts = explode(':', $headerLine, 2);

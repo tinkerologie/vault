@@ -22,6 +22,7 @@ import (
 	mcpserver "github.com/tinkerologie/vault/internal/mcp"
 	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/release"
+	"github.com/tinkerologie/vault/internal/restorerequest"
 	"github.com/tinkerologie/vault/web"
 )
 
@@ -44,6 +45,52 @@ func keyByRemoteAddr(r *http.Request) (string, error) {
 // setEncryptionRatePerMinute limits POST /settings/encryption, which hashes the
 // submitted passphrase with bcrypt (issue #564).
 const setEncryptionRatePerMinute = 10
+
+const (
+	recoveryCatalogRoute  = "/recovery/catalog"
+	restorePointsRoute    = "/recovery/restore-points"
+	recoveryEvidenceRoute = restorePointsRoute + "/{rpid}/evidence"
+	restoreRequestsRoute  = "/restore-requests"
+	restoreRequestRoute   = restoreRequestsRoute + "/{id}"
+	withdrawRequestRoute  = restoreRequestRoute + "/withdraw"
+)
+
+func assistantRouteGuard(router chi.Router) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if p := requestPrincipal(r); p.level == accessAssistant {
+				path := chi.RouteContext(r.Context()).RoutePath
+				pattern := router.Find(chi.NewRouteContext(), r.Method, path)
+				switch pattern {
+				case "/mcp", "/mcp/*":
+					switch r.Method {
+					case http.MethodGet, http.MethodPost, http.MethodDelete:
+						next.ServeHTTP(w, r)
+						return
+					}
+				case recoveryCatalogRoute, restorePointsRoute, recoveryEvidenceRoute:
+					if r.Method == http.MethodGet {
+						next.ServeHTTP(w, r)
+						return
+					}
+				case restoreRequestsRoute, withdrawRequestRoute:
+					if p.restoreGrant != "" && r.Method == http.MethodPost {
+						next.ServeHTTP(w, r)
+						return
+					}
+				case restoreRequestRoute:
+					if p.restoreGrant != "" && r.Method == http.MethodGet {
+						next.ServeHTTP(w, r)
+						return
+					}
+				}
+				respondJSON(w, http.StatusForbidden, map[string]string{"error": "not allowed for this Assistant Key"})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 func (s *Server) setupRoutes() *chi.Mux {
 	r := chi.NewRouter()
@@ -75,7 +122,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// Every route below is denied by default; see APIKeyAuth and
 		// TestRouteInventoryDeniesByDefault.
 		r.Use(CrossOriginGuard(allowedOrigins))
-		r.Use(APIKeyAuth(s.db))
+		r.Use(APIKeyAuth(s.db, s.assistantRevocations))
+		r.Use(assistantRouteGuard(r))
 
 		// Settings handler is shared between public and authenticated routes.
 		settingsH := handlers.NewSettingsHandler(s.db, s.config.ServerKey)
@@ -345,15 +393,55 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/recovery/path-remap", recoveryH.PathRemap)
 		}
 
-		// MCP is only available in daemon mode.
+		// Assistant Keys and MCP are available in daemon mode.
 		if !s.config.ReadOnly {
-			s.mcp = mcpserver.New(s.db, s.runner, intake, mcpserver.Config{
-				Version:  s.config.Version,
-				ReadOnly: s.config.ReadOnly,
+			r.Get(recoveryCatalogRoute, recoveryH.Catalog)
+			r.Get(restorePointsRoute, recoveryH.FindRestorePoints)
+			r.Get(recoveryEvidenceRoute, recoveryH.GetRecoveryEvidence)
+			assistantKeys := handlers.NewAssistantKeyHandler(s.db, s.assistantRevocations, storageH.MaintenanceLock(), func() {
+				if s.configChangeHook != nil {
+					s.configChangeHook()
+				}
 			})
-			mcpHandler := s.mcp.HTTPHandler()
-			r.Handle("/mcp", mcpHandler)
-			r.Handle("/mcp/*", mcpHandler)
+			r.Get("/settings/assistant-keys", assistantKeys.List)
+			r.With(LocalOnly, httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Post("/settings/assistant-keys", assistantKeys.Create)
+			r.With(LocalOnly).Delete("/settings/assistant-keys/{id}", assistantKeys.Revoke)
+			r.With(LocalOnly).Patch("/settings/assistant-keys/{id}", assistantKeys.SetRestoreRequest)
+			s.restoreRequests = restorerequest.New(s.db, s.assistantRevocations, storageH.MaintenanceLock(),
+				s.runner, s.config.RestoreRequestFlush, s.config.RestoreRequestClock)
+			requests := handlers.NewRestoreRequestHandler(s.restoreRequests, s.config.OperatorProof)
+			r.Post(restoreRequestsRoute, requests.Submit)
+			r.Get(restoreRequestsRoute, requests.List)
+			r.Get(restoreRequestRoute, requests.Get)
+			r.Post(withdrawRequestRoute, requests.Withdraw)
+			r.With(LocalOnly, ExtendWriteDeadline(handlers.RestoreApprovalWriteTimeout)).Post(restoreRequestRoute+"/approve", requests.Approve)
+			r.With(LocalOnly, ExtendWriteDeadline(handlers.RestoreApprovalWriteTimeout)).Post(restoreRequestRoute+"/review", requests.ReviewMetadata)
+			r.With(LocalOnly).Post("/restore-runs/{runID}/stop", requests.StopRun)
+			s.mcp = mcpserver.New(s.db, s.runner, intake, mcpserver.Config{
+				Version: s.config.Version, ReadOnly: s.config.ReadOnly, RestoreRequests: s.restoreRequests,
+			})
+			assistantKeys.SetRevokeHook(s.mcp.CloseAssistant)
+			adminMCP := s.mcp.HTTPHandler()
+			mcpHandler := func(w http.ResponseWriter, r *http.Request) {
+				p := requestPrincipal(r)
+				if p.level == accessAssistant {
+					s.mcp.ServeAssistant(w, r, p.assistantID, p.assistantDigest, p.restoreGrant, func() bool {
+						key, err := s.db.FindAssistantKey(r.Context(), p.assistantDigest)
+						if err != nil || key.ID != p.assistantID || !s.assistantRevocations.Permits(p.assistantDigest) {
+							return false
+						}
+						currentGrant := ""
+						if s.assistantRevocations.PermitsRestoreRequests(key) {
+							currentGrant = key.RestoreGrant
+						}
+						return currentGrant == p.restoreGrant
+					})
+					return
+				}
+				adminMCP.ServeHTTP(w, r)
+			}
+			r.HandleFunc("/mcp", mcpHandler)
+			r.HandleFunc("/mcp/*", mcpHandler)
 		}
 	})
 

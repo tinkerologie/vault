@@ -1,4 +1,4 @@
-import { buildApiRequest, isProxyMode } from './runtime-config.js'
+import { buildApiRequest, buildRestoreApprovalRequest, buildRestoreReviewRequest, buildRestoreStopRequest, isProxyMode } from './runtime-config.js'
 import { markAuthRequired } from './auth.svelte.js'
 
 /** @type {boolean} */
@@ -36,8 +36,8 @@ export const RESTORE_POINT_CONTENTS_TIMEOUT_MS = LONG_REQUEST_TIMEOUT_MS
  * Send one API request with an abort timeout. Non-2xx responses throw an Error
  * carrying the server's message and the HTTP `status`.
  */
-async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
-  const { url, options } = buildApiRequest(method, path, { body })
+async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_MS, buildRequest = buildApiRequest, acceptConflict = false } = {}) {
+  const { url, options } = buildRequest(method, path, { body })
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   let res
@@ -59,7 +59,7 @@ async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_
   if (text) {
     try { data = JSON.parse(text) } catch { /* non-JSON body */ }
   }
-  if (!res.ok) {
+  if (!res.ok && !(acceptConflict && res.status === 409)) {
     noteUnauthorized(res)
     const msg = res.status === 401
       ? 'Not authorized — your session or API key may have expired.'
@@ -250,6 +250,27 @@ export const api = {
 
   // API Key
   getAPIKeyStatus: () => request('GET', '/settings/api-key'),
+  listRestoreRequests: ({ status = 'pending', before } = {}) => {
+    const params = new URLSearchParams({ status })
+    if (before) params.set('before', before)
+    return request('GET', `/restore-requests?${params}`)
+  },
+  getRestoreRequest: (id) => request('GET', `/restore-requests/${encodeURIComponent(id)}`),
+  reviewRestoreRequestMetadata: (id, reviewDigest, passphrase) => request('POST', id, { reviewDigest, passphrase }, {
+    buildRequest: buildRestoreReviewRequest, timeoutMs: LONG_REQUEST_TIMEOUT_MS,
+  }),
+  approveRestoreRequest: (id, reviewDigest, passphrase) => request('POST', id, { reviewDigest, passphrase }, {
+    buildRequest: buildRestoreApprovalRequest, timeoutMs: LONG_REQUEST_TIMEOUT_MS,
+  }),
+
+  stopRestoreRun: (id) => request('POST', id, null, {
+    buildRequest: buildRestoreStopRequest, acceptConflict: true,
+  }),
+
+  listAssistantKeys: () => request('GET', '/settings/assistant-keys'),
+  createAssistantKey: (name) => request('POST', '/settings/assistant-keys', { name }),
+  setAssistantRestoreRequest: (id, enabled) => request('PATCH', `/settings/assistant-keys/${id}`, { restore_request: enabled }),
+  revokeAssistantKey: (id) => request('DELETE', `/settings/assistant-keys/${id}`),
   generateAPIKey: () => request('POST', '/settings/api-key/generate'),
   revealAPIKey: () => request('GET', '/settings/api-key/key'),
   rotateAPIKey: () => request('POST', '/settings/api-key/rotate'),

@@ -11,8 +11,12 @@ import (
 // Options tunes the middleware chain. Zero value = production defaults with
 // verbose logging off.
 type Options struct {
-	VerboseLogging bool
-	DestLabel      string // human destination name for logs/metrics
+	// MetadataProbeLimit enables bounded metadata probes. The adapter skips
+	// middleware retries and never falls back to a provider's unbounded List.
+	MetadataProbeLimit   int
+	MetadataProbeContext context.Context
+	VerboseLogging       bool
+	DestLabel            string // human destination name for logs/metrics
 	// WebDAVContext binds the operation context to WebDAV client requests.
 	// Nil leaves requests subject to the usual transport timeouts.
 	WebDAVContext context.Context
@@ -61,6 +65,10 @@ func NewAdapterWithOptions(storageType, configJSON string, opts Options) (Adapte
 	}
 	if webdav, ok := provider.(*WebDAVAdapter); ok && opts.WebDAVContext != nil {
 		webdav.requestContext = opts.WebDAVContext
+	}
+
+	if opts.MetadataProbeLimit > 0 {
+		return newMetadataAdapter(provider, opts), nil
 	}
 
 	a := provider

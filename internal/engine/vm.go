@@ -4,6 +4,7 @@ package engine
 
 import (
 	"context"
+	"crypto/hmac"
 	"errors"
 	"fmt"
 	"log"
@@ -607,39 +608,39 @@ func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir stri
 
 	progress(item.Name, 5, "reading domain XML")
 
-	xmlPath := filepath.Join(sourceDir, "domain.xml")
-	xmlData, err := os.ReadFile(xmlPath) // #nosec G304 — xmlPath is sourceDir + fixed filename "domain.xml"
-	if err != nil {
-		return fmt.Errorf("reading domain XML: %w", err)
-	}
-
-	startAfterRestore := false
-	verifyConfig := vmRestoreVerifyConfig{Mode: vmRestoreVerifyModeRunning}
-	metadata, err := readVMRestoreMetadata(sourceDir)
-	if err == nil {
-		startAfterRestore = metadata.startAfterRestore()
-		verifyConfig = metadata.RestoreVerify
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("reading VM metadata: %w", err)
-	}
-
-	restoreDest, _ := item.Settings["restore_destination"].(string)
-	if restoreDest != "" {
-		if !restorePathSafe(restoreDest) || strings.Contains(restoreDest, "../") || strings.Contains(restoreDest, "..\\") {
-			return fmt.Errorf("suspicious vm restore destination %q", restoreDest)
+	expectation, isReviewed := ctx.Value(vmExpectationKey{}).(vmRestoreExpectation)
+	var plan *vmRestorePlan
+	var metadata vmBackupMetadata
+	if isReviewed {
+		xmlData, rawMetadata, artifacts, err := readApprovedVMSource(sourceDir)
+		if err != nil {
+			return ErrVMReviewedEffectsChanged
 		}
-		normalizedRestoreDest, err := normalizeRestorePath(restoreDest)
+		destination, _ := item.Settings["restore_destination"].(string)
+		reviewed, digest, err := h.reviewVMRestore(ctx, item.Name, destination, xmlData, rawMetadata, artifacts, expectation.Key)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil || !hmac.Equal([]byte(digest), []byte(expectation.Digest)) {
+			return ErrVMReviewedEffectsChanged
+		}
+		plan, metadata = reviewed.Plan, reviewed.Meta
+	} else {
+		var err error
+		plan, metadata, err = manualVMRestorePlan(item, sourceDir)
 		if err != nil {
 			return err
 		}
-		restoreDest = normalizedRestoreDest
 	}
-	plan, err := buildVMRestorePlan(xmlData, restoreDest)
-	if err != nil {
-		return fmt.Errorf("building restore plan: %w", err)
+
+	readiness, _ := ctx.Value(vmReadinessKey{}).(*VMReadinessResult)
+	if readiness != nil && metadata.RestoreVerify.Mode != vmRestoreVerifyModeRunning {
+		readiness.GuestCheck = metadata.RestoreVerify.Mode
+		readiness.GuestOutcome = "not_attempted"
+		readiness.TCPPort = metadata.RestoreVerify.TCPPort
 	}
-	if err := normalizeVMRestorePlan(plan); err != nil {
-		return fmt.Errorf("validating restore plan: %w", err)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	if err := h.reconcileExistingDomainForRestore(ctx, item.Name, progress); err != nil {
@@ -663,7 +664,10 @@ func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir stri
 		pct := 20 + (i*50)/max(totalDisks, 1)
 		srcFile := filepath.Join(sourceDir, disk.BackupFile)
 		if _, err := os.Stat(srcFile); err != nil {
-			continue // skip if backup file doesn't exist
+			if isReviewed {
+				return fmt.Errorf("staged disk became unavailable: %w", err)
+			}
+			continue // legacy restores can omit a disk without a backup file
 		}
 
 		if !restorePathSafe(disk.TargetPath) || strings.Contains(disk.TargetPath, "../") || strings.Contains(disk.TargetPath, "..\\") {
@@ -715,6 +719,8 @@ func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir stri
 			if err := copyFile(ctx, nvramSrc, nvramTargetPath); err != nil {
 				return fmt.Errorf("restoring NVRAM: %w", err)
 			}
+		} else if isReviewed {
+			return fmt.Errorf("staged NVRAM became unavailable: %w", err)
 		}
 	}
 
@@ -725,7 +731,7 @@ func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir stri
 		return fmt.Errorf("defining domain: %w", err)
 	}
 
-	if startAfterRestore {
+	if metadata.startAfterRestore() {
 		startedRestoreDomain := false
 		cleanupRestoreStartFailure := func(restoreErr error) error {
 			if !startedRestoreDomain {
@@ -757,7 +763,13 @@ func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir stri
 				return h.stopStartedRestoreDomain(context.Background(), d, item.Name)
 			})
 			if cleanupErr != nil {
+				if readiness != nil {
+					readiness.CleanupStop = "failed"
+				}
 				return fmt.Errorf("%w; cleanup started restored VM: %v", restoreErr, cleanupErr)
+			}
+			if readiness != nil {
+				readiness.CleanupStop = "passed"
 			}
 
 			return restoreErr
@@ -771,19 +783,72 @@ func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir stri
 		// the actual state, so a start that truly never happened costs nothing.
 		startedRestoreDomain = true
 		if err := h.conn.DomainCreate(dom); err != nil {
+			if readiness != nil {
+				readiness.Startup = "failed"
+			}
 			return cleanupRestoreStartFailure(fmt.Errorf("starting restored VM: %w", err))
 		}
+		if readiness != nil {
+			readiness.Startup = "passed"
+		}
 		if _, err := h.waitForLibvirtDomainRunning(ctx, dom, item.Name, 2*time.Minute); err != nil {
+			if readiness != nil {
+				readiness.Running = "failed"
+			}
 			return cleanupRestoreStartFailure(fmt.Errorf("verifying restored VM is running: %w", err))
 		}
-		if err := h.verifyRestoredVMReady(ctx, dom, item.Name, verifyConfig, progress); err != nil {
+		if readiness != nil {
+			readiness.Running = "passed"
+		}
+		if err := h.verifyRestoredVMReady(ctx, dom, item.Name, metadata.RestoreVerify, progress); err != nil {
+			if readiness != nil && readiness.GuestCheck != "" {
+				readiness.GuestOutcome = "failed"
+			}
 			return cleanupRestoreStartFailure(fmt.Errorf("verifying restored VM readiness: %w", err))
+		}
+		if readiness != nil && readiness.GuestCheck != "" {
+			readiness.GuestOutcome = "passed"
 		}
 		progress(item.Name, 99, "verified restored VM running")
 	}
 
 	progress(item.Name, 100, "restore complete")
 	return nil
+}
+
+func manualVMRestorePlan(item BackupItem, sourceDir string) (*vmRestorePlan, vmBackupMetadata, error) {
+	xmlPath := filepath.Join(sourceDir, "domain.xml")
+	xmlData, err := os.ReadFile(xmlPath) // #nosec G304 — xmlPath is sourceDir + fixed filename "domain.xml"
+	if err != nil {
+		return nil, vmBackupMetadata{}, fmt.Errorf("reading domain XML: %w", err)
+	}
+
+	metadata, err := readVMRestoreMetadata(sourceDir)
+	if errors.Is(err, os.ErrNotExist) {
+		metadata.RestoreVerify.Mode = vmRestoreVerifyModeRunning
+	} else if err != nil {
+		return nil, vmBackupMetadata{}, fmt.Errorf("reading VM metadata: %w", err)
+	}
+
+	restoreDest, _ := item.Settings["restore_destination"].(string)
+	if restoreDest != "" {
+		if !restorePathSafe(restoreDest) || strings.Contains(restoreDest, "../") || strings.Contains(restoreDest, "..\\") {
+			return nil, vmBackupMetadata{}, fmt.Errorf("suspicious vm restore destination %q", restoreDest)
+		}
+		normalizedRestoreDest, err := normalizeRestorePath(restoreDest)
+		if err != nil {
+			return nil, vmBackupMetadata{}, err
+		}
+		restoreDest = normalizedRestoreDest
+	}
+	plan, err := buildVMRestorePlan(xmlData, restoreDest)
+	if err != nil {
+		return nil, vmBackupMetadata{}, fmt.Errorf("building restore plan: %w", err)
+	}
+	if err := normalizeVMRestorePlan(plan); err != nil {
+		return nil, vmBackupMetadata{}, fmt.Errorf("validating restore plan: %w", err)
+	}
+	return plan, metadata, nil
 }
 
 func (h *VMHandler) reconcileExistingDomainForRestore(ctx context.Context, name string, progress ProgressFunc) error {

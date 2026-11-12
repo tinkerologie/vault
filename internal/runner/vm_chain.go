@@ -194,6 +194,10 @@ func flattenVMChain(ctx context.Context, stepDirs []string, finalDir string) err
 		return fmt.Errorf("no VM disk layers resolved in chain top step %s", topDir)
 	}
 
+	return flattenVMChainDisks(ctx, topDir, finalDir, disks)
+}
+
+func flattenVMChainDisks(ctx context.Context, topDir, finalDir string, disks []vmChainDisk) error {
 	for _, disk := range disks {
 		layers := disk.Layers
 		for i := 1; i < len(layers); i++ {

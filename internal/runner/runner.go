@@ -62,6 +62,7 @@ type RunStatus struct {
 	RunID              int64        `json:"run_id,omitempty"`
 	JobName            string       `json:"job_name,omitempty"`
 	RunType            string       `json:"run_type,omitempty"`
+	RestoreRequestID   string       `json:"restore_request_id,omitempty"`
 	ItemsTotal         int          `json:"items_total,omitempty"`
 	ItemsDone          int          `json:"items_done,omitempty"`
 	ItemsFailed        int          `json:"items_failed,omitempty"`
@@ -161,9 +162,10 @@ type anomalyEnqueuer interface {
 
 // Runner executes backup and restore operations for jobs.
 type Runner struct {
-	db        *db.DB
-	hub       *ws.Hub
-	serverKey []byte // AES-256 key for unsealing secrets.
+	db            *db.DB
+	hub           *ws.Hub
+	serverKey     []byte // AES-256 key for unsealing secrets.
+	vmRestoreHost func() (VMRestoreHost, error)
 	// escrowed remembers, per dedup destination, the backup passphrase whose
 	// escrow has been confirmed, so the scrypt check runs once per passphrase
 	// rather than once per backed-up item (#451). It is the passphrase
@@ -200,10 +202,14 @@ type Runner struct {
 	statusMu   sync.RWMutex
 	currentRun *RunStatus
 
-	// cancelMu protects the active cancellation function.
-	cancelMu        sync.Mutex
-	cancelFn        context.CancelFunc
-	cancellingJobID int64
+	// cancelMu protects the cancellation function and its active run owner.
+	cancelMu                 sync.Mutex
+	cancelFn                 context.CancelFunc
+	cancellingJobID          int64
+	cancellingRunID          int64
+	cancellingRestoreRequest string
+	restoreStopRequestedAt   *time.Time
+	restoreStoppedBy         string
 
 	// lastProgress tracks the last progress update time for stall detection.
 	lastProgressMu sync.Mutex
@@ -256,7 +262,7 @@ const (
 )
 
 // New creates a new Runner.
-func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
+func New(database *db.DB, hub *ws.Hub, serverKey []byte, vmHost ...func() (VMRestoreHost, error)) *Runner {
 	r := &Runner{
 		db:                     database,
 		hub:                    hub,
@@ -265,6 +271,9 @@ func New(database *db.DB, hub *ws.Hub, serverKey []byte) *Runner {
 		drainStarted:           make(chan struct{}),
 		progress:               newProgressTracker(nil),
 		backupDatabaseSnapshot: database.BackupToFile,
+	}
+	if len(vmHost) != 0 {
+		r.vmRestoreHost = vmHost[0]
 	}
 	failThreshold, _ := database.GetSettingInt("breaker_fail_threshold", docsmeta.DefaultInt("breaker_fail_threshold"))
 	closeSuccesses, _ := database.GetSettingInt("breaker_close_successes", docsmeta.DefaultInt("breaker_close_successes"))
@@ -404,9 +413,10 @@ func (r *Runner) Status() RunStatus {
 func (r *Runner) CancelJob(jobID int64) error {
 	r.statusMu.RLock()
 	active := r.currentRun != nil && r.currentRun.Active
-	var runningID int64
+	var runningID, runningRunID int64
 	if r.currentRun != nil {
 		runningID = r.currentRun.JobID
+		runningRunID = r.currentRun.RunID
 	}
 	r.statusMu.RUnlock()
 
@@ -426,36 +436,34 @@ func (r *Runner) CancelJob(jobID int64) error {
 		return fmt.Errorf("job %d is not running (running: %d)", jobID, runningID)
 	}
 
-	// Read the cancel fn and its owner atomically — between the status
-	// snapshot above and here, run A may have finished and run B installed
-	// its own cancel fn; without the identity check we would cancel B.
+	// Recheck the exact owner because a later run of the same Job may
+	// have started after the queue/status decision.
 	r.cancelMu.Lock()
-	fn := r.cancelFn
-	fnOwner := r.cancellingJobID
-	r.cancelMu.Unlock()
-
-	if fn == nil || fnOwner != jobID {
+	r.statusMu.Lock()
+	if r.cancelFn == nil || r.cancellingJobID != jobID ||
+		r.currentRun == nil || r.currentRun.RunID != runningRunID || r.cancellingRunID != runningRunID {
+		r.statusMu.Unlock()
+		r.cancelMu.Unlock()
 		return fmt.Errorf("job %d cannot be cancelled", jobID)
 	}
+	if r.cancellingRestoreRequest != "" {
+		r.statusMu.Unlock()
+		r.cancelMu.Unlock()
+		return errors.New("a Restore Request run requires the signed-in Unraid operator action")
+	}
+	// Mark the operator cancel before waking the worker so it classifies
+	// this as an operator cancel instead of scheduling a stall retry.
+	r.currentRun.Cancelling = true
+	r.statusMu.Unlock()
+	r.cancelFn()
+	r.cancelMu.Unlock()
 
 	log.Printf("runner: cancelling job %d", jobID)
-
-	// Mark the operator cancel BEFORE cancelling the context. Cancellation is
-	// now prompt (the differential pre-scan honours ctx — issue #251), so the
-	// run goroutine can unwind and classify the outcome the instant fn() runs.
-	// If Cancelling were still false at that point the operator cancel would be
-	// misread as a stall-watchdog cancel and scheduled for an unwanted retry.
-	r.statusMu.Lock()
-	if r.currentRun != nil && r.currentRun.JobID == jobID {
-		r.currentRun.Cancelling = true
-	}
-	r.statusMu.Unlock()
-
-	fn()
 
 	r.broadcast(map[string]any{
 		"type":   "job_cancelling",
 		"job_id": jobID,
+		"run_id": runningRunID,
 	})
 
 	return nil
@@ -1132,6 +1140,7 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 	r.cancelMu.Lock()
 	r.cancelFn = cancel
 	r.cancellingJobID = jobID
+	r.cancellingRunID = runID
 	r.cancelMu.Unlock()
 
 	// Clear the cancel function when we're done.
@@ -1139,6 +1148,7 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 		r.cancelMu.Lock()
 		r.cancelFn = nil
 		r.cancellingJobID = 0
+		r.cancellingRunID = 0
 		r.cancelMu.Unlock()
 	}()
 
@@ -2128,6 +2138,23 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 		if len(itemSizes) > 0 {
 			rpMeta["item_sizes"] = itemSizes
 		}
+		itemTypes := make(map[string]string, len(itemSizes))
+		for _, result := range itemResults {
+			name, _ := result["name"].(string)
+			kind, _ := result["type"].(string)
+			if result["status"] != "ok" || name == "" || kind == "" {
+				continue
+			}
+			if prior, found := itemTypes[name]; found && prior != kind {
+				// A name shared by different types cannot identify one item.
+				itemTypes[name] = ""
+				continue
+			}
+			itemTypes[name] = kind
+		}
+		if len(itemTypes) > 0 {
+			rpMeta["item_types"] = itemTypes
+		}
 		if job.VerifyBackup && len(itemChecksums) > 0 {
 			rpMeta["checksums"] = itemChecksums
 		}
@@ -2169,8 +2196,8 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 			SizeBytes:            totalSize,
 			ParentRestorePointID: parentID,
 		}
-		// For dedup runs with exactly one item, persist the manifest ID
-		// directly on the row so the common case avoids a metadata lookup.
+		// Persist the row-level ID when there is exactly one deduplicated
+		// item. The per-item map still distinguishes any classic items.
 		if len(itemManifests) == 1 {
 			for _, hexID := range itemManifests {
 				if decoded, err := hex.DecodeString(hexID); err == nil && len(decoded) == 32 {
@@ -4081,33 +4108,64 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 		return
 	}
 	run.ID = runID
+	r.runTrackedRestore(run, restorePoint, targets, destination, passphrase, jobName, nil)
+}
 
-	// Create a cancellable context for the restore run. Like the backup path,
-	// there is no wall-clock deadline — the stall watchdog is the sole
-	// automatic canceller. CancelJob() triggers the stored cancel func on demand.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, targets []RestoreTarget, destination, passphrase, jobName string, approved *ApprovedRestore) {
+	runID := run.ID
+	requestID := ""
+	if approved != nil {
+		requestID = approved.RequestID
+	}
+
+	restoreStart := time.Now()
+	var ctx context.Context
+	var cancel context.CancelCauseFunc
+	if approved != nil {
+		ctx, cancel = approved.runContext, approved.cancelRun
+	} else {
+		ctx, cancel = context.WithCancelCause(context.Background())
+		r.publishRestoreCancellation(&RunStatus{
+			Active: true, JobID: restorePoint.JobID, RunID: runID, JobName: jobName,
+			RunType: "restore", ItemsTotal: len(targets), StartedAt: restoreStart.Format(time.RFC3339),
+		}, cancel)
+	}
+	defer cancel(nil)
+	// Recover from panics so the run is marked failed.
+	defer func() {
+		defer r.setRunStatus(nil)
+		if rec := recover(); rec != nil {
+			panicText := fmt.Sprintf("Internal error (panic): %v", rec)
+			if approved != nil {
+				panicText = "Internal error during approved restore"
+			}
+			log.Printf("runner: restore run %d: %s", runID, panicText)
+			run.Status = "failed"
+			run.Log = panicText
+			r.runLog(runID, runLogLevelError, panicText, nil)
+			if !r.finishTrackedRestore(run, approved, run.Status, "restore_failed") {
+				return
+			}
+			r.broadcast(map[string]any{
+				"type":     "job_run_completed",
+				"job_id":   restorePoint.JobID,
+				"run_id":   runID,
+				"run_type": "restore",
+				"status":   "failed",
+			})
+		}
+	}()
+
 	runDiag := r.newRunDiag(runID)
 	ctx = storage.WithDiagStats(ctx, runDiag)
 	ctx = r.withProgressReporter(ctx)
-
-	r.cancelMu.Lock()
-	r.cancelFn = cancel
-	r.cancellingJobID = restorePoint.JobID
-	r.cancelMu.Unlock()
-	defer func() {
-		r.cancelMu.Lock()
-		r.cancelFn = nil
-		r.cancellingJobID = 0
-		r.cancelMu.Unlock()
-	}()
 
 	r.lastProgressMu.Lock()
 	r.lastProgress = time.Now()
 	r.lastProgressMu.Unlock()
 	watchdogDone := make(chan struct{})
 	defer close(watchdogDone)
-	r.startStallWatchdog(ctx, watchdogDone, cancel, restorePoint.JobID, runID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
+	r.startStallWatchdog(ctx, watchdogDone, func() { cancel(errRestoreWatchdog) }, restorePoint.JobID, runID, 5*time.Minute, stallWarnInterval, stallCancelTimeout)
 
 	targetNames := make([]string, 0, len(targets))
 	for _, t := range targets {
@@ -4115,24 +4173,13 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 	}
 
 	r.broadcast(map[string]any{
-		"type":        "job_run_started",
-		"job_id":      restorePoint.JobID,
-		"run_id":      runID,
-		"job_name":    jobName,
-		"run_type":    "restore",
-		"items_total": len(targets),
-	})
-
-	restoreStart := time.Now()
-
-	r.setRunStatus(&RunStatus{
-		Active:     true,
-		JobID:      restorePoint.JobID,
-		RunID:      runID,
-		JobName:    jobName,
-		RunType:    "restore",
-		ItemsTotal: len(targets),
-		StartedAt:  restoreStart.Format(time.RFC3339),
+		"type":               "job_run_started",
+		"job_id":             restorePoint.JobID,
+		"run_id":             runID,
+		"job_name":           jobName,
+		"run_type":           "restore",
+		"restore_request_id": requestID,
+		"items_total":        len(targets),
 	})
 
 	r.logActivity("info", "restore",
@@ -4164,33 +4211,15 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 			"items_list":       targetNames,
 		})
 
-	// Recover from panics so the run is marked failed.
-	defer func() {
-		r.setRunStatus(nil)
-		if rec := recover(); rec != nil {
-			log.Printf("runner: PANIC during restore run %d: %v", runID, rec)
-			run.Status = "failed"
-			run.Log = fmt.Sprintf("Internal error (panic): %v", rec)
-			r.runLog(runID, runLogLevelError, fmt.Sprintf("Internal error (panic): %v", rec), nil)
-			_ = r.db.UpdateJobRun(run)
-			r.broadcast(map[string]any{
-				"type":     "job_run_completed",
-				"job_id":   restorePoint.JobID,
-				"run_id":   runID,
-				"run_type": "restore",
-				"status":   "failed",
-			})
-		}
-	}()
-
 	// Per-item sizes recorded at backup time, used to report what this restore
 	// actually wrote rather than the whole restore point's size (issue #334).
 	itemSizes, _ := restorePoint.ItemSizes()
 
 	var (
-		itemsDone   int
-		itemsFailed int
-		itemResults []map[string]any
+		requestReason string
+		itemsDone     int
+		itemsFailed   int
+		itemResults   []map[string]any
 		// restoredBytes sums only the items whose size is known;
 		// restoredSizesKnown counts them, so "nothing known" stays
 		// distinguishable from "known to be zero bytes".
@@ -4199,6 +4228,11 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 	)
 
 	for _, t := range targets {
+		if errors.Is(context.Cause(ctx), errOperatorRestoreStop) {
+			itemResults = append(itemResults, map[string]any{"name": t.Name, "type": t.Type, "status": "not_attempted"})
+			requestReason = "stopped_by_operator"
+			continue
+		}
 		reporter := restoreProgressReporter{
 			JobID:       restorePoint.JobID,
 			RunID:       runID,
@@ -4232,7 +4266,28 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 		tally := &engine.RestoreTally{}
 		diagBefore := runDiag.Snapshot()
 		itemCtx := engine.WithRestoreTrust(engine.WithRestoreTally(ctx, tally), engine.RestoreTrust{AllowHostPrivileges: t.AllowHostPrivileges, AllowUnpinnedImage: t.AllowUnpinnedImage})
-		restoreErr := r.restoreItemWithReporter(itemCtx, restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
+		var vmReadiness *engine.VMReadinessResult
+		if t.Type == "vm" {
+			vmReadiness = &engine.VMReadinessResult{}
+			itemCtx = engine.WithVMReadinessResult(itemCtx, vmReadiness)
+		}
+		var restoreErr error
+		var operatorDiagnostic string
+		if approved == nil {
+			restoreErr = r.restoreItemWithReporter(itemCtx, restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
+		} else {
+			itemCtx = context.WithValue(itemCtx, approvedRestoreKey{}, true)
+			restoreErr = approved.Plan.Work.restore(itemCtx, r, approved, passphrase, reporter)
+		}
+		stopped := errors.Is(context.Cause(ctx), errOperatorRestoreStop) && errors.Is(restoreErr, context.Canceled)
+		if approved != nil && !stopped {
+			if restoreErr != nil {
+				requestReason = approvedRestoreFailure(restoreErr)
+				operatorDiagnostic = approvedRestoreOperatorDiagnostic(restoreErr)
+				restoreErr = errors.New(requestReason)
+			}
+			r.sendRestoreNotification(t.Name, t.Type, restoreErr)
+		}
 		elapsed := time.Since(start)
 		itemDiag := diagDelta(diagBefore, runDiag.Snapshot())
 
@@ -4242,37 +4297,45 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 			"duration": elapsed.String(),
 		}
 
-		if restoreErr != nil {
+		if approved != nil {
+			result["readiness_checks"] = approved.checks
+		}
+		if vmReadiness != nil {
+			result["vm_readiness"] = vmReadiness
+		}
+
+		event := map[string]any{
+			"job_id": restorePoint.JobID, "run_id": runID, "item_name": t.Name, "item_type": t.Type,
+			"items_total": len(targets),
+		}
+		if vmReadiness != nil {
+			event["vm_readiness"] = vmReadiness
+		}
+		if stopped {
+			requestReason = "stopped_by_operator"
+			result["status"] = "cancelled"
+			r.runLog(runID, runLogLevelWarn, "Restore stopped by operator. The restore location may be partly restored.", nil)
+		} else if restoreErr != nil {
 			itemsFailed++
 			result["status"] = "failed"
 			result["error"] = restoreErr.Error()
-			r.broadcast(map[string]any{
-				"type":         "item_restore_failed",
-				"job_id":       restorePoint.JobID,
-				"run_id":       runID,
-				"item_name":    t.Name,
-				"item_type":    t.Type,
-				"error":        restoreErr.Error(),
-				"items_done":   itemsDone,
-				"items_failed": itemsFailed,
-				"items_total":  len(targets),
-			})
+			event["type"] = "item_restore_failed"
+			event["error"] = restoreErr.Error()
+			event["items_done"], event["items_failed"] = itemsDone, itemsFailed
+			r.broadcast(event)
+			logMessage := restoreErr.Error()
+			if operatorDiagnostic != "" {
+				logMessage = operatorDiagnostic
+			}
 			r.runLog(runID, runLogLevelError,
-				fmt.Sprintf("Restore failed: %s (%s): %v", t.Name, t.Type, restoreErr),
-				map[string]any{"item_name": t.Name, "item_type": t.Type, "error": restoreErr.Error()})
+				fmt.Sprintf("Restore failed: %s (%s): %s", t.Name, t.Type, logMessage),
+				map[string]any{"item_name": t.Name, "item_type": t.Type, "error": logMessage})
 		} else {
 			itemsDone++
 			result["status"] = "ok"
-			r.broadcast(map[string]any{
-				"type":         "item_restore_done",
-				"job_id":       restorePoint.JobID,
-				"run_id":       runID,
-				"item_name":    t.Name,
-				"item_type":    t.Type,
-				"items_done":   itemsDone,
-				"items_failed": itemsFailed,
-				"items_total":  len(targets),
-			})
+			event["type"] = "item_restore_done"
+			event["items_done"], event["items_failed"] = itemsDone, itemsFailed
+			r.broadcast(event)
 			okDetails := map[string]any{"item_name": t.Name, "item_type": t.Type, "duration_seconds": int(elapsed.Seconds()), "duration_ms": elapsed.Milliseconds()}
 			size, sizeLabel, known := restoredItemSize(t, tally, itemSizes)
 			msg := fmt.Sprintf("Restored %s (%s) in %s", t.Name, t.Type, format.Duration(elapsed))
@@ -4307,7 +4370,9 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 
 	// Finalise the run.
 	status := "completed"
-	if itemsFailed > 0 && itemsDone > 0 {
+	if requestReason == "stopped_by_operator" {
+		status = "cancelled"
+	} else if itemsFailed > 0 && itemsDone > 0 {
 		status = "partial"
 	} else if itemsFailed > 0 {
 		status = "failed"
@@ -4337,7 +4402,13 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 	run.ItemsDone = itemsDone
 	run.ItemsFailed = itemsFailed
 	run.SizeBytes = restoredSize
-	_ = r.db.UpdateJobRun(run)
+	requestStatus := status
+	if requestReason == "reviewed_operation_changed" {
+		requestStatus = "invalidated"
+	}
+	if !r.finishTrackedRestore(run, approved, requestStatus, requestReason) {
+		return
+	}
 
 	r.broadcast(map[string]any{
 		"type":         "job_run_completed",
@@ -4556,11 +4627,16 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 	trust.ArtifactTrusted = r.restorePointVouched(restorePoint, itemName)
 	ctx = engine.WithRestoreTrust(ctx, trust)
 
+	_, chunked, err := lookupItemManifest(restorePoint, itemName)
+	if err != nil {
+		return err
+	}
+
 	// For incremental/differential, walk the chain and restore in order.
 	if restorePoint.BackupType == "incremental" || restorePoint.BackupType == "differential" {
-		chain, err := r.buildRestoreChain(restorePoint)
-		if err != nil {
-			return fmt.Errorf("building restore chain: %w", err)
+		chain, failure := walkRestoreChain(ctx, r.db, restorePoint, 0)
+		if failure != nil {
+			return fmt.Errorf("building restore chain: %w", failure)
 		}
 		// Dedup restore points (folder, container, plugin) carry a COMPLETE
 		// manifest — BackupChunked walks the item and, for differential/
@@ -4571,13 +4647,20 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		// must run BEFORE the merged-chain dispatch because containers use
 		// merged chains but dedup containers must take the single-point
 		// chunked restore path.
-		if _, ok := resolveManifestID(restorePoint, itemName); ok {
+		if chunked {
 			log.Printf("runner: dedup restore point %d has a complete manifest — restoring it directly (no chain replay)", restorePoint.ID)
 			r.runLog(reporter.RunID, runLogLevelInfo,
 				fmt.Sprintf("Restore point %d carries a complete dedup manifest — restoring %s directly (no chain replay)", restorePoint.ID, itemName),
 				map[string]any{"restore_point_id": restorePoint.ID, "item_name": itemName})
 			settleApprovalsIfNoneApply(ctx, itemType, true)
 			return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
+		}
+		for _, step := range chain[:len(chain)-1] {
+			if rpContainsItem(step, itemName) {
+				if _, _, err := lookupItemManifest(step, itemName); err != nil {
+					return fmt.Errorf("restore point %d: %w", step.ID, err)
+				}
+			}
 		}
 		// A chain replay can take its config from any step, so every step has
 		// to be this server's own, not just the one selected.
@@ -4626,7 +4709,6 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		}
 		return nil
 	}
-	_, chunked := resolveManifestID(restorePoint, itemName)
 	settleApprovalsIfNoneApply(ctx, itemType, chunked)
 	return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
 }
@@ -4658,20 +4740,8 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 		log.Printf("runner: restore point %d has no effective listing — skipping chain prune", newest.ID)
 		return
 	}
-	keep := make(map[string]struct{}, len(listing.Files))
-	for _, f := range listing.Files {
-		keep[f.Path] = struct{}{}
-	}
 
-	// Union of everything the earlier chain steps could have written (later
-	// steps win so the recorded size matches the surviving extraction). If
-	// any step's index is unreadable we cannot know its writes — skip
-	// pruning rather than guess.
-	type writtenEntry struct {
-		isDir bool
-		size  int64
-	}
-	written := make(map[string]writtenEntry)
+	indexes := make([]engine.TarIndex, 0, len(chain)-1)
 	for _, step := range chain[:len(chain)-1] {
 		if !rpContainsItem(step, itemName) {
 			continue
@@ -4681,9 +4751,7 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 			log.Printf("runner: chain step %d has no readable tar index — skipping chain prune", step.ID)
 			return
 		}
-		for _, f := range idx.Files {
-			written[f.Path] = writtenEntry{isDir: f.IsDir, size: f.Size}
-		}
+		indexes = append(indexes, idx)
 	}
 
 	destPath := destination
@@ -4726,17 +4794,36 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 		return
 	}
 
-	// The index sidecar is stored off-host and could be tampered with. All
-	// prune I/O goes through an os.Root scoped to the restore destination:
-	// the kernel-enforced boundary rejects absolute paths, ".." traversal,
-	// AND escapes through symlinked intermediate directories (CWE-22),
-	// while operating on the exact index path with no normalization.
 	root, err := os.OpenRoot(destPath)
 	if err != nil {
 		return
 	}
 	defer root.Close()
+	pruneRestoreWrites(root, newest.ID, listing, indexes, writes)
+}
 
+func pruneRestoreWrites(root *os.Root, pointID int64, listing engine.TarIndex, indexes []engine.TarIndex, writes map[string]os.FileInfo) {
+	keep := make(map[string]struct{}, len(listing.Files))
+	for _, file := range listing.Files {
+		keep[file.Path] = struct{}{}
+	}
+	// Later steps win so the size matches the surviving extraction.
+	type writtenEntry struct {
+		isDir bool
+		size  int64
+	}
+	written := make(map[string]writtenEntry)
+	for _, index := range indexes {
+		for _, file := range index.Files {
+			written[file.Path] = writtenEntry{isDir: file.IsDir, size: file.Size}
+		}
+	}
+
+	// The index sidecar is stored off-host and could be tampered with. All
+	// prune I/O goes through an os.Root scoped to the restore destination:
+	// the kernel-enforced boundary rejects absolute paths, ".." traversal,
+	// AND escapes through symlinked intermediate directories (CWE-22),
+	// while operating on the exact index path with no normalization.
 	pruned := 0
 	var pruneDirs []string
 	for rel, we := range written {
@@ -4775,7 +4862,7 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 	}
 	if pruned > 0 {
 		log.Printf("runner: chain prune removed %d entr%s deleted/excluded since restore point %d's chain base",
-			pruned, map[bool]string{true: "y", false: "ies"}[pruned == 1], newest.ID)
+			pruned, map[bool]string{true: "y", false: "ies"}[pruned == 1], pointID)
 	}
 }
 
@@ -5487,7 +5574,11 @@ func (r *Runner) stageContainerChainMerged(ctx context.Context, chain []db.Resto
 // For dedup restore points (manifest_id set, or item_manifests in metadata),
 // the chunked restore path is taken instead of the classic stage + restore.
 func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, cleanDestination bool, reporter restoreProgressReporter) error {
-	if manifestID, ok := resolveManifestID(restorePoint, itemName); ok {
+	manifestID, chunked, err := lookupItemManifest(restorePoint, itemName)
+	if err != nil {
+		return err
+	}
+	if chunked {
 		return r.restoreSinglePointChunked(ctx, restorePoint, manifestID, itemName, itemType, destination, filePaths, cleanDestination, reporter)
 	}
 
@@ -5514,32 +5605,63 @@ func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.Restore
 	return err
 }
 
-// resolveManifestID returns the dedup manifest ID for itemName from a
-// restore point. It first consults metadata["item_manifests"][itemName] (a
-// hex string written by the backup path for multi-item dedup jobs), then
-// falls back to restorePoint.ManifestID for single-item dedup jobs. The
-// ok=false case means this is a classic (non-dedup) restore point.
+// resolveManifestID finds the selected item's manifest for callers that can
+// continue without it, such as an incremental backup's carry-forward lookup.
 func resolveManifestID(rp db.RestorePoint, itemName string) (dedup.ID, bool) {
-	if rp.Metadata != "" {
-		var meta map[string]any
-		if err := json.Unmarshal([]byte(rp.Metadata), &meta); err == nil {
-			if itemMap, ok := meta["item_manifests"].(map[string]any); ok {
-				if hexID, ok := itemMap[itemName].(string); ok && hexID != "" {
-					if decoded, err := hex.DecodeString(hexID); err == nil && len(decoded) == 32 {
-						var id dedup.ID
-						copy(id[:], decoded)
-						return id, true
-					}
-				}
-			}
+	id, found, err := lookupItemManifest(rp, itemName)
+	return id, found && err == nil
+}
+
+var errInvalidItemManifest = errors.New("invalid deduplicated manifest metadata for the selected item")
+
+// lookupItemManifest treats the per-item map as authoritative whenever it is
+// present. A row-level ID is also stored when a mixed Restore Point has one
+// deduplicated item, so it cannot identify an item omitted by that map.
+func lookupItemManifest(rp db.RestorePoint, itemName string) (dedup.ID, bool, error) {
+	var metadata map[string]json.RawMessage
+	if rp.Metadata != "" && json.Unmarshal([]byte(rp.Metadata), &metadata) != nil {
+		if len(rp.ManifestID) != 0 {
+			return dedup.ID{}, false, errInvalidItemManifest
+		}
+		return dedup.ID{}, false, nil
+	}
+	if rawMap, present := metadata["item_manifests"]; present {
+		var entries map[string]json.RawMessage
+		if err := json.Unmarshal(rawMap, &entries); err != nil || entries == nil {
+			return dedup.ID{}, false, errInvalidItemManifest
+		}
+		rawID, exists := entries[itemName]
+		if !exists {
+			return dedup.ID{}, false, nil
+		}
+		var hexID *string
+		if err := json.Unmarshal(rawID, &hexID); err != nil || hexID == nil {
+			return dedup.ID{}, false, errInvalidItemManifest
+		}
+		if *hexID == "" {
+			// Some classic entries use an empty placeholder in a mixed point.
+			return dedup.ID{}, false, nil
+		}
+		decoded, err := hex.DecodeString(*hexID)
+		if err != nil || len(decoded) != len(dedup.ID{}) {
+			return dedup.ID{}, false, errInvalidItemManifest
+		}
+		return dedup.ID(decoded), true, nil
+	}
+	if len(rp.ManifestID) == 0 {
+		return dedup.ID{}, false, nil
+	}
+	if len(rp.ManifestID) != len(dedup.ID{}) {
+		return dedup.ID{}, false, errInvalidItemManifest
+	}
+	// Older single-item points may carry only the row-level ID. When a
+	// membership record is available it must identify exactly this item.
+	if items, known := rp.BackedUpItems(); known {
+		if _, contains := items[itemName]; len(items) != 1 || !contains {
+			return dedup.ID{}, false, errInvalidItemManifest
 		}
 	}
-	if len(rp.ManifestID) == 32 {
-		var id dedup.ID
-		copy(id[:], rp.ManifestID)
-		return id, true
-	}
-	return dedup.ID{}, false
+	return dedup.ID(rp.ManifestID), true, nil
 }
 
 // restoreSinglePointChunked restores one item from a dedup restore point.
@@ -5660,6 +5782,10 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 		return fmt.Errorf("getting storage destination: %w", err)
 	}
 
+	return r.stageRestorePointItemFrom(ctx, job, dest, restorePoint, itemName, tmpDir, passphrase, phaseStart, phaseEnd, reporter, nil)
+}
+
+func (r *Runner) stageRestorePointItemFrom(ctx context.Context, job db.Job, dest db.StorageDestination, restorePoint db.RestorePoint, itemName, tmpDir, passphrase string, phaseStart, phaseEnd int, reporter restoreProgressReporter, files []storage.FileInfo) error {
 	adapter, err := newRunAdapter(ctx, dest)
 	if err != nil {
 		return fmt.Errorf("creating storage adapter: %w", err)
@@ -5671,9 +5797,11 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 	itemStoragePath := filepath.Join(restorePoint.StoragePath, itemName)
 
 	// Parse checksums from restore point metadata for verification.
-	expectedChecksums := r.parseItemChecksums(restorePoint.Metadata, itemName)
+	expectedChecksums := parseItemChecksums(restorePoint.Metadata, itemName)
 
-	files, err := adapter.List(itemStoragePath)
+	if files == nil {
+		files, err = adapter.List(itemStoragePath)
+	}
 	if err != nil {
 		if storage.IsNotExist(err) {
 			r.reportRestoreProgress(reporter, phaseEnd, "Restore data ready")
@@ -5761,6 +5889,10 @@ func (r *Runner) stageRestorePointItem(ctx context.Context, restorePoint db.Rest
 			defer func() { <-sem }()
 			defer func() {
 				if rec := recover(); rec != nil {
+					if approvedRestoreContext(ctx) {
+						errOnce.Do(func() { firstErr = errors.New("restore download worker failed") })
+						return
+					}
 					log.Printf("runner: PANIC in download worker for %s: %v", fi.Path, rec)
 					errOnce.Do(func() { firstErr = fmt.Errorf("download worker for %s panicked: %v", fi.Path, rec) })
 				}
@@ -7618,9 +7750,8 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 			Metadata:    string(metaBytes),
 			SizeBytes:   int64(sizeBytes),
 		}
-		// Single-item dedup jobs also get the manifest ID promoted onto
-		// the restore-point row so resolveManifestID can hit the fast
-		// path without parsing JSON.
+		// Mirror a single dedup ID onto the row for legacy readers. The
+		// item map stays authoritative for item-specific restore dispatch.
 		if len(itemManifests) == 1 {
 			for _, hexID := range itemManifests {
 				if decoded, err := hex.DecodeString(hexID); err == nil && len(decoded) == 32 {
@@ -7830,7 +7961,7 @@ func itemCapturedInParentRP(parentRP *db.RestorePoint, itemName string) bool {
 
 // parseItemChecksums extracts the SHA-256 checksums for a specific item from
 // restore point metadata JSON. Returns filename→hash map, or empty if unavailable.
-func (r *Runner) parseItemChecksums(metadata, itemName string) map[string]string {
+func parseItemChecksums(metadata, itemName string) map[string]string {
 	var meta map[string]any
 	if err := json.Unmarshal([]byte(metadata), &meta); err != nil {
 		return nil
@@ -7959,22 +8090,9 @@ func (r *Runner) BuildRestoreChain(rp db.RestorePoint) ([]db.RestorePoint, error
 // list of restore points from the base full backup to the given restore point.
 // The returned slice is ordered oldest (full) first.
 func (r *Runner) buildRestoreChain(rp db.RestorePoint) ([]db.RestorePoint, error) {
-	chain := []db.RestorePoint{rp}
-	current := rp
-	for current.ParentRestorePointID > 0 {
-		parent, err := r.db.GetRestorePoint(current.ParentRestorePointID)
-		if err != nil {
-			if errors.Is(err, db.ErrNotFound) {
-				return nil, fmt.Errorf("missing parent restore point %d for restore point %d", current.ParentRestorePointID, current.ID)
-			}
-			return nil, fmt.Errorf("getting parent restore point %d: %w", current.ParentRestorePointID, err)
-		}
-		chain = append(chain, parent)
-		current = parent
-	}
-	// Reverse to get oldest (full) first.
-	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
-		chain[i], chain[j] = chain[j], chain[i]
+	chain, failure := walkRestoreChain(context.Background(), r.db, rp, 0)
+	if failure != nil {
+		return nil, failure
 	}
 	return chain, nil
 }

@@ -1,13 +1,16 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"net"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/tinkerologie/vault/internal/anomaly"
@@ -16,7 +19,9 @@ import (
 	jobintake "github.com/tinkerologie/vault/internal/jobs"
 	mcpserver "github.com/tinkerologie/vault/internal/mcp"
 	"github.com/tinkerologie/vault/internal/mount"
+	"github.com/tinkerologie/vault/internal/operatorproof"
 	"github.com/tinkerologie/vault/internal/replication"
+	"github.com/tinkerologie/vault/internal/restorerequest"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/ws"
 )
@@ -31,20 +36,27 @@ type ServerConfig struct {
 	ReadOnly  bool   // When true, write endpoints return 403 (replica mode).
 	// AllowedOrigins lists the exact browser origins that may call the API
 	// cross-origin. Empty by default; those callers still need the API key.
-	AllowedOrigins []string
+	AllowedOrigins      []string
+	CredentialDir       string       // durable directory containing vault.key
+	RestoreRequestFlush func() error // synchronous durability barrier for request transitions
+	RestoreRequestClock func() time.Time
+	OperatorProof       *operatorproof.Verifier
+	vmRestoreHost       func() (runner.VMRestoreHost, error)
 }
 
 type Server struct {
-	db          *db.DB
-	hub         *ws.Hub
-	runner      *runner.Runner
-	syncer      *replication.Syncer
-	router      *chi.Mux
-	config      ServerConfig
-	schedReload ScheduleReloader
-	runStarted  atomic.Bool
-	mcp         *mcpserver.MCPServer
-	timedReads  sync.WaitGroup
+	db                   *db.DB
+	hub                  *ws.Hub
+	runner               *runner.Runner
+	syncer               *replication.Syncer
+	router               *chi.Mux
+	config               ServerConfig
+	schedReload          ScheduleReloader
+	runStarted           atomic.Bool
+	mcp                  *mcpserver.MCPServer
+	assistantRevocations *db.AssistantRevocations
+	restoreRequests      *restorerequest.Service
+	timedReads           sync.WaitGroup
 
 	// nextRunResolver looks up the next scheduled run time for a job.
 	nextRunResolver func(jobID int64) (string, bool)
@@ -100,10 +112,28 @@ func NewServer(database *db.DB, cfg ServerConfig) *Server {
 		hub:    ws.NewHub(),
 		config: cfg,
 	}
-	s.runner = runner.New(database, s.hub, cfg.ServerKey)
+	s.runner = runner.New(database, s.hub, cfg.ServerKey, cfg.vmRestoreHost)
 	s.mountMgr = mount.NewManager(database, s.hub, cfg.ServerKey)
+	if !cfg.ReadOnly {
+		dir := cfg.CredentialDir
+		if dir == "" && database.Path() != ":memory:" {
+			dir = filepath.Dir(database.Path())
+		}
+		s.assistantRevocations = db.LoadAssistantRevocations(dir)
+		if !s.assistantRevocations.Ready() {
+			log.Print("Warning: assistant key revocation ledger unavailable; refusing Assistant Keys")
+		}
+	}
 	s.router = s.setupRoutes()
 	return s
+}
+
+// ReconcileRestoreRequests applies overdue request expiry in daemon mode.
+func (s *Server) ReconcileRestoreRequests(ctx context.Context) error {
+	if s.restoreRequests == nil {
+		return nil
+	}
+	return s.restoreRequests.ReconcileExpiry(ctx)
 }
 
 // ScheduleReloader is a function that reloads the scheduler after job changes.

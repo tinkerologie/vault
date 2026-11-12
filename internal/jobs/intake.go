@@ -170,6 +170,9 @@ func (i *Intake) Delete(id int64, opts DeleteOptions) (DeleteOutcome, error) {
 	}
 
 	if err := i.db.DeleteJob(id); err != nil {
+		if errors.Is(err, db.ErrApprovedRestoreRunning) {
+			return DeleteOutcome{}, ErrRestoreInProgress
+		}
 		return DeleteOutcome{}, err
 	}
 	if doCleanup {
