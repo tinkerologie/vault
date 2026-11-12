@@ -26,7 +26,7 @@ var (
 type ApprovedRestore struct {
 	RequestID  string
 	Run        db.JobRun
-	Plan       FolderRestorePlan
+	Plan       ApprovedRestorePlan
 	Passphrase string
 	Revalidate func(context.Context) error
 	Flush      func() error
@@ -72,7 +72,7 @@ func (r *Runner) AdmitApprovedRestore(prepare func() (ApprovedRestore, error)) e
 	r.backgroundWork.Go(func() {
 		defer release()
 		plan := approved.Plan
-		r.runTrackedRestore(approved.Run, plan.Point, []RestoreTarget{{Name: plan.ItemName, Type: "folder"}},
+		r.runTrackedRestore(approved.Run, plan.Point, []RestoreTarget{{Name: plan.Item.ItemName, Type: plan.Item.ItemType}},
 			"", approved.Passphrase, plan.Job.Name, &approved)
 	})
 	return nil
@@ -130,6 +130,8 @@ func approvedRestoreFailure(err error) string {
 	switch {
 	case errors.Is(err, ErrReviewedRestoreChanged):
 		return "reviewed_operation_changed"
+	case errors.Is(err, engine.ErrRestoreNeedsApproval):
+		return "manual_restore_required"
 	case errors.Is(err, ErrRestorePassphrase):
 		return "backup_passphrase_rejected"
 	default:
@@ -137,7 +139,7 @@ func approvedRestoreFailure(err error) string {
 	}
 }
 
-func changedFolderRestore(err error) error {
+func changedApprovedRestore(err error) error {
 	return fmt.Errorf("%w: %w", ErrReviewedRestoreChanged, err)
 }
 
@@ -160,4 +162,19 @@ func approvedRestoreOperatorDiagnostic(err error) string {
 	default:
 		return ""
 	}
+}
+
+func (approved *ApprovedRestore) revalidateStaged(ctx context.Context) error {
+	approved.checks = append(approved.checks, FolderDataStaged)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := approved.Revalidate(ctx); err != nil {
+		if ctx.Err() != nil && errors.Is(err, ErrApprovedStorageUnavailable) {
+			return ctx.Err()
+		}
+		return err
+	}
+	approved.checks = append(approved.checks, FolderReviewRevalidated)
+	return nil
 }

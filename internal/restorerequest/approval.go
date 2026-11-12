@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/engine"
 	"github.com/tinkerologie/vault/internal/runner"
 )
 
@@ -64,17 +65,30 @@ func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase 
 			return approved, err
 		}
 		if !stored.Eligible {
+			if stored.RequiresMetadataReview {
+				return approved, Invalid("unlock the saved backup configuration in Vault before approving")
+			}
+			if stored.ManualRestoreRequired {
+				return approved, Invalid("this container needs an override in the manual Restore wizard")
+			}
 			return approved, Invalid("the reviewed operation is ineligible for approval")
 		}
 
+		if stored.RequiresPassphrase && passphrase == "" {
+			return approved, runner.ErrRestorePassphrase
+		}
+
 		revalidate := func(ctx context.Context) (Operation, error) {
-			fresh, err := Capture(ctx, s.db, stored.Input)
+			fresh, err := s.capture(ctx, stored.Input, passphrase)
 			var invalid Invalid
 			if errors.Is(err, db.ErrNotFound) || errors.As(err, &invalid) {
 				return Operation{}, runner.ErrReviewedRestoreChanged
 			}
 			if err != nil {
 				return Operation{}, err
+			}
+			if fresh.sourceProbeUnavailable() {
+				return Operation{}, runner.ErrApprovedStorageUnavailable
 			}
 			data, err := json.Marshal(fresh)
 			if err != nil {
@@ -89,7 +103,7 @@ func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase 
 		fresh, err := revalidate(ctx)
 		if err == nil {
 			probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			err = s.runner.CheckFolderRestorePassphrase(probeCtx, fresh.plan, passphrase)
+			err = s.runner.CheckApprovedRestorePassphrase(probeCtx, fresh.plan, passphrase)
 			cancel()
 		}
 		if errors.Is(err, runner.ErrReviewedRestoreChanged) {
@@ -231,7 +245,9 @@ func (s *Service) view(ctx context.Context, request db.RestoreRequest, operator 
 			}
 			for _, check := range item.ReadinessChecks {
 				switch check {
-				case runner.FolderDataStaged, runner.FolderReviewRevalidated, runner.FolderRestoreCompleted:
+				case runner.FolderDataStaged, runner.FolderReviewRevalidated, runner.FolderRestoreCompleted,
+					engine.ContainerStarted, engine.ContainerStartFailed, engine.ContainerDatabaseReady, engine.ContainerDatabaseNotReady,
+					engine.ContainerDatabaseReplayed, engine.ContainerDatabaseReplayFailed:
 					runView.ReadinessChecks = append(runView.ReadinessChecks, check)
 				}
 			}

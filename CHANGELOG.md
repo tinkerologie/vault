@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Grant an Assistant Key permission to prepare a folder Restore Request. Review the selected Restore Point and write effects in Restore, and see withdrawn or expired requests in History (#641).
 - Approve a folder Restore Request from the signed-in Unraid Vault page, then follow its linked Restore Run in Vault or through the requesting Assistant Key (#642).
 - Stop an active approved Restore Run by its exact ID from the signed-in Unraid Vault page. The linked request records whether the restore stopped or finished (#643).
+- Review and approve Docker Restore Requests in Unraid, including saved image and volume effects, and follow container startup and database replay outcomes (#644).
 
 ## [v2026.11.02] - 2026-11-12
 

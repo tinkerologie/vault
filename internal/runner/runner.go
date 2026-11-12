@@ -4267,7 +4267,8 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 		if approved == nil {
 			restoreErr = r.restoreItemWithReporter(itemCtx, restorePoint, t.Name, t.Type, destination, passphrase, t.FilePaths, t.CleanDestination, reporter)
 		} else {
-			restoreErr = r.restoreApprovedFolder(itemCtx, approved, passphrase, reporter)
+			itemCtx = context.WithValue(itemCtx, approvedRestoreKey{}, true)
+			restoreErr = approved.Plan.Work.restore(itemCtx, r, approved, passphrase, reporter)
 		}
 		stopped := errors.Is(context.Cause(ctx), errOperatorRestoreStop) && errors.Is(restoreErr, context.Canceled)
 		if approved != nil && !stopped {

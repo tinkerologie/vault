@@ -8,19 +8,24 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/runner"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 const (
-	approvalWindow     = 24 * time.Hour
-	submissionWindow   = time.Hour
-	maxPendingPerKey   = 5
-	maxRecentPerKey    = 6
-	persistenceWarning = "the request state is saved in the working database but could not be saved to flash"
+	approvalWindow          = 24 * time.Hour
+	submissionWindow        = time.Hour
+	withdrawalRetryInterval = time.Minute
+	maxPendingPerKey        = 5
+	maxRecentPerKey         = 6
+	persistenceWarning      = "the request state is saved in the working database but could not be saved to flash"
 )
 
 var (
@@ -46,12 +51,13 @@ func PrincipalFrom(ctx context.Context) Principal {
 }
 
 type Service struct {
-	db          *db.DB
-	runner      *runner.Runner
-	revocations *db.AssistantRevocations
-	maintenance *sync.Mutex
-	flush       func() error
-	now         func() time.Time
+	db                   *db.DB
+	runner               *runner.Runner
+	revocations          *db.AssistantRevocations
+	maintenance          *sync.Mutex
+	flush                func() error
+	now                  func() time.Time
+	withdrawalRetryAfter time.Time // guarded by maintenance
 }
 
 func New(database *db.DB, revocations *db.AssistantRevocations, maintenance *sync.Mutex, execution *runner.Runner, flush func() error, now func() time.Time) *Service {
@@ -92,6 +98,9 @@ func view(request db.RestoreRequest, operator bool, warning string) (View, error
 	if err := json.Unmarshal(request.Operation, &op); err != nil {
 		return View{}, fmt.Errorf("decoding reviewed Restore Request operation: %w", err)
 	}
+	if request.WithdrawalFlushAfter != 0 {
+		warning = persistenceWarning
+	}
 	result := View{
 		ID: request.ID, Status: request.Status, CreatedAt: request.CreatedAt, ExpiresAt: request.ExpiresAt,
 		TerminalAt: request.TerminalAt, TerminalReason: request.TerminalReason, RequesterName: request.RequesterName,
@@ -107,6 +116,7 @@ func view(request db.RestoreRequest, operator bool, warning string) (View, error
 		result.ReviewDigest = reviewDigest(request.Operation)
 	} else {
 		result.Item = result.Item.Redacted()
+		result.Container = nil
 		result.JobName = runner.RedactRecoveryLabel(result.JobName)
 		result.RequesterName = runner.RedactRecoveryLabel(result.RequesterName)
 	}
@@ -129,7 +139,30 @@ func (s *Service) Submit(ctx context.Context, principal Principal, input Input) 
 	if _, err := s.assistant(ctx, principal); err != nil {
 		return View{}, err
 	}
-	op, err := Capture(ctx, s.db, input)
+	normalized := normalizedSubmission(input)
+	submission, err := json.Marshal(normalized)
+	if err != nil {
+		return View{}, err
+	}
+	rawSubmission := submission
+	if input != normalized {
+		rawSubmission, err = json.Marshal(input)
+		if err != nil {
+			return View{}, err
+		}
+	}
+
+	pending, err := s.db.PendingRestoreRequest(ctx, principal.AssistantDigest, s.now(), string(submission), string(rawSubmission))
+	if err == nil {
+		result, err := view(pending, false, "")
+		result.Reused = true
+		return result, err
+	}
+	if !errors.Is(err, db.ErrNotFound) {
+		return View{}, err
+	}
+
+	op, err := s.capture(ctx, normalized, "")
 	if err != nil {
 		return View{}, err
 	}
@@ -152,7 +185,7 @@ func (s *Service) Submit(ctx context.Context, principal Principal, input Input) 
 		ID: hex.EncodeToString(id[:]), OwnerDigest: principal.AssistantDigest,
 		RequesterName: key.Name, Operation: operation, Status: "pending", CreatedAt: now, ExpiresAt: now.Add(approvalWindow),
 	}
-	record, created, err := s.db.AdmitRestoreRequest(ctx, request, maxPendingPerKey, maxRecentPerKey, now.Add(-submissionWindow))
+	record, created, err := s.db.AdmitRestoreRequest(ctx, request, string(submission), string(rawSubmission), maxPendingPerKey, maxRecentPerKey, now.Add(-submissionWindow))
 	if errors.Is(err, db.ErrRestoreRequestLimit) {
 		return View{}, ErrLimit
 	}
@@ -162,6 +195,21 @@ func (s *Service) Submit(ctx context.Context, principal Principal, input Input) 
 	result, err := view(record, false, s.flushChange(created))
 	result.Reused = !created
 	return result, err
+}
+
+// Canonicalize the default folder type and the spelling of an alternate
+// location. Capture still validates the path policy and resolves symlinks.
+func normalizedSubmission(input Input) Input {
+	if input.ItemType == "folder" {
+		input.ItemType = ""
+	}
+	destination := input.Destination
+	if filepath.IsAbs(destination) && safepath.RejectControlChars(destination) == nil &&
+		!strings.Contains(destination, "../") && !strings.Contains(destination, `..\`) &&
+		!slices.Contains(strings.FieldsFunc(strings.TrimSpace(destination), func(r rune) bool { return r == '/' || r == '\\' }), "..") {
+		input.Destination = filepath.Clean(strings.TrimSpace(destination))
+	}
+	return input
 }
 
 func (s *Service) Get(ctx context.Context, principal Principal, id string) (View, error) {
@@ -209,25 +257,64 @@ func (s *Service) Withdraw(ctx context.Context, principal Principal, id string) 
 	if err != nil {
 		return View{}, err
 	}
+	now := s.now().UTC()
 	if request.Status != "pending" {
+		if request.WithdrawalFlushAfter != 0 {
+			s.retryWithdrawalFlush(ctx, &request, now)
+		}
 		return s.view(ctx, request, false, "")
 	}
-	now := s.now().UTC()
 	var changed bool
-	if request.ExpiresAt.After(now) {
-		changed, err = s.db.WithdrawRestoreRequest(ctx, id, principal.AssistantDigest, now)
-	} else {
+	flushAfter := int64(0)
+	expiring := !request.ExpiresAt.After(now)
+	if expiring {
 		changed, err = s.db.ExpireRestoreRequests(ctx, now, id)
+	} else {
+		if s.flush != nil {
+			flushAfter = now.Add(withdrawalRetryInterval).UnixNano()
+		}
+		changed, err = s.db.WithdrawRestoreRequest(ctx, id, principal.AssistantDigest, now, flushAfter)
 	}
 	if err != nil {
 		return View{}, err
 	}
-	warning := s.flushChange(changed)
+	warning := ""
+	if expiring {
+		warning = s.flushChange(changed)
+	} else if changed && flushAfter != 0 {
+		s.persistWithdrawal(ctx, &request, now, flushAfter)
+	}
 	request, err = s.db.GetRestoreRequest(ctx, id, principal.AssistantDigest)
 	if err != nil {
 		return View{}, err
 	}
 	return s.view(ctx, request, false, warning)
+}
+
+func (s *Service) retryWithdrawalFlush(ctx context.Context, request *db.RestoreRequest, now time.Time) {
+	if now.UnixNano() < request.WithdrawalFlushAfter || now.Before(s.withdrawalRetryAfter) {
+		return
+	}
+	next := now.Add(withdrawalRetryInterval).UnixNano()
+	reserved, err := s.db.ReserveWithdrawalFlush(ctx, request.ID, request.OwnerDigest, now.UnixNano(), next)
+	if err != nil || !reserved {
+		return
+	}
+	request.WithdrawalFlushAfter = next
+	s.persistWithdrawal(ctx, request, now, next)
+}
+
+func (s *Service) persistWithdrawal(ctx context.Context, request *db.RestoreRequest, now time.Time, flushAfter int64) {
+	s.withdrawalRetryAfter = now.Add(withdrawalRetryInterval)
+	if s.flushChange(true) != "" {
+		return
+	}
+	// The flash copy already contains the withdrawal. Mark it confirmed
+	// in the working ledger without forcing a second snapshot.
+	cleared, err := s.db.MarkWithdrawalFlushed(context.WithoutCancel(ctx), request.ID, flushAfter)
+	if err == nil && cleared {
+		request.WithdrawalFlushAfter = 0
+	}
 }
 
 func (s *Service) List(ctx context.Context, principal Principal, statuses []string, before string, limit int) (Page, error) {

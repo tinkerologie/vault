@@ -12,6 +12,7 @@
   let loadError = $state('')
   let approvalError = $state('')
   let approving = $state(false)
+  let reviewingMetadata = $state(false)
   let confirm = $state(false)
   let confirmStop = $state(false)
   let sendingStop = $state(false)
@@ -56,6 +57,20 @@
         loading = false
         if (request?.status === 'running') refreshTimer = setTimeout(refresh, 1500)
       }
+    }
+  }
+
+  async function reviewMetadata() {
+    reviewingMetadata = true
+    approvalError = ''
+    try {
+      const result = await api.reviewRestoreRequestMetadata(requestId, request.review_digest, passphrase)
+      if (!lifetime.signal.aborted) request = result
+    } catch (error) {
+      if (!lifetime.signal.aborted) approvalError = error.message
+    } finally {
+      passphrase = ''
+      reviewingMetadata = false
     }
   }
 
@@ -148,6 +163,30 @@
     reviewed_operation_revalidated: 'Reviewed operation revalidated',
     required_backup_data_staged: 'Required backup data staged',
     folder_restore_completed: 'Folder Restore completed',
+    backup_metadata_locked: 'Enter the Backup Passphrase to review the saved configuration.',
+    item_type_unconfirmed: 'The selected Restore Point does not confirm this Backup Item type.',
+    required_item_type_unconfirmed: 'A required Backup Chain step does not confirm this Backup Item type.',
+    container_metadata_unusable: 'Vault could not read the saved Docker configuration or resolve its volume locations.',
+    manual_restore_required: 'This container needs a host access or image override in the manual Restore wizard.',
+    stop_existing_container: 'Stop the existing container if it is running.',
+    remove_existing_container: 'Remove the existing container if present.',
+    recreate_container: 'Create the container with the saved Docker configuration.',
+    load_saved_image: 'Load the saved Docker image.',
+    pin_saved_image: 'Use the recorded backup-time image digest.',
+    start_container: 'Start the recreated container because it was running at backup time.',
+    restore_container_template: 'Restore the saved Unraid Docker template.',
+    replay_container_database_if_ready: 'Replay the saved database dump if the database becomes ready.',
+    preserve_container_database_dump_if_not_replayed: 'Save the database dump for manual replay if Vault does not replay it.',
+    container_started: 'Docker started the container',
+    container_start_failed: 'Docker failed to start the container',
+    container_database_ready: 'Database accepted connections for replay',
+    container_database_not_ready: 'Database did not become ready for replay',
+    container_database_replayed: 'Database dump replay completed',
+    container_database_replay_failed: 'Database dump replay failed',
+    replace: 'Clear directory contents and restore',
+    merge: 'Overwrite matching files and keep unrelated files',
+    overwrite_file: 'Overwrite the mounted file',
+    configuration_only: 'No backed-up data for this mount',
 
   }
 
@@ -176,7 +215,7 @@
         <dd class="text-text"><time datetime={request.restore_point.created_at}>{formatDate(request.restore_point.created_at)}</time></dd>
       </div>
       <div><dt class="text-text-muted">{request.target_choice === 'alternate' ? 'Alternate' : 'Original'} location</dt>
-        <dd class="break-all text-text">{request.resolved_path || 'Unavailable'}</dd>
+        <dd class="break-all text-text">{request.resolved_path || (request.container ? 'Original container volume locations' : 'Unavailable')}</dd>
         {#if request.configured_path && request.configured_path !== request.resolved_path}
           <dd class="break-all text-xs text-text-muted">Configured as {request.configured_path}</dd>
         {/if}
@@ -184,7 +223,7 @@
       <div><dt class="text-text-muted">Expires</dt>
         <dd class="text-text"><time datetime={request.expires_at}>{formatDate(request.expires_at)}</time></dd>
       </div>
-      <div><dt class="text-text-muted">Folder membership</dt><dd class="capitalize text-text">{request.membership}</dd></div>
+      <div><dt class="text-text-muted">Backup Item membership</dt><dd class="capitalize text-text">{request.membership}</dd></div>
       <div><dt class="text-text-muted">Verification</dt>
         <dd class="text-text">
           {#if request.verification.status === 'none' && request.verification.verified_during_backup === true}
@@ -219,6 +258,41 @@
         </ul>
       </div>
     </div>
+    {#if request.container}
+      <div class="mt-4 text-sm">
+        <h3 class="font-medium text-text">Docker container</h3>
+        <dl class="mt-1 grid gap-2 text-text-muted sm:grid-cols-2">
+          <div><dt>Name</dt><dd class="break-all text-text">{request.container.name}</dd></div>
+          <div><dt>Image</dt><dd class="break-all text-text">{request.container.image}</dd></div>
+          {#if request.container.image_id && !request.container.image_digest}
+            <div class="sm:col-span-2"><dt>Saved image ID</dt>
+              <dd class="break-all text-text">{request.container.image_id}</dd>
+            </div>
+          {/if}
+          {#if request.container.image_digest}
+            <div class="sm:col-span-2"><dt>Backup-time image digest</dt>
+              <dd class="break-all text-text">{request.container.image_digest}</dd>
+            </div>
+          {/if}
+        </dl>
+        {#if request.container.binds?.length}
+          <h4 class="mt-2 font-medium text-text">Docker bind settings</h4>
+          <ul class="mt-1 list-disc space-y-1 break-all pl-5 text-text-muted">
+            {#each request.container.binds as bind, index (index)}
+              <li>{bind}</li>
+            {/each}
+          </ul>
+        {/if}
+        {#if request.container.volumes.length}
+          <h4 class="mt-2 font-medium text-text">Volume targets</h4>
+          <ul class="mt-1 list-disc space-y-1 pl-5 text-text-muted">
+            {#each request.container.volumes as volume, index (index)}
+              <li><span class="break-all">{volume.mount} → {volume.target}</span> · {labels[volume.write_mode]}</li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    {/if}
     {#if request.warnings.length || request.persistence_warning}
       <ul class="mt-4 list-disc space-y-1 pl-5 text-sm text-warning">
         {#each request.warnings as warning (warning)}
@@ -227,13 +301,32 @@
         {#if request.persistence_warning}<li>{request.persistence_warning}</li>{/if}
       </ul>
     {/if}
-    {#if !request.eligible_for_approval}
+    {#if request.status === 'pending' && request.requires_metadata_review}
+      {#if nativeApproval && request.review_digest}
+        <form class="mt-4 text-sm" onsubmit={(event) => { event.preventDefault(); void reviewMetadata() }}>
+          <label class="block max-w-md text-text">
+            Backup Passphrase
+            <input type="password" bind:value={passphrase} autocomplete="off" required disabled={reviewingMetadata}
+              class="mt-1 w-full rounded-lg border border-border bg-surface-3 px-3 py-2 text-text" />
+          </label>
+          <button type="submit" disabled={!passphrase || reviewingMetadata}
+            class="mt-2 hit-target rounded-lg bg-vault px-3 py-1 font-medium text-on-vault disabled:opacity-50">
+            {reviewingMetadata ? 'Reading saved configuration…' : 'Review saved configuration'}
+          </button>
+        </form>
+      {:else}
+        <p class="mt-4 text-sm text-text-muted">Open this request from the signed-in Unraid Vault page to review the saved configuration.</p>
+      {/if}
+    {:else if !request.eligible_for_approval}
       <h3 class="mt-4 text-sm font-medium text-danger">Ineligible for approval</h3>
       <ul class="mt-1 list-disc space-y-1 pl-5 text-sm text-danger">
         {#each request.ineligibility_reasons as reason (reason)}
           <li>{labels[reason] ?? reason}</li>
         {/each}
       </ul>
+    {/if}
+    {#if request.manual_restore_required || request.terminal_reason === 'manual_restore_required'}
+      <a href="#/restore" class="mt-2 inline-flex hit-target items-center text-sm text-info hover:underline">Open manual Restore wizard</a>
     {/if}
     {#if request.terminal_reason}
       <p class="mt-4 text-sm text-text-muted">{labels[request.terminal_reason] ?? request.terminal_reason}</p>
@@ -297,9 +390,11 @@
           type="button" disabled={approving} onclick={() => { confirm = true }}>Approve and run</button>
         <ConfirmDialog show={confirm} title="Approve Restore Request"
           message="Start this Restore Request now."
-          confirmLabel="Approve and run" confirmWord={request.effective_write_mode === 'replace' ? 'RESTORE' : ''}
+          confirmLabel="Approve and run" confirmWord={request.container || request.effective_write_mode === 'replace' ? 'RESTORE' : ''}
           confirmDisabled={request.requires_passphrase && !passphrase} busy={approving}
-          source={[{ label: 'Restore location', value: request.resolved_path }]}
+          source={request.container
+            ? [{ label: 'Docker container', value: request.container.name }, { label: 'Image', value: request.container.image_digest || request.container.image }]
+            : [{ label: 'Restore location', value: request.resolved_path }]}
           consequences={request.effects.map(effect => labels[effect] ?? effect)}
           onconfirm={approve} oncancel={cancelApproval}>
           <label class="mt-4 block text-sm text-text">

@@ -519,7 +519,7 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 
 // restoreChunkedTree extracts a manifest into destPath. Callers authorize the
 // destination; container volumes and plugin configs have their own policies.
-func (h *FolderHandler) restoreChunkedTree(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
+func (h *FolderHandler) restoreChunkedTree(ctx context.Context, item BackupItem, repo ContainerRestoreRepository, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
 	if destPath == "" {
 		if rd, ok := item.Settings["restore_destination"].(string); ok && rd != "" {
 			destPath = rd

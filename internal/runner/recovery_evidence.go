@@ -198,7 +198,8 @@ func InspectRecovery(ctx context.Context, database *db.DB, id int64, item ItemSe
 	result.EligibleForApproval = result.Membership == Confirmed && result.Chain.Status == Confirmed
 	hasUnknownArtifacts := false
 	for _, step := range result.Chain.Steps {
-		if step.Artifacts == Broken || step.Artifacts == Missing {
+		if step.Artifacts == Broken || step.Artifacts == Missing ||
+			(item.ItemType == "container" && step.Artifacts == Unknown && len(step.ClassicObjects) != 0) {
 			result.EligibleForApproval = false
 		}
 		hasUnknownArtifacts = hasUnknownArtifacts || step.Artifacts == Unknown
@@ -514,9 +515,19 @@ func (p *evidenceProbe) classic(point db.RestorePoint, item ItemSelection) Statu
 	if item.ItemType == "vm" {
 		return vmDiskEvidence(selected, expected)
 	}
-	if item.ItemType == "folder" {
+	if item.ItemType == "folder" || item.ItemType == "container" {
 		slices.SortFunc(selected, func(a, b storage.FileInfo) int { return cmp.Compare(a.Path, b.Path) })
 		p.classicObjects = selected
+	}
+	if item.ItemType == "container" {
+		// The listing can establish config/image presence without showing
+		// which volumes were captured. The operator's review reads the
+		// actual inspect JSON and validates the saved volume inventory.
+		if len(expected) == 0 || !slices.ContainsFunc(selected, func(file storage.FileInfo) bool {
+			return localRestoreName(path.Base(file.Path)) == "volumes.json" && file.Size > 0
+		}) {
+			return Unknown
+		}
 	}
 	return Confirmed
 }

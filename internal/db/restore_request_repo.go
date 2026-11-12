@@ -11,51 +11,60 @@ import (
 )
 
 type RestoreRequest struct {
-	ID             string
-	OwnerDigest    string
-	RequesterName  string
-	Operation      json.RawMessage
-	Status         string
-	CreatedAt      time.Time
-	ExpiresAt      time.Time
-	TerminalAt     *time.Time
-	TerminalReason string
+	ID                   string
+	OwnerDigest          string
+	RequesterName        string
+	Operation            json.RawMessage
+	Status               string
+	CreatedAt            time.Time
+	ExpiresAt            time.Time
+	TerminalAt           *time.Time
+	TerminalReason       string
+	WithdrawalFlushAfter int64 // Unix nanoseconds, or zero after confirmed persistence.
 }
 
 var ErrRestoreRequestLimit = errors.New("restore request admission limit reached")
 
 // AdmitRestoreRequest checks duplicates and limits in the insert statement.
 // Concurrent callers using different handles must share the same allowance.
-func (d *DB) AdmitRestoreRequest(ctx context.Context, request RestoreRequest, maxPending, maxRecent int, recentAfter time.Time) (RestoreRequest, bool, error) {
+func (d *DB) AdmitRestoreRequest(ctx context.Context, request RestoreRequest, input, rawInput string, maxPending, maxRecent int, recentAfter time.Time) (RestoreRequest, bool, error) {
 	now := request.CreatedAt.UnixNano()
 	operation := string(request.Operation)
 	result, err := d.ExecContext(ctx, `INSERT INTO restore_requests
 		(id, owner_digest, requester_name, operation, created_at, expires_at)
 		SELECT ?, ?, ?, ?, ?, ?
-		WHERE NOT EXISTS (SELECT 1 FROM restore_requests
-			WHERE owner_digest = ? AND operation = ? AND status = 'pending' AND expires_at > ?)
+		WHERE NOT EXISTS (SELECT 1 FROM restore_requests WHERE `+pendingRestoreSubmission+`)
 		AND (SELECT COUNT(*) FROM restore_requests
 			WHERE owner_digest = ? AND status = 'pending' AND expires_at > ?) < ?
 		AND (SELECT COUNT(*) FROM restore_requests
 			WHERE owner_digest = ? AND created_at > ?) < ?`,
 		request.ID, request.OwnerDigest, request.RequesterName, operation, now, request.ExpiresAt.UnixNano(),
-		request.OwnerDigest, operation, now,
+		request.OwnerDigest, now, input, rawInput,
 		request.OwnerDigest, now, maxPending,
 		request.OwnerDigest, recentAfter.UnixNano(), maxRecent)
 	created, err := restoreRequestsChanged(result, err)
 	if err != nil || created {
 		return request, created, err
 	}
-	existing, err := scanRestoreRequest(d.QueryRowContext(ctx, `SELECT `+restoreRequestColumns+`
-		FROM restore_requests WHERE owner_digest = ? AND operation = ? AND status = 'pending' AND expires_at > ?
-		ORDER BY created_at DESC, id DESC LIMIT 1`, request.OwnerDigest, operation, now))
+	existing, err := d.PendingRestoreRequest(ctx, request.OwnerDigest, request.CreatedAt, input, rawInput)
 	if errors.Is(err, ErrNotFound) {
 		return RestoreRequest{}, false, ErrRestoreRequestLimit
 	}
 	return existing, false, err
 }
 
-const restoreRequestColumns = "id, owner_digest, requester_name, operation, status, created_at, expires_at, terminal_at, terminal_reason"
+// Compare the submitted input, independently of the captured evidence and
+// review digest. Accept the request's original encoding for older records.
+const pendingRestoreSubmission = `owner_digest = ? AND status = 'pending' AND expires_at > ?
+	AND CASE WHEN json_valid(operation) THEN json_extract(operation, '$.input') END IN (?, ?)`
+
+func (d *DB) PendingRestoreRequest(ctx context.Context, owner string, now time.Time, input, rawInput string) (RestoreRequest, error) {
+	return scanRestoreRequest(d.QueryRowContext(ctx, `SELECT `+restoreRequestColumns+`
+		FROM restore_requests WHERE `+pendingRestoreSubmission+`
+		ORDER BY created_at DESC, id DESC LIMIT 1`, owner, now.UnixNano(), input, rawInput))
+}
+
+const restoreRequestColumns = "id, owner_digest, requester_name, operation, status, created_at, expires_at, terminal_at, terminal_reason, withdrawal_flush_after"
 
 func (d *DB) GetRestoreRequest(ctx context.Context, id, owner string) (RestoreRequest, error) {
 	query := "SELECT " + restoreRequestColumns + " FROM restore_requests WHERE id = ?"
@@ -104,7 +113,7 @@ func scanRestoreRequest(row restoreRequestScanner) (RestoreRequest, error) {
 	var created, expires int64
 	var terminal sql.NullInt64
 	err := row.Scan(&request.ID, &request.OwnerDigest, &request.RequesterName, &operation, &request.Status,
-		&created, &expires, &terminal, &request.TerminalReason)
+		&created, &expires, &terminal, &request.TerminalReason, &request.WithdrawalFlushAfter)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RestoreRequest{}, ErrNotFound
 	}
@@ -123,12 +132,24 @@ func scanRestoreRequest(row restoreRequestScanner) (RestoreRequest, error) {
 
 // WithdrawRestoreRequest only changes an owned request that is still pending
 // at the time of the attempted transition.
-func (d *DB) WithdrawRestoreRequest(ctx context.Context, id, owner string, now time.Time) (bool, error) {
+func (d *DB) WithdrawRestoreRequest(ctx context.Context, id, owner string, now time.Time, flushAfter int64) (bool, error) {
 	result, err := d.ExecContext(ctx, `UPDATE restore_requests
-		SET status = 'withdrawn', terminal_at = ?, terminal_reason = 'withdrawn_by_requester'
+		SET status = 'withdrawn', terminal_at = ?, terminal_reason = 'withdrawn_by_requester', withdrawal_flush_after = ?
 		WHERE id = ? AND owner_digest = ? AND status = 'pending' AND expires_at > ?`,
-		now.UnixNano(), id, owner, now.UnixNano())
+		now.UnixNano(), flushAfter, id, owner, now.UnixNano())
 	return restoreRequestsChanged(result, err)
+}
+
+// ReserveWithdrawalFlush advances the cooldown before a retry performs I/O.
+func (d *DB) ReserveWithdrawalFlush(ctx context.Context, id, owner string, now, flushAfter int64) (bool, error) {
+	return restoreRequestsChanged(d.ExecContext(ctx, `UPDATE restore_requests SET withdrawal_flush_after = ?
+		WHERE id = ? AND owner_digest = ? AND status = 'withdrawn'
+		AND withdrawal_flush_after > 0 AND withdrawal_flush_after <= ?`, flushAfter, id, owner, now))
+}
+
+func (d *DB) MarkWithdrawalFlushed(ctx context.Context, id string, flushAfter int64) (bool, error) {
+	return restoreRequestsChanged(d.ExecContext(ctx, `UPDATE restore_requests SET withdrawal_flush_after = 0
+		WHERE id = ? AND status = 'withdrawn' AND withdrawal_flush_after = ?`, id, flushAfter))
 }
 
 // ExpireRestoreRequests reconciles due rows, optionally for a single request.
@@ -157,4 +178,12 @@ func (d *DB) HasExpiredRestoreRequests(ctx context.Context, now time.Time) (bool
 	err := d.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM restore_requests
 		WHERE status = 'pending' AND expires_at <= ?)`, now.UnixNano()).Scan(&due)
 	return due, err
+}
+
+// ReviewRestoreRequestMetadata updates the operation only while the exact
+// pending submission is current. It cannot change a claimed request.
+func (d *DB) ReviewRestoreRequestMetadata(ctx context.Context, id string, prior, reviewed json.RawMessage, now time.Time) (bool, error) {
+	return restoreRequestsChanged(d.ExecContext(ctx, `UPDATE restore_requests SET operation = ?
+		WHERE id = ? AND operation = ? AND status = 'pending' AND expires_at > ?`,
+		string(reviewed), id, string(prior), now.UnixNano()))
 }

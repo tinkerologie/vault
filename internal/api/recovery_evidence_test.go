@@ -812,6 +812,7 @@ func TestClassicRecoveryEvidenceDetectsMissingAndUnusableArtifacts(t *testing.T)
 		{run: "job/empty", itemType: "folder", jobID: job, files: map[string]string{"data.tar": ""}, status: "broken"},
 		{run: "job/collision", itemType: "folder", jobID: job, files: map[string]string{"data.tar": "backup", "data.tar.gz": "duplicate"}, status: "broken"},
 		{run: "job/optional-sidecar-missing", itemType: "folder", jobID: job, files: map[string]string{"data.tar": "backup"}, status: "confirmed", replayWarning: true},
+		{run: "job/container-volume-coverage-unknown", itemType: "container", jobID: job, files: map[string]string{"config.json": "{}", "image.tar": "backup"}, status: "unknown"},
 		{run: "job/container-no-image", itemType: "container", jobID: job, files: map[string]string{"config.json": "{}"}, status: "missing"},
 		{run: "job/deleted-destination", itemType: "folder", jobID: noDest, status: "missing"},
 	}

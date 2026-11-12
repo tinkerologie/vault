@@ -148,6 +148,15 @@ export function buildRestoreApprovalRequest(method, id, { body }) {
   })
 }
 
+export function buildRestoreReviewRequest(method, id, { body }) {
+  return buildNativeRestoreAction(method, {
+    action: 'review',
+    id,
+    review_digest: body.reviewDigest,
+    passphrase: body.passphrase,
+  })
+}
+
 export function buildRestoreStopRequest(method, id) {
   return buildNativeRestoreAction(method, { action: 'stop', id })
 }
