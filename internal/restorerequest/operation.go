@@ -263,3 +263,28 @@ func validRequestID(id string) bool {
 	_, err := hex.DecodeString(id)
 	return len(id) == 32 && err == nil && strings.ToLower(id) == id
 }
+
+// sourceProbeUnavailable distinguishes missing or changed evidence from a
+// temporary inability to read it. Exact classic objects can be checked by
+// the workload planner even when the catalog alone cannot establish coverage.
+func (op Operation) sourceProbeUnavailable() bool {
+	if op.Chain.Reason == "catalog_unavailable" {
+		return true
+	}
+	if op.Chain.Status != runner.Confirmed {
+		return false
+	}
+	unavailable := false
+	for _, step := range op.Chain.Steps {
+		if !step.DataRequired {
+			continue
+		}
+		switch step.Artifacts {
+		case runner.Missing, runner.Broken:
+			return false
+		case runner.Unknown:
+			unavailable = unavailable || len(step.ClassicObjects) == 0
+		}
+	}
+	return unavailable
+}
