@@ -4262,6 +4262,11 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 		tally := &engine.RestoreTally{}
 		diagBefore := runDiag.Snapshot()
 		itemCtx := engine.WithRestoreTrust(engine.WithRestoreTally(ctx, tally), engine.RestoreTrust{AllowHostPrivileges: t.AllowHostPrivileges, AllowUnpinnedImage: t.AllowUnpinnedImage})
+		var vmReadiness *engine.VMReadinessResult
+		if t.Type == "vm" {
+			vmReadiness = &engine.VMReadinessResult{}
+			itemCtx = engine.WithVMReadinessResult(itemCtx, vmReadiness)
+		}
 		var restoreErr error
 		var operatorDiagnostic string
 		if approved == nil {
@@ -4291,7 +4296,17 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 		if approved != nil {
 			result["readiness_checks"] = approved.checks
 		}
+		if vmReadiness != nil {
+			result["vm_readiness"] = vmReadiness
+		}
 
+		event := map[string]any{
+			"job_id": restorePoint.JobID, "run_id": runID, "item_name": t.Name, "item_type": t.Type,
+			"items_total": len(targets),
+		}
+		if vmReadiness != nil {
+			event["vm_readiness"] = vmReadiness
+		}
 		if stopped {
 			requestReason = "stopped_by_operator"
 			result["status"] = "cancelled"
@@ -4300,17 +4315,10 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 			itemsFailed++
 			result["status"] = "failed"
 			result["error"] = restoreErr.Error()
-			r.broadcast(map[string]any{
-				"type":         "item_restore_failed",
-				"job_id":       restorePoint.JobID,
-				"run_id":       runID,
-				"item_name":    t.Name,
-				"item_type":    t.Type,
-				"error":        restoreErr.Error(),
-				"items_done":   itemsDone,
-				"items_failed": itemsFailed,
-				"items_total":  len(targets),
-			})
+			event["type"] = "item_restore_failed"
+			event["error"] = restoreErr.Error()
+			event["items_done"], event["items_failed"] = itemsDone, itemsFailed
+			r.broadcast(event)
 			logMessage := restoreErr.Error()
 			if operatorDiagnostic != "" {
 				logMessage = operatorDiagnostic
@@ -4321,16 +4329,9 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 		} else {
 			itemsDone++
 			result["status"] = "ok"
-			r.broadcast(map[string]any{
-				"type":         "item_restore_done",
-				"job_id":       restorePoint.JobID,
-				"run_id":       runID,
-				"item_name":    t.Name,
-				"item_type":    t.Type,
-				"items_done":   itemsDone,
-				"items_failed": itemsFailed,
-				"items_total":  len(targets),
-			})
+			event["type"] = "item_restore_done"
+			event["items_done"], event["items_failed"] = itemsDone, itemsFailed
+			r.broadcast(event)
 			okDetails := map[string]any{"item_name": t.Name, "item_type": t.Type, "duration_seconds": int(elapsed.Seconds()), "duration_ms": elapsed.Milliseconds()}
 			size, sizeLabel, known := restoredItemSize(t, tally, itemSizes)
 			msg := fmt.Sprintf("Restored %s (%s) in %s", t.Name, t.Type, format.Duration(elapsed))

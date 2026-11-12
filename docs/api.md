@@ -318,7 +318,7 @@ While a destination is still sealed with another key, browsing its restore
 points (`GET /jobs/{id}/restore-points/{rpid}/contents`) returns
 **424** with `{"code": "dedup_key_mismatch", "error": "…"}`.
 
-### Folder Restore Requests
+### Restore Requests
 
 In daemon mode, use `PATCH /settings/assistant-keys/{id}` from the Vault host with `{"restore_request":true}` to grant a named Assistant Key permission to prepare, follow and withdraw its own requests. Send `false` to remove the permission and keep recovery inspection. Reconnect the assistant's MCP session after changing permission.
 
@@ -343,6 +343,14 @@ Vault returns `400` for invalid inputs or a folder known to be absent, `403` for
 An approved request includes a stable `run_id` and a `run` summary with status, item counts, live progress when available, and readiness checks. Folder application health is `unchecked`. The operator view also shows the verified approval time and Unraid account name when present. A busy Runner leaves the request pending. A change to the reviewed source or write effects invalidates the request. A repeated approval returns the existing Restore Run. After a restart, an unfinished run is marked interrupted. Prepare a new request to retry.
 
 The native Unraid stop action verifies operator proof bound to the exact Restore Run ID. It returns `202` with `run_id` and `status: stopping` when the Runner accepts the stop, `409` with the recorded status when that run is no longer active, or `404` when the ID has no approved Restore Request. An API key, direct local connection, or the general Unraid API proxy cannot authorize this action. Use the Restore Request status to distinguish `cancelled` from a restore that finished before the stop took effect. The requesting assistant can follow the redacted outcome and stop request time.
+
+#### VM Restore Requests
+
+Set `item_type` to `vm` and `write_mode` to `replace`. A request covers one VM at the selected Restore Point. Vault uses the VM's recorded full backup and any required checkpoint layers. A full VM backup can be recorded in a Job's incremental Restore Point. Use `destination` to put the backed-up disks and NVRAM in an allowed alternate directory. Both location choices use the saved VM name and UUID.
+
+The operator's `vm` review shows disk targets, NVRAM, existing-domain actions, and the saved start policy. Assistant responses omit this projection. Vault requires the recorded disk and firmware artifacts and refuses a path used by another domain. For encrypted configuration, an operator enters the Backup Passphrase to see the effects and enters it again when approving.
+
+A tracked VM run can include `vm_readiness` in the request result, the per-item run log, and the terminal item event. It reports `startup`, `running` and `cleanup_stop`, with `guest_check` and `guest_outcome` for a configured QEMU guest agent or TCP check. Outcomes are `passed`, `failed` or `not_attempted`. A TCP result includes the port. Application health is `unchecked`.
 
 ## MCP (Model Context Protocol)
 

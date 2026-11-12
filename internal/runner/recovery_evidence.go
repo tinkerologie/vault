@@ -51,6 +51,7 @@ type RecoveryChainStep struct {
 	DataRequired     bool               `json:"data_required"`
 	Artifacts        Status             `json:"artifacts,omitempty"`
 	ClassicObjects   []storage.FileInfo `json:"-"`
+	VMTargets        []string           `json:"vm_targets,omitempty"`
 }
 
 type RecoveryVerification struct {

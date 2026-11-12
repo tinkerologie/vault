@@ -491,7 +491,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
       const prev3 = itemProgress[msg.item_name] || {}
       itemProgress = {
         ...itemProgress,
-        [msg.item_name]: { ...prev3, percent: 100, message: 'Restored', status: 'done' },
+        [msg.item_name]: { ...prev3, percent: 100, message: 'Restored', status: 'done', ...(msg.vm_readiness && { vm_readiness: msg.vm_readiness }) },
       }
       if (msg.items_done !== undefined) overallDone = msg.items_done
       if (msg.items_total) overallTotal = msg.items_total
@@ -502,7 +502,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
       const prev4 = itemProgress[msg.item_name] || {}
       itemProgress = {
         ...itemProgress,
-        [msg.item_name]: { ...prev4, percent: 100, message: msg.error || 'Failed', status: 'failed' },
+        [msg.item_name]: { ...prev4, percent: 100, message: msg.error || 'Failed', status: 'failed', ...(msg.vm_readiness && { vm_readiness: msg.vm_readiness }) },
       }
       overallFailed++
       if (msg.items_done !== undefined) overallDone = msg.items_done

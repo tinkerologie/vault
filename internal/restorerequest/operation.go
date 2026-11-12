@@ -23,7 +23,7 @@ type Input struct {
 	RestorePointID int64  `json:"restore_point_id" jsonschema:"Exact Restore Point ID"`
 	ItemName       string `json:"item_name" jsonschema:"Exact name of the whole Backup Item"`
 	ItemType       string `json:"item_type,omitempty" jsonschema:"Backup Item type: folder, container, or vm. Defaults to folder."`
-	WriteMode      string `json:"write_mode" jsonschema:"replace or merge"`
+	WriteMode      string `json:"write_mode" jsonschema:"replace or merge. VM restores require replace."`
 	Destination    string `json:"destination,omitempty" jsonschema:"Alternate restore location. Omit to use the configured original location"`
 }
 
@@ -54,6 +54,7 @@ type Review struct {
 	WriteMode              string                          `json:"write_mode"`
 	EffectiveWriteMode     string                          `json:"effective_write_mode"`
 	Container              *engine.ContainerRestoreEffects `json:"container,omitempty"`
+	VM                     *engine.VMRestoreEffects        `json:"vm,omitempty"`
 	ManualRestoreRequired  bool                            `json:"manual_restore_required,omitempty"`
 	RequiresMetadataReview bool                            `json:"requires_metadata_review,omitempty"`
 	RequiresPassphrase     bool                            `json:"requires_passphrase,omitempty"`
@@ -87,23 +88,42 @@ func (s *Service) capture(ctx context.Context, in Input, passphrase string) (Ope
 	if err != nil {
 		return Operation{}, err
 	}
-	evidence, err := recovery.GetEvidence(ctx, database, point.ID, item)
-	if err != nil {
-		return Operation{}, err
-	}
-	if evidence.Membership == runner.Missing || evidence.ItemTypeEvidence == runner.Missing {
-		return Operation{}, Invalid("the selected Restore Point does not contain that Backup Item")
-	}
 	op := Operation{
 		Input: in, StorageDestID: job.StorageDestID,
 		plan: runner.ApprovedRestorePlan{Job: job, Point: point, Item: item},
 		Review: Review{
-			JobName: job.Name, Item: item, RestorePoint: evidence.Point, Membership: evidence.Membership,
-			ItemTypeEvidence: evidence.ItemTypeEvidence, Chain: evidence.Chain, Verification: evidence.Verification,
-			Reasons: []string{}, Warnings: evidence.Warnings, TargetChoice: "original", WriteMode: in.WriteMode,
-			EffectiveWriteMode: in.WriteMode,
+			JobName: job.Name, Item: item, RestorePoint: runner.IdentifyPoint(point), Reasons: []string{},
+			TargetChoice: "original", WriteMode: in.WriteMode, EffectiveWriteMode: in.WriteMode,
 		},
 	}
+	if itemType == "vm" {
+		err = op.captureVM(ctx, s.runner, passphrase)
+	} else {
+		err = s.captureClassic(ctx, &op, passphrase)
+	}
+	if errors.Is(err, runner.ErrRestorePassphrase) && passphrase == "" {
+		op.RequiresMetadataReview = true
+		op.Reasons = append(op.Reasons, "backup_metadata_locked")
+	} else if err != nil {
+		return Operation{}, err
+	}
+	op.RequiresPassphrase = op.RequiresPassphrase || op.RequiresMetadataReview || op.plan.RequiresPassphrase()
+	op.Eligible = len(op.Reasons) == 0
+	return op, nil
+}
+
+func (s *Service) captureClassic(ctx context.Context, op *Operation, passphrase string) error {
+	database := s.db
+	itemType := op.Item.ItemType
+	evidence, err := recovery.GetEvidence(ctx, database, op.plan.Point.ID, op.Item)
+	if err != nil {
+		return err
+	}
+	if evidence.Membership == runner.Missing || evidence.ItemTypeEvidence == runner.Missing {
+		return Invalid("the selected Restore Point does not contain that Backup Item")
+	}
+	op.Membership, op.ItemTypeEvidence = evidence.Membership, evidence.ItemTypeEvidence
+	op.Chain, op.Verification, op.Warnings = evidence.Chain, evidence.Verification, evidence.Warnings
 	if evidence.Membership != runner.Confirmed {
 		op.Reasons = append(op.Reasons, "membership_unknown")
 	} else if evidence.ItemTypeEvidence != runner.Confirmed {
@@ -132,9 +152,9 @@ func (s *Service) capture(ctx context.Context, in Input, passphrase string) (Ope
 			op.Reasons = appendOnce(op.Reasons, reason)
 		}
 	}
-	op.SourceDigest, err = captureSource(ctx, database, &op)
+	op.SourceDigest, err = captureSource(ctx, database, op)
 	if err != nil {
-		return Operation{}, err
+		return err
 	}
 	switch itemType {
 	case "folder":
@@ -142,17 +162,9 @@ func (s *Service) capture(ctx context.Context, in Input, passphrase string) (Ope
 	case "container":
 		err = op.captureContainer(ctx, s.runner, passphrase)
 	default:
-		return Operation{}, Invalid("unsupported Restore Request item type")
+		return Invalid("unsupported Restore Request item type")
 	}
-	if errors.Is(err, runner.ErrRestorePassphrase) && passphrase == "" {
-		op.RequiresMetadataReview = true
-		op.Reasons = append(op.Reasons, "backup_metadata_locked")
-	} else if err != nil {
-		return Operation{}, err
-	}
-	op.RequiresPassphrase = op.RequiresPassphrase || op.RequiresMetadataReview || op.plan.RequiresPassphrase()
-	op.Eligible = len(op.Reasons) == 0
-	return op, nil
+	return err
 }
 
 func appendOnce(values []string, value string) []string {

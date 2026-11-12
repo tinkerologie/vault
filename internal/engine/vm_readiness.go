@@ -29,11 +29,14 @@ func (h *VMHandler) verifyRestoredVMReady(ctx context.Context, dom libvirt.Domai
 		if err != nil {
 			return err
 		}
-		progress(name, 98, fmt.Sprintf("waiting for %s", endpoint))
+		progress(name, 98, fmt.Sprintf("waiting for TCP port %d", config.TCPPort))
 		if err := waitForTCPEndpoint(ctx, endpoint, time.Duration(vmRestoreVerifyTimeout(config))*time.Second); err != nil {
-			return fmt.Errorf("waiting for restored VM service %s: %w", endpoint, err)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("waiting for restored VM service on TCP port %d", config.TCPPort)
 		}
-		progress(name, 99, fmt.Sprintf("verified %s", endpoint))
+		progress(name, 99, fmt.Sprintf("verified TCP port %d", config.TCPPort))
 		return nil
 	default:
 		return fmt.Errorf("unsupported restore verify mode %q", config.Mode)

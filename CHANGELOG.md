@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Approve a folder Restore Request from the signed-in Unraid Vault page, then follow its linked Restore Run in Vault or through the requesting Assistant Key (#642).
 - Stop an active approved Restore Run by its exact ID from the signed-in Unraid Vault page. The linked request records whether the restore stopped or finished (#643).
 - Review and approve Docker Restore Requests in Unraid, including saved image and volume effects, and follow container startup and database replay outcomes (#644).
+- Review and approve VM Restore Requests with the required checkpoint chain and disk, firmware and domain effects. Tracked VM Restore Runs show measured guest readiness outcomes (#645).
 
 ## [v2026.11.02] - 2026-11-12
 

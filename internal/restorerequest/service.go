@@ -108,6 +108,7 @@ func view(request db.RestoreRequest, operator bool, warning string) (View, error
 	} else {
 		result.Item = result.Item.Redacted()
 		result.Container = nil
+		result.VM = nil
 		result.JobName = runner.RedactRecoveryLabel(result.JobName)
 		result.RequesterName = runner.RedactRecoveryLabel(result.RequesterName)
 	}

@@ -1,6 +1,8 @@
 <script>
   import { onMount } from 'svelte'
   import ConfirmDialog from './ConfirmDialog.svelte'
+  import VmRestoreEffects from './VmRestoreEffects.svelte'
+  import VmReadinessResult from './VmReadinessResult.svelte'
   import { api } from '../lib/api.js'
   import { canApproveRestoreRequest } from '../lib/runtime-config.js'
   import { formatDate } from '../lib/utils.js'
@@ -186,6 +188,32 @@
     merge: 'Overwrite matching files and keep unrelated files',
     overwrite_file: 'Overwrite the mounted file',
     configuration_only: 'No backed-up data for this mount',
+    vm_membership_unknown: 'Vault could not confirm VM membership at the selected Restore Point.',
+    vm_membership_missing: 'The VM is absent from the selected Restore Point.',
+    vm_chain_membership_unknown: 'Vault could not confirm VM membership at a required Backup Chain step.',
+    vm_full_backup_missing: 'The VM Backup Chain has no confirmed full backup.',
+    vm_checkpoint_unconfirmed: 'Vault could not confirm the VM checkpoint recorded for a required backup.',
+    vm_checkpoint_discontinuity: 'The recorded VM checkpoints do not form a continuous chain.',
+    vm_required_disk_layer_missing: 'A required disk has no matching layer in the VM Backup Chain.',
+    vm_required_artifact_missing: 'A required VM configuration, disk or NVRAM artifact is missing.',
+    vm_sidecar_unconfirmed: 'Vault could not confirm the saved VM configuration or disk inventory.',
+    vm_sidecar_too_large: 'The saved VM configuration or disk inventory exceeds the review limit.',
+    vm_manifest_unsupported: 'This VM backup uses an unsupported storage format.',
+    vm_target_disallowed: 'A VM disk or NVRAM destination is outside the restore policy.',
+    vm_target_collision: 'Two VM disks or firmware files would write to the same path.',
+    vm_identity_mismatch: 'The saved VM identity does not match the selected VM or the existing domain.',
+    vm_target_in_use: 'Another domain uses a VM disk or NVRAM destination.',
+    vm_host_unavailable: 'Vault could not check the current VM host and restore destinations.',
+    vm_define_saved_domain: 'Define the VM from the saved configuration.',
+    vm_replace_domain: 'Remove the existing domain definition and its libvirt metadata.',
+    vm_stop_domain: 'Stop the existing VM, with a possible forced stop.',
+    vm_restore_disks: 'Create or overwrite only the reviewed VM disk and firmware files.',
+    vm_start_domain: 'Start the restored VM and run the configured readiness checks.',
+    vm_leave_domain_stopped: 'Leave the restored VM stopped.',
+    cycle: 'The recorded Backup Chain contains a cycle.',
+    missing_parent: 'A required parent Restore Point is missing.',
+    foreign_parent: 'A recorded parent belongs to a different Job or Replication Source.',
+    depth_limit: 'Vault could not inspect the complete Backup Chain within the review limit.',
 
   }
 
@@ -214,7 +242,7 @@
         <dd class="text-text"><time datetime={request.restore_point.created_at}>{formatDate(request.restore_point.created_at)}</time></dd>
       </div>
       <div><dt class="text-text-muted">{request.target_choice === 'alternate' ? 'Alternate' : 'Original'} location</dt>
-        <dd class="break-all text-text">{request.resolved_path || (request.container ? 'Original container volume locations' : 'Unavailable')}</dd>
+        <dd class="break-all text-text">{request.resolved_path || (request.vm ? 'Paths shown under VM resources' : request.container ? 'Original container volume locations' : 'Unavailable')}</dd>
         {#if request.configured_path && request.configured_path !== request.resolved_path}
           <dd class="break-all text-xs text-text-muted">Configured as {request.configured_path}</dd>
         {/if}
@@ -244,6 +272,7 @@
           {#each request.chain.steps as step (step.restore_point_id)}
             <li>#{step.restore_point_id} · {step.backup_type} · membership {step.membership}
               {#if step.data_required} · data {step.artifacts || 'unknown'}{:else} · catalog only{/if}
+              {#if step.vm_targets?.length} · disks {step.vm_targets.join(', ')}{/if}
             </li>
           {/each}
         </ol>
@@ -292,6 +321,7 @@
         {/if}
       </div>
     {/if}
+    {#if request.vm}<VmRestoreEffects effects={request.vm} />{/if}
     {#if request.warnings.length || request.persistence_warning}
       <ul class="mt-4 list-disc space-y-1 pl-5 text-sm text-warning">
         {#each request.warnings as warning (warning)}
@@ -350,7 +380,11 @@
           <p class="mt-1 text-text-muted">{request.run.items_done} of {request.run.items_total} items restored
             {#if request.run.items_failed} · {request.run.items_failed} failed{/if}
           </p>
-          <p class="mt-1 text-text-muted">Application health <span>{request.run.application_health}</span></p>
+          {#if request.run.vm_readiness}
+            <VmReadinessResult readiness={request.run.vm_readiness} />
+          {:else}
+            <p class="mt-1 text-text-muted">Application health <span>{request.run.application_health}</span></p>
+          {/if}
           {#if request.run.readiness_checks?.length}
             <ul class="mt-1 list-disc pl-5 text-text-muted">
               {#each request.run.readiness_checks as check (check)}
@@ -393,7 +427,7 @@
           confirmDisabled={request.requires_passphrase && !passphrase} busy={approving}
           source={request.container
             ? [{ label: 'Docker container', value: request.container.name }, { label: 'Image', value: request.container.image_digest || request.container.image }]
-            : [{ label: 'Restore location', value: request.resolved_path }]}
+            : [{ label: 'Restore location', value: request.resolved_path || (request.vm ? 'Reviewed VM disk and firmware paths' : '') }]}
           consequences={request.effects.map(effect => labels[effect] ?? effect)}
           onconfirm={approve} oncancel={cancelApproval}>
           <label class="mt-4 block text-sm text-text">

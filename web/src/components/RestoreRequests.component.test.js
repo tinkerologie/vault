@@ -109,3 +109,34 @@ it.each([
   render(RestoreRequestReview, { requestId: 'unavailable' })
   expect((await screen.findByRole('alert')).textContent).toBe(expected)
 })
+
+it('shows the reviewed VM disks and measured readiness for the linked run', async () => {
+  const vm = {
+    ...request,
+    item: { item_name: 'test-vm', item_type: 'vm' },
+    vm: {
+      name: 'test-vm', uuid: '22222222-3333-4444-aaaa-555555555555',
+      disks: [{ target: 'vda', format: 'qcow2', destination: '/mnt/user/domains/test-vm/disk.img', replace: true }],
+      nvram: { destination: '/mnt/user/domains/test-vm/vars.fd', replace: true },
+      domain: { state: 'running', replace: true, stop: true },
+      start_after_restore: true, readiness_mode: 'guest_agent', readiness_timeout_seconds: 30,
+    },
+    status: 'completed',
+    run_id: 54,
+    run: {
+      status: 'completed', items_done: 1, items_total: 1, application_health: 'unchecked',
+      vm_readiness: { startup: 'passed', running: 'passed', guest_check: 'guest_agent', guest_outcome: 'passed', cleanup_stop: 'not_attempted' },
+    },
+    effects: ['vm_define_saved_domain'],
+  }
+  api.getRestoreRequest.mockResolvedValue(vm)
+  render(RestoreRequestReview, { requestId: 'vm' })
+  expect(await screen.findByRole('table', { name: 'VM disk and NVRAM targets' })).toBeTruthy()
+  expect(screen.getByText('/mnt/user/domains/test-vm/disk.img')).toBeTruthy()
+  expect(screen.getByText('/mnt/user/domains/test-vm/vars.fd')).toBeTruthy()
+  expect(screen.getByText(/may force-stop/)).toBeTruthy()
+  expect(screen.getByText('Restore Run #54')).toBeTruthy()
+  const readiness = screen.getByRole('group', { name: 'VM readiness' })
+  expect(within(readiness).getByText('QEMU guest agent').nextElementSibling.textContent).toBe('Passed')
+  expect(within(readiness).getByText('Application health').nextElementSibling.textContent).toBe('Unchecked')
+})

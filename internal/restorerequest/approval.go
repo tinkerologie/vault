@@ -180,19 +180,20 @@ type RunItemView struct {
 }
 
 type RunView struct {
-	ItemResults       []RunItemView `json:"item_results,omitempty"`
-	Active            bool          `json:"active,omitempty"`
-	Stopping          bool          `json:"stopping,omitempty"`
-	StopRequestedAt   *time.Time    `json:"stop_requested_at,omitempty"`
-	StoppedBy         string        `json:"stopped_by,omitempty"`
-	Status            string        `json:"status"`
-	ItemsTotal        int           `json:"items_total"`
-	ItemsDone         int           `json:"items_done"`
-	ItemsFailed       int           `json:"items_failed"`
-	Phase             string        `json:"phase,omitempty"`
-	Percent           *int          `json:"percent,omitempty"`
-	ApplicationHealth string        `json:"application_health"`
-	ReadinessChecks   []string      `json:"readiness_checks"`
+	ItemResults       []RunItemView             `json:"item_results,omitempty"`
+	Active            bool                      `json:"active,omitempty"`
+	Stopping          bool                      `json:"stopping,omitempty"`
+	StopRequestedAt   *time.Time                `json:"stop_requested_at,omitempty"`
+	StoppedBy         string                    `json:"stopped_by,omitempty"`
+	Status            string                    `json:"status"`
+	ItemsTotal        int                       `json:"items_total"`
+	ItemsDone         int                       `json:"items_done"`
+	ItemsFailed       int                       `json:"items_failed"`
+	Phase             string                    `json:"phase,omitempty"`
+	Percent           *int                      `json:"percent,omitempty"`
+	ApplicationHealth string                    `json:"application_health"`
+	ReadinessChecks   []string                  `json:"readiness_checks"`
+	VMReadiness       *engine.VMReadinessResult `json:"vm_readiness,omitempty"`
 }
 
 func (s *Service) view(ctx context.Context, request db.RestoreRequest, operator bool, warning string) (View, error) {
@@ -229,8 +230,9 @@ func (s *Service) view(ctx context.Context, request db.RestoreRequest, operator 
 		runView.Status = "interrupted"
 	}
 	var items []struct {
-		Status          string   `json:"status"`
-		ReadinessChecks []string `json:"readiness_checks"`
+		Status          string                    `json:"status"`
+		ReadinessChecks []string                  `json:"readiness_checks"`
+		VMReadiness     *engine.VMReadinessResult `json:"vm_readiness"`
 	}
 	if json.Unmarshal([]byte(run.Log), &items) == nil {
 		for _, item := range items {
@@ -239,6 +241,9 @@ func (s *Service) view(ctx context.Context, request db.RestoreRequest, operator 
 				runView.ItemResults = append(runView.ItemResults, RunItemView{Status: "completed"})
 			case "failed", "cancelled", "not_attempted":
 				runView.ItemResults = append(runView.ItemResults, RunItemView{Status: item.Status})
+			}
+			if result.Item.ItemType == "vm" && item.VMReadiness != nil {
+				runView.VMReadiness = item.VMReadiness
 			}
 			for _, check := range item.ReadinessChecks {
 				switch check {
