@@ -126,6 +126,14 @@ _Avoid_: deferred upload
 Recovery of backed-up workload data from a Restore Point.
 _Avoid_: disaster recovery when referring to a single recovery operation
 
+**Restore Request**:
+A proposed Restore that specifies the Restore Point, Backup Item, restore location, and what happens to existing data at that location.
+_Avoid_: restore run, job
+
+**Restore Approval**:
+An operator's authorization for the exact Restore described by a Restore Request.
+_Avoid_: assistant confirmation
+
 **Disaster Recovery**:
 The broader recovery of Vault configuration and protected workloads after loss of a server or its state.
 _Avoid_: restore when referring to the complete recovery process
@@ -153,7 +161,7 @@ A credential authorizing remote access to Vault.
 _Avoid_: server key, backup passphrase
 
 **Assistant Key**:
-A named credential for an assistant. It gives access to the recovery catalog and can be revoked independently.
+A named credential that lets one assistant inspect backup and recovery information. An operator can revoke it independently. A separate permission lets the assistant submit and follow its own Restore Requests and withdraw them while pending.
 _Avoid_: API Key, Server Key
 
 **Credentials Locked**:
