@@ -13,7 +13,10 @@ import (
 	"github.com/tinkerologie/vault/internal/dedup"
 )
 
-var ErrReviewedFolderTargetChanged = errors.New("reviewed folder restore target changed")
+var (
+	ErrReviewedFolderTargetChanged = errors.New("reviewed folder restore target changed")
+	ErrRestoreArchiveEntryTooLarge = errors.New("backup file exceeds max extract size")
+)
 
 // ReviewedFolderTarget retains the trust policy and both sides of path
 // resolution. Check at the write boundary to reject retargeted symlinks.
@@ -92,6 +95,10 @@ func ValidateStagedFolder(ctx context.Context, dir, dest string) error {
 		return err
 	}
 	defer closeBody() //nolint:errcheck
+	return validateStagedFolderTar(ctx, body, dest)
+}
+
+func validateStagedFolderTar(ctx context.Context, body io.Reader, dest string) error {
 	reader := tar.NewReader(body)
 	for {
 		if err := ctx.Err(); err != nil {
@@ -100,8 +107,7 @@ func ValidateStagedFolder(ctx context.Context, dir, dest string) error {
 		entry, err := reader.Next()
 		if err == io.EOF {
 			// Also check the trailer of a compressed stream.
-			_, err = io.Copy(io.Discard, body)
-			return err
+			return copySlices(ctx, io.Discard, body, nil)
 		}
 		if err != nil {
 			return err
@@ -109,7 +115,10 @@ func ValidateStagedFolder(ctx context.Context, dir, dest string) error {
 		if _, err := joinArchiveTarget(dest, entry.Name); err != nil {
 			return err
 		}
-		if _, err := io.Copy(io.Discard, reader); err != nil {
+		if entry.Typeflag == tar.TypeReg && entry.Size > maxExtractSize {
+			return ErrRestoreArchiveEntryTooLarge
+		}
+		if err := copySlices(ctx, io.Discard, reader, nil); err != nil {
 			return err
 		}
 	}

@@ -452,6 +452,21 @@ func TestApprovedFolderStagesLaterChainStepBeforeReplacingTarget(t *testing.T) {
 		!strings.Contains(outcome.Body.String(), `"run_id"`) {
 		t.Fatalf("chain outcome: %d %s", outcome.Code, outcome.Body)
 	}
+	var result restorerequest.View
+	if err := json.Unmarshal(outcome.Body.Bytes(), &result); err != nil || result.RunID <= 0 {
+		t.Fatalf("decode tracked outcome: %v", err)
+	}
+	const diagnostic = "A required restore file is missing."
+	logsPath := fmt.Sprintf("/api/v1/runs/%d/logs", result.RunID)
+	operatorLog := callRestoreRequest(server, http.MethodGet, logsPath, loopbackPeer, "", "")
+	if operatorLog.Code != http.StatusOK || !strings.Contains(operatorLog.Body.String(), diagnostic) ||
+		strings.Contains(operatorLog.Body.String(), laterArchive) {
+		t.Fatalf("operator should get a safe explanation for the missing file: %d %s", operatorLog.Code, operatorLog.Body)
+	}
+	assistantLog := callRestoreRequest(server, http.MethodGet, logsPath, remotePeer, assistant.Key, "")
+	if assistantLog.Code != http.StatusForbidden || strings.Contains(outcome.Body.String(), diagnostic) {
+		t.Fatalf("operator diagnostic reached the assistant: logs %d, outcome %s", assistantLog.Code, outcome.Body)
+	}
 	if data, err := os.ReadFile(existing); err != nil || string(data) != "before restore" {
 		t.Fatalf("reviewed target changed: %q %v", data, err)
 	}

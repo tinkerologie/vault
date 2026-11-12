@@ -1,10 +1,14 @@
 package runner
 
 import (
+	"archive/tar"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log"
+	"syscall"
 	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
@@ -117,7 +121,28 @@ func approvedRestoreFailure(err error) string {
 }
 
 func changedApprovedRestore(err error) error {
-	return fmt.Errorf("%w: %v", ErrReviewedRestoreChanged, err)
+	return fmt.Errorf("%w: %w", ErrReviewedRestoreChanged, err)
+}
+
+// approvedRestoreOperatorDiagnostic classifies trusted error types without
+// copying storage URLs, paths, or credential-bearing provider messages.
+func approvedRestoreOperatorDiagnostic(err error) string {
+	switch {
+	case errors.Is(err, engine.ErrRestoreArchiveEntryTooLarge):
+		return "A backup archive file exceeds Vault's extraction size limit."
+	case errors.Is(err, syscall.ENOSPC):
+		return "A restore filesystem ran out of space."
+	case errors.Is(err, fs.ErrPermission):
+		return "A restore file could not be accessed because of its permissions."
+	case errors.Is(err, fs.ErrNotExist):
+		return "A required restore file is missing."
+	case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, tar.ErrHeader):
+		return "A required restore archive is incomplete or invalid."
+	case errors.Is(err, ErrRestorePassphrase):
+		return "The selected backup did not accept the Backup Passphrase."
+	default:
+		return ""
+	}
 }
 
 func (approved *ApprovedRestore) revalidateStaged(ctx context.Context) error {
