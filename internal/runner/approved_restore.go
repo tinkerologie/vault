@@ -166,7 +166,13 @@ func approvedRestoreOperatorDiagnostic(err error) string {
 
 func (approved *ApprovedRestore) revalidateStaged(ctx context.Context) error {
 	approved.checks = append(approved.checks, FolderDataStaged)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := approved.Revalidate(ctx); err != nil {
+		if ctx.Err() != nil && errors.Is(err, ErrApprovedStorageUnavailable) {
+			return ctx.Err()
+		}
 		return err
 	}
 	approved.checks = append(approved.checks, FolderReviewRevalidated)

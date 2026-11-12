@@ -293,7 +293,7 @@ func reviewedContainerArchives(step ContainerBackupMetadata, merged bool) (map[s
 	out := map[string]string{}
 	for _, file := range step.Files {
 		base := TarBaseName(filepath.Base(file))
-		if strings.HasPrefix(base, "volume_") && !strings.HasSuffix(file, ".tar") &&
+		if (strings.HasPrefix(base, "volume_") || base == "image.tar") && !strings.HasSuffix(file, ".tar") &&
 			!strings.HasSuffix(file, ".tar.gz") && !strings.HasSuffix(file, ".tar.zst") {
 			continue
 		}
@@ -491,6 +491,64 @@ func (h *ContainerHandler) removeReviewedContainer(ctx context.Context, reviewed
 	}
 	if _, err := h.cli.ContainerRemove(ctx, reviewed.existingID, client.ContainerRemoveOptions{Force: true}); err != nil {
 		return fmt.Errorf("removing the existing container: %w", err)
+	}
+	return nil
+}
+
+func validateReviewedContainerArchives(ctx context.Context, dir string, inspect restoreInspect, review ContainerRestoreReview) error {
+	manifest, present, err := readVolumeManifest(dir)
+	if err != nil {
+		return err
+	}
+	for i, mount := range inspect.Mounts {
+		volumeIndex := slices.IndexFunc(review.Effects.Volumes, func(volume ContainerVolumeEffect) bool {
+			return volume.Mount == mount.Destination && volume.WriteMode != "configuration_only"
+		})
+		if volumeIndex < 0 {
+			continue
+		}
+		volume := review.Effects.Volumes[volumeIndex]
+		entry, found := findVolumeManifestEntry(manifest, mount.Source, i)
+		archive, err := resolveVolumeArchive(dir, entry.Archive, mount.Source, legacyVolumeIndex(entry, found, present, i))
+		if err != nil {
+			return err
+		}
+		if err := validateStagedVolumeArchive(ctx, archive, volume.Target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkReviewedContainerPaths(ctx context.Context, inspect restoreInspect, restoreDest string) error {
+	reviewed, ok := reviewedContainerFrom(ctx)
+	if !ok {
+		return nil
+	}
+	if restoreDest != reviewed.review.Effects.Destination {
+		return ErrContainerReviewChanged
+	}
+	if restoreDest != "" {
+		resolved, err := normalizeRestorePath(restoreDest)
+		if err != nil || resolved != restoreDest {
+			return ErrContainerReviewChanged
+		}
+	}
+	for _, mount := range inspect.Mounts {
+		for _, volume := range reviewed.review.Effects.Volumes {
+			if volume.Mount != mount.Destination ||
+				(restoreDest == "" && volume.WriteMode == "configuration_only") {
+				continue
+			}
+			target, err := volumeRestoreTarget(restoreDest, mount.Type, mount.Name, mount.Source)
+			if err != nil {
+				return ErrContainerReviewChanged
+			}
+			resolved, err := normalizeRestorePath(target)
+			if err != nil || resolved != volume.Target {
+				return ErrContainerReviewChanged
+			}
+		}
 	}
 	return nil
 }
