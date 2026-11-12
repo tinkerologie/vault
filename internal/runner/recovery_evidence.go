@@ -123,9 +123,10 @@ func InspectRecovery(ctx context.Context, database *db.DB, id int64, item ItemSe
 		return RecoveryEvidence{}, err
 	}
 	points, failure := walkRestoreChain(ctx, database, point, maxEvidenceChainDepth)
+	_, deduplicated, selectedManifestErr := lookupItemManifest(point, item.ItemName)
 	if failure == nil {
 		switch {
-		case isDependentPoint(point) && points[0].BackupType != "full":
+		case isDependentPoint(point) && points[0].BackupType != "full" && !standaloneImportedDedup(point, deduplicated):
 			failure = &restoreChainError{status: Missing, reason: "missing_full_backup", err: errors.New("restore chain has no terminal full backup")}
 		case point.BackupType != "full" && !isDependentPoint(point):
 			failure = &restoreChainError{status: Unknown, reason: "unknown_backup_type", err: errors.New("unrecognized backup type")}
@@ -142,17 +143,23 @@ func InspectRecovery(ctx context.Context, database *db.DB, id int64, item ItemSe
 		result.Chain.Status, result.Chain.Reason = failure.status, failure.reason
 		result.Chain.MissingRestorePointID = failure.parentID
 	}
-	_, deduplicated := resolveManifestID(point, item.ItemName)
-	for i, step := range points {
+	for _, step := range points {
 		member := Membership(step, item)
 		selected := step.ID == point.ID
-		// Classic restore skips known-absent intermediate points. It still
-		// needs a full baseline for the selected item. A deduplicated
-		// Restore Point needs its own manifest and only the ancestors' rows.
-		required := selected || (!deduplicated && (i == 0 || member != Missing))
+		// The Job chain still needs a full anchor. Classic replay skips
+		// every point known to omit this item, including an earlier full.
+		// A deduplicated point needs only its own stored manifest.
+		required := selected || (!deduplicated && member != Missing)
 		entry := RecoveryChainStep{RestorePointID: step.ID, BackupType: IdentifyPoint(step).BackupType, Membership: member, DataRequired: required}
 		if required {
 			entry.Artifacts = Unknown
+			manifestErr := selectedManifestErr
+			if !selected {
+				_, _, manifestErr = lookupItemManifest(step, item.ItemName)
+			}
+			if manifestErr != nil {
+				entry.Artifacts = Broken
+			}
 		}
 		result.Chain.Steps = append(result.Chain.Steps, entry)
 		if failure == nil && required && member == Missing {
@@ -161,7 +168,7 @@ func InspectRecovery(ctx context.Context, database *db.DB, id int64, item ItemSe
 			result.Chain.Status, result.Chain.Reason = Unknown, "unknown_step_membership"
 		}
 	}
-	if result.Membership == Confirmed && failure == nil {
+	if result.Membership == Confirmed && failure == nil && selectedManifestErr == nil {
 		statuses := probeRecoveryArtifacts(ctx, database, point.JobID, points, result.Chain.Steps, item, deduplicated, wrap)
 		for i, status := range statuses {
 			if status != "" {
@@ -197,6 +204,18 @@ func InspectRecovery(ctx context.Context, database *db.DB, id int64, item ItemSe
 		result.Warnings = append(result.Warnings, "latest_verification_"+result.Verification.Status)
 	}
 	return result, nil
+}
+
+// Imported dedup manifests are complete snapshots. Import does not recreate
+// parent IDs, so this case is distinct from a recorded parent that is missing.
+func standaloneImportedDedup(point db.RestorePoint, deduplicated bool) bool {
+	if !deduplicated || point.ParentRestorePointID != 0 {
+		return false
+	}
+	var meta struct {
+		Imported bool `json:"imported"`
+	}
+	return json.Unmarshal([]byte(point.Metadata), &meta) == nil && meta.Imported
 }
 
 func recoveryVerification(ctx context.Context, database *db.DB, point db.RestorePoint) RecoveryVerification {
@@ -258,7 +277,7 @@ func probeRecoveryArtifacts(ctx context.Context, database *db.DB, jobID int64, p
 		dest, err := database.GetStorageDestinationContext(ctx, job.StorageDestID)
 		if errors.Is(err, db.ErrNotFound) {
 			for i, step := range steps {
-				if step.DataRequired {
+				if step.Artifacts == Unknown {
 					updates <- stepProbeResult{i, Missing}
 				}
 			}
@@ -278,7 +297,7 @@ func probeRecoveryArtifacts(ctx context.Context, database *db.DB, jobID int64, p
 			if ctx.Err() != nil {
 				return
 			}
-			if step.DataRequired && step.Membership == Confirmed {
+			if step.Artifacts == Unknown && step.Membership == Confirmed {
 				status := probe.inspect(ctx, database, dest.ID, points[i], item, deduplicated)
 				updates <- stepProbeResult{i, status}
 			}
@@ -449,6 +468,35 @@ func (p *evidenceProbe) classic(point db.RestorePoint, item ItemSelection) Statu
 		if selected[index].Size <= 0 {
 			return Broken
 		}
+	}
+	if item.ItemType == "vm" {
+		return vmDiskEvidence(selected, expected)
+	}
+	return Confirmed
+}
+
+// VM backups record their disks as vdisk<index>[.<format>]. A directory
+// listing alone cannot tell how many disks the backup was meant to contain.
+func vmDiskEvidence(files []storage.FileInfo, expected map[string]string) Status {
+	found := false
+	for _, file := range files {
+		name := path.Base(file.Path)
+		if _, recorded := expected[name]; !recorded {
+			continue
+		}
+		local := localRestoreName(name)
+		stem := strings.TrimSuffix(local, path.Ext(local))
+		index, disk := strings.CutPrefix(stem, "vdisk")
+		if !disk || index == "" || strings.IndexFunc(index, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+			continue
+		}
+		if file.Size <= 0 {
+			return Broken
+		}
+		found = true
+	}
+	if !found {
+		return Unknown
 	}
 	return Confirmed
 }

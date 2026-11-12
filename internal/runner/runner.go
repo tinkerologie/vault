@@ -2186,8 +2186,8 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 			SizeBytes:            totalSize,
 			ParentRestorePointID: parentID,
 		}
-		// For dedup runs with exactly one item, persist the manifest ID
-		// directly on the row so the common case avoids a metadata lookup.
+		// Persist the row-level ID when there is exactly one deduplicated
+		// item. The per-item map still distinguishes any classic items.
 		if len(itemManifests) == 1 {
 			for _, hexID := range itemManifests {
 				if decoded, err := hex.DecodeString(hexID); err == nil && len(decoded) == 32 {
@@ -4573,6 +4573,11 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 	trust.ArtifactTrusted = r.restorePointVouched(restorePoint, itemName)
 	ctx = engine.WithRestoreTrust(ctx, trust)
 
+	_, chunked, err := lookupItemManifest(restorePoint, itemName)
+	if err != nil {
+		return err
+	}
+
 	// For incremental/differential, walk the chain and restore in order.
 	if restorePoint.BackupType == "incremental" || restorePoint.BackupType == "differential" {
 		chain, failure := walkRestoreChain(ctx, r.db, restorePoint, 0)
@@ -4588,13 +4593,20 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		// must run BEFORE the merged-chain dispatch because containers use
 		// merged chains but dedup containers must take the single-point
 		// chunked restore path.
-		if _, ok := resolveManifestID(restorePoint, itemName); ok {
+		if chunked {
 			log.Printf("runner: dedup restore point %d has a complete manifest — restoring it directly (no chain replay)", restorePoint.ID)
 			r.runLog(reporter.RunID, runLogLevelInfo,
 				fmt.Sprintf("Restore point %d carries a complete dedup manifest — restoring %s directly (no chain replay)", restorePoint.ID, itemName),
 				map[string]any{"restore_point_id": restorePoint.ID, "item_name": itemName})
 			settleApprovalsIfNoneApply(ctx, itemType, true)
 			return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
+		}
+		for _, step := range chain[:len(chain)-1] {
+			if rpContainsItem(step, itemName) {
+				if _, _, err := lookupItemManifest(step, itemName); err != nil {
+					return fmt.Errorf("restore point %d: %w", step.ID, err)
+				}
+			}
 		}
 		// A chain replay can take its config from any step, so every step has
 		// to be this server's own, not just the one selected.
@@ -4643,7 +4655,6 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		}
 		return nil
 	}
-	_, chunked := resolveManifestID(restorePoint, itemName)
 	settleApprovalsIfNoneApply(ctx, itemType, chunked)
 	return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, cleanDestination, reporter)
 }
@@ -5504,7 +5515,11 @@ func (r *Runner) stageContainerChainMerged(ctx context.Context, chain []db.Resto
 // For dedup restore points (manifest_id set, or item_manifests in metadata),
 // the chunked restore path is taken instead of the classic stage + restore.
 func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, cleanDestination bool, reporter restoreProgressReporter) error {
-	if manifestID, ok := resolveManifestID(restorePoint, itemName); ok {
+	manifestID, chunked, err := lookupItemManifest(restorePoint, itemName)
+	if err != nil {
+		return err
+	}
+	if chunked {
 		return r.restoreSinglePointChunked(ctx, restorePoint, manifestID, itemName, itemType, destination, filePaths, cleanDestination, reporter)
 	}
 
@@ -5531,32 +5546,63 @@ func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.Restore
 	return err
 }
 
-// resolveManifestID returns the dedup manifest ID for itemName from a
-// restore point. It first consults metadata["item_manifests"][itemName] (a
-// hex string written by the backup path for multi-item dedup jobs), then
-// falls back to restorePoint.ManifestID for single-item dedup jobs. The
-// ok=false case means this is a classic (non-dedup) restore point.
+// resolveManifestID finds the selected item's manifest for callers that can
+// continue without it, such as an incremental backup's carry-forward lookup.
 func resolveManifestID(rp db.RestorePoint, itemName string) (dedup.ID, bool) {
-	if rp.Metadata != "" {
-		var meta map[string]any
-		if err := json.Unmarshal([]byte(rp.Metadata), &meta); err == nil {
-			if itemMap, ok := meta["item_manifests"].(map[string]any); ok {
-				if hexID, ok := itemMap[itemName].(string); ok && hexID != "" {
-					if decoded, err := hex.DecodeString(hexID); err == nil && len(decoded) == 32 {
-						var id dedup.ID
-						copy(id[:], decoded)
-						return id, true
-					}
-				}
-			}
+	id, found, err := lookupItemManifest(rp, itemName)
+	return id, found && err == nil
+}
+
+var errInvalidItemManifest = errors.New("invalid deduplicated manifest metadata for the selected item")
+
+// lookupItemManifest treats the per-item map as authoritative whenever it is
+// present. A row-level ID is also stored when a mixed Restore Point has one
+// deduplicated item, so it cannot identify an item omitted by that map.
+func lookupItemManifest(rp db.RestorePoint, itemName string) (dedup.ID, bool, error) {
+	var metadata map[string]json.RawMessage
+	if rp.Metadata != "" && json.Unmarshal([]byte(rp.Metadata), &metadata) != nil {
+		if len(rp.ManifestID) != 0 {
+			return dedup.ID{}, false, errInvalidItemManifest
+		}
+		return dedup.ID{}, false, nil
+	}
+	if rawMap, present := metadata["item_manifests"]; present {
+		var entries map[string]json.RawMessage
+		if err := json.Unmarshal(rawMap, &entries); err != nil || entries == nil {
+			return dedup.ID{}, false, errInvalidItemManifest
+		}
+		rawID, exists := entries[itemName]
+		if !exists {
+			return dedup.ID{}, false, nil
+		}
+		var hexID *string
+		if err := json.Unmarshal(rawID, &hexID); err != nil || hexID == nil {
+			return dedup.ID{}, false, errInvalidItemManifest
+		}
+		if *hexID == "" {
+			// Some classic entries use an empty placeholder in a mixed point.
+			return dedup.ID{}, false, nil
+		}
+		decoded, err := hex.DecodeString(*hexID)
+		if err != nil || len(decoded) != len(dedup.ID{}) {
+			return dedup.ID{}, false, errInvalidItemManifest
+		}
+		return dedup.ID(decoded), true, nil
+	}
+	if len(rp.ManifestID) == 0 {
+		return dedup.ID{}, false, nil
+	}
+	if len(rp.ManifestID) != len(dedup.ID{}) {
+		return dedup.ID{}, false, errInvalidItemManifest
+	}
+	// Older single-item points may carry only the row-level ID. When a
+	// membership record is available it must identify exactly this item.
+	if items, known := rp.BackedUpItems(); known {
+		if _, contains := items[itemName]; len(items) != 1 || !contains {
+			return dedup.ID{}, false, errInvalidItemManifest
 		}
 	}
-	if len(rp.ManifestID) == 32 {
-		var id dedup.ID
-		copy(id[:], rp.ManifestID)
-		return id, true
-	}
-	return dedup.ID{}, false
+	return dedup.ID(rp.ManifestID), true, nil
 }
 
 // restoreSinglePointChunked restores one item from a dedup restore point.
@@ -7635,9 +7681,8 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 			Metadata:    string(metaBytes),
 			SizeBytes:   int64(sizeBytes),
 		}
-		// Single-item dedup jobs also get the manifest ID promoted onto
-		// the restore-point row so resolveManifestID can hit the fast
-		// path without parsing JSON.
+		// Mirror a single dedup ID onto the row for legacy readers. The
+		// item map stays authoritative for item-specific restore dispatch.
 		if len(itemManifests) == 1 {
 			for _, hexID := range itemManifests {
 				if decoded, err := hex.DecodeString(hexID); err == nil && len(decoded) == 32 {

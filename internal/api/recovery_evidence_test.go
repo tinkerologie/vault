@@ -245,7 +245,8 @@ func TestRecoveryEvidenceAndFindAcrossRESTAndMCP(t *testing.T) {
 
 func TestDeduplicatedEvidenceProbesOnlyRequiredPackMetadata(t *testing.T) {
 	d := testDB(t)
-	var packSize atomic.Int64
+	var headerSize, packSize atomic.Int64
+	headerSize.Store(24)
 	packSize.Store(128)
 	var requests atomic.Int64
 	objectStore := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -257,9 +258,13 @@ func TestDeduplicatedEvidenceProbesOnlyRequiredPackMetadata(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/fixture/_vault/repo.json":
-			w.Header().Set("Content-Length", "24")
+			w.Header().Set("Content-Length", strconv.FormatInt(headerSize.Load(), 10))
 		case "/fixture/_vault/packs/ab/abcdef":
 			size := packSize.Load()
+			if size == -2 {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
 			if size < 0 {
 				w.WriteHeader(http.StatusNotFound)
 				return
@@ -297,15 +302,29 @@ func TestDeduplicatedEvidenceProbesOnlyRequiredPackMetadata(t *testing.T) {
 	srv := NewServer(d, ServerConfig{})
 	key := issueAssistantKey(t, srv, "Dedup reader")
 	for _, tc := range []struct {
-		size     int64
-		artifact runner.Status
-		eligible bool
+		name         string
+		header, size int64
+		changeIndex  string
+		artifact     runner.Status
+		eligible     bool
+		requests     int64
 	}{
-		{128, "confirmed", true},
-		{63, "broken", false},
-		{-1, "missing", false},
+		{"present", 24, 128, "", "confirmed", true, 2},
+		{"truncated", 24, 63, "", "broken", false, 2},
+		{"missing", 24, -1, "", "missing", false, 2},
+		{"denied", 24, -2, "", "unknown", true, 2},
+		{"empty header", 0, 128, "", "broken", false, 1},
+		{"unsafe indexed path", 24, 128, "UPDATE dedup_packs SET path = '_vault/other' WHERE id = 'abcdef'", "broken", false, 1},
+		{"missing index entry", 24, 128, "DELETE FROM dedup_chunks", "missing", false, 1},
 	} {
+		headerSize.Store(tc.header)
 		packSize.Store(tc.size)
+		requests.Store(0)
+		if tc.changeIndex != "" {
+			if _, err := d.Exec(tc.changeIndex); err != nil {
+				t.Fatal(err)
+			}
+		}
 		path := fmt.Sprintf("/api/v1/recovery/restore-points/%d/evidence%s", incremental, evidenceQuery)
 		w := serve(srv, boundaryRequest(http.MethodGet, path, remotePeer, daemonHost, map[string]string{"X-API-Key": key.Key}))
 		if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "fixture-private-") || strings.Contains(w.Body.String(), manifest) ||
@@ -320,11 +339,11 @@ func TestDeduplicatedEvidenceProbesOnlyRequiredPackMetadata(t *testing.T) {
 		if result.Chain.Status != "confirmed" || result.ItemTypeEvidence != "unknown" || result.Membership != "confirmed" || result.EligibleForApproval != tc.eligible ||
 			len(steps) != 2 || steps[0].DataRequired || steps[0].Artifacts != "" || !steps[1].DataRequired || steps[1].Artifacts != tc.artifact ||
 			result.Verification.Status != "failed" || !slices.Contains(result.Warnings, "latest_verification_failed") {
-			t.Errorf("pack size %d produced wrong result: %s", tc.size, w.Body.String())
+			t.Errorf("%s produced wrong result: %s", tc.name, w.Body.String())
 		}
-	}
-	if requests.Load() != 6 {
-		t.Errorf("got %d requests, want two per inspection", requests.Load())
+		if got := requests.Load(); got != tc.requests {
+			t.Errorf("%s sent %d requests, want %d", tc.name, got, tc.requests)
+		}
 	}
 }
 
@@ -491,5 +510,337 @@ func TestRecoveryEvidenceKeepsKnownFailureAfterStorageTimeout(t *testing.T) {
 	if len(result.Chain.Steps) != 2 || result.Chain.Steps[0].Artifacts != "missing" ||
 		result.Chain.Steps[1].Artifacts != "unknown" || result.EligibleForApproval {
 		t.Fatalf("a timeout obscured a proven missing artifact: %s", w.Body.String())
+	}
+}
+
+func TestRecoveryEvidenceResolvesManifestForSelectedItemOnly(t *testing.T) {
+	d := testDB(t)
+	root := t.TempDir()
+	config, err := json.Marshal(map[string]string{"path": root})
+	config = requireFixture(t, config, err)
+	dest, err := d.CreateStorageDestination(db.StorageDestination{Name: "Mixed local backup", Type: "local", Config: string(config), DedupEnabled: true})
+	dest = requireFixture(t, dest, err)
+	job, err := d.CreateJob(db.Job{Name: "Folder and VM", StorageDestID: dest})
+	job = requireFixture(t, job, err)
+	manifest := strings.Repeat("ab", 32)
+	rawManifest, err := hex.DecodeString(manifest)
+	rawManifest = requireFixture(t, rawManifest, err)
+	for relativePath, body := range map[string]string{
+		"job/full/guest/domain.xml": "<domain type='kvm'><name>guest</name><devices><disk type='file' device='disk'><source file='/mnt/user/domains/guest.img'/><target dev='vda'/></disk></devices></domain>",
+		"job/full/guest/vdisk0.img": strings.Repeat("d", 128),
+		"job/full/guest/vdisk2.img": "",
+		"job/full/archive/data.tar": strings.Repeat("\x00", 1024),
+		"_vault/repo.json":          `{"version":1}`,
+		"_vault/packs/ab/abcdef":    strings.Repeat("p", 128),
+	} {
+		file := filepath.Join(root, relativePath)
+		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.UpsertDedupPack(db.DedupPack{ID: "abcdef", StorageID: dest, Path: "_vault/packs/ab/abcdef", SizeBytes: 128, ChunkCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpsertDedupChunk(db.DedupChunk{ChunkID: rawManifest, StorageID: dest, PackID: "abcdef", Offset: 24, Length: 40}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := NewServer(d, ServerConfig{})
+	key := issueAssistantKey(t, srv, "Mixed recovery reader")
+	for _, tc := range []struct {
+		name, query, metadata string
+		artifacts             runner.Status
+		eligible              bool
+	}{
+		{"classic VM beside deduplicated folder", "?item_type=vm&item_name=guest",
+			fmt.Sprintf(`{"item_sizes":{"guest":128,"archive":128},"item_manifests":{"archive":%q},"checksums":{"guest":{"domain.xml":"xml","vdisk0.img":"disk"}}}`, manifest), "confirmed", true},
+		{"VM without a recorded disk inventory", "?item_type=vm&item_name=guest",
+			fmt.Sprintf(`{"item_sizes":{"guest":128,"archive":128},"item_manifests":{"archive":%q}}`, manifest), "unknown", true},
+		{"VM with a missing recorded disk", "?item_type=vm&item_name=guest",
+			fmt.Sprintf(`{"item_sizes":{"guest":128,"archive":128},"item_manifests":{"archive":%q},"checksums":{"guest":{"domain.xml":"xml","vdisk1.img":"disk"}}}`, manifest), "missing", false},
+		{"VM with an empty recorded disk", "?item_type=vm&item_name=guest",
+			`{"item_sizes":{"guest":128},"item_manifests":{},"checksums":{"guest":{"domain.xml":"xml","vdisk2.img":"disk"}}}`, "broken", false},
+		{"VM checkpoint identifies type", "?item_type=vm&item_name=guest",
+			`{"item_sizes":{"guest":128},"item_manifests":{},"vm_checkpoints":{"guest":"checkpoint"}}`, "unknown", true},
+		{"VM checkpoint excludes a folder of the same name", evidenceQuery,
+			`{"item_sizes":{"archive":128},"vm_checkpoints":{"archive":"checkpoint"}}`, "unknown", false},
+		{"imported item type matches", evidenceQuery,
+			`{"item_sizes":{"archive":128},"manifest_items":[{"name":"archive","type":"folder"}]}`, "confirmed", true},
+		{"imported item type differs", evidenceQuery,
+			`{"item_sizes":{"archive":128},"manifest_items":[{"name":"archive","type":"container"}]}`, "unknown", false},
+		{"native recorded type differs", evidenceQuery,
+			`{"item_sizes":{"archive":128},"item_types":{"archive":"container"}}`, "unknown", false},
+		{"deduplicated folder beside classic VM", evidenceQuery,
+			fmt.Sprintf(`{"item_sizes":{"guest":128,"archive":128},"item_manifests":{"archive":%q}}`, manifest), "confirmed", true},
+		{"legacy row-level manifest", evidenceQuery, `{"item_sizes":{"archive":128}}`, "confirmed", true},
+		{"ambiguous row-level manifest", evidenceQuery, `{"item_sizes":{"archive":128,"guest":128}}`, "broken", false},
+		{"invalid selected entry", evidenceQuery, `{"item_sizes":{"archive":128},"item_manifests":{"archive":"invalid"}}`, "broken", false},
+		{"null selected entry", evidenceQuery, `{"item_sizes":{"archive":128},"item_manifests":{"archive":null}}`, "broken", false},
+		{"invalid map", evidenceQuery, `{"item_sizes":{"archive":128},"item_manifests":[]}`, "broken", false},
+		{"empty classic placeholder", "?item_type=vm&item_name=guest",
+			fmt.Sprintf(`{"item_sizes":{"guest":128,"archive":128},"item_manifests":{"archive":%q,"guest":""},"checksums":{"guest":{"domain.xml":"xml","vdisk0.img":"disk"}}}`, manifest), "confirmed", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			point := evidencePoint(t, d, job, 0, "full", "job/full", tc.metadata)
+			if err := d.SetRestorePointManifestID(point, rawManifest); err != nil {
+				t.Fatal(err)
+			}
+			path := fmt.Sprintf("/api/v1/recovery/restore-points/%d/evidence%s", point, tc.query)
+			w := serve(srv, boundaryRequest(http.MethodGet, path, remotePeer, daemonHost, map[string]string{"X-API-Key": key.Key}))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+			}
+			var result runner.RecoveryEvidence
+			if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Chain.Steps) != 1 || result.Chain.Steps[0].Artifacts != tc.artifacts ||
+				result.EligibleForApproval != tc.eligible {
+				t.Errorf("wrong selected item format: %s", w.Body.String())
+			}
+			if (tc.name == "legacy row-level manifest" || tc.name == "deduplicated folder beside classic VM") &&
+				result.ItemTypeEvidence != "unknown" {
+				t.Errorf("selected dedup manifest was treated as a classic archive: %s", w.Body.String())
+			}
+		})
+	}
+}
+
+func TestRecoveryEvidenceRedactsCatalogFailures(t *testing.T) {
+	d := testDB(t)
+	srv := NewServer(d, ServerConfig{})
+	key := issueAssistantKey(t, srv, "Recovery errors")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RemoteAddr = remotePeer
+		srv.router.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+	defer srv.mcp.Close()
+	client := assistantMCPClient{t: t, baseURL: ts.URL + "/api/v1/mcp", key: key.Key}
+	client.initialize()
+
+	const route = "/api/v1/recovery/restore-points"
+	get := func(path string, want int, message string) {
+		t.Helper()
+		w := serve(srv, boundaryRequest(http.MethodGet, path, remotePeer, daemonHost, map[string]string{"X-API-Key": key.Key}))
+		if w.Code != want || !strings.Contains(w.Body.String(), message) || strings.Contains(w.Body.String(), "fixture_private") {
+			t.Errorf("GET %s = %d: %s", path, w.Code, w.Body.String())
+		}
+	}
+	call := func(tool, arguments, message string) {
+		t.Helper()
+		status, response := client.post(fmt.Sprintf(`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":%q,"arguments":%s}}`, tool, arguments))
+		if status != http.StatusOK || !strings.Contains(response, `"isError":true`) || !strings.Contains(response, message) ||
+			strings.Contains(response, "fixture_private") {
+			t.Errorf("MCP %s = %d: %s", tool, status, response)
+		}
+	}
+	get(route+evidenceQuery+"&limit=not-a-number", http.StatusBadRequest, "limit must be")
+	get(route+evidenceQuery+"&before_id=0", http.StatusBadRequest, "before_id must be")
+	get(route+"/bad/evidence"+evidenceQuery, http.StatusBadRequest, "invalid")
+	call("get_recovery_evidence", `{"restore_point_id":0,"item_type":"folder","item_name":"archive"}`, "restore_point_id must be positive")
+	call("get_recovery_evidence", `{"restore_point_id":999,"item_type":"folder","item_name":"archive"}`, "restore point not found")
+	call("find_restore_points", `{"item_type":"folder","item_name":"archive","before_id":-1}`, "before_id must be positive")
+
+	// The authentication tables stay available while both catalog queries fail.
+	if _, err := d.Exec("ALTER TABLE restore_points RENAME TO fixture_private_points"); err != nil {
+		t.Fatal(err)
+	}
+	get(route+evidenceQuery, http.StatusInternalServerError, "could not read recovery evidence")
+	get(route+"/1/evidence"+evidenceQuery, http.StatusInternalServerError, "could not read recovery evidence")
+	call("find_restore_points", `{"item_type":"folder","item_name":"archive"}`, "could not find Restore Points")
+	call("get_recovery_evidence", `{"restore_point_id":1,"item_type":"folder","item_name":"archive"}`, "could not read recovery evidence")
+}
+
+func TestRecoveryEvidenceFallsBackToNamedObjectMetadata(t *testing.T) {
+	d := testDB(t)
+	var responseStatus atomic.Int64
+	responseStatus.Store(http.StatusMultiStatus)
+	var requests atomic.Int64
+	objectStore := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != "PROPFIND" || r.Header.Get("Depth") != "0" ||
+			(r.URL.Path != "/job/full/archive/data.tar" && !strings.HasSuffix(r.URL.Path, ".manifest.json")) {
+			t.Errorf("unexpected storage operation %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		status := int(responseStatus.Load())
+		w.WriteHeader(status)
+		if status == http.StatusMultiStatus {
+			_, _ = w.Write([]byte(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
+				<d:response><d:href>/job/full/archive/data.tar</d:href><d:propstat>
+					<d:prop><d:resourcetype/><d:getcontentlength>1024</d:getcontentlength></d:prop>
+					<d:status>HTTP/1.1 200 OK</d:status>
+				</d:propstat></d:response></d:multistatus>`))
+		}
+	}))
+	defer objectStore.Close()
+	config, err := json.Marshal(map[string]string{"url": objectStore.URL})
+	config = requireFixture(t, config, err)
+	dest, err := d.CreateStorageDestination(db.StorageDestination{Name: "WebDAV fixture", Type: "webdav", Config: string(config)})
+	dest = requireFixture(t, dest, err)
+	job, err := d.CreateJob(db.Job{Name: "Job", StorageDestID: dest})
+	job = requireFixture(t, job, err)
+	point := evidencePoint(t, d, job, 0, "full", "job/full", `{"item_sizes":{"archive":1024},"checksums":{"archive":{"data.tar":"fixture-private-hash"}}}`)
+	srv := NewServer(d, ServerConfig{})
+	key := issueAssistantKey(t, srv, "Named storage reader")
+	for _, tc := range []struct {
+		status   int64
+		artifact runner.Status
+		requests int64
+	}{
+		{http.StatusMultiStatus, "confirmed", 2},
+		{http.StatusNotFound, "missing", 3},
+		{http.StatusForbidden, "unknown", 2},
+	} {
+		responseStatus.Store(tc.status)
+		requests.Store(0)
+		path := fmt.Sprintf("/api/v1/recovery/restore-points/%d/evidence%s", point, evidenceQuery)
+		w := serve(srv, boundaryRequest(http.MethodGet, path, remotePeer, daemonHost, map[string]string{"X-API-Key": key.Key}))
+		if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "fixture-private-hash") || strings.Contains(w.Body.String(), "data.tar") {
+			t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+		}
+		var result runner.RecoveryEvidence
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Chain.Steps) != 1 || result.Chain.Steps[0].Artifacts != tc.artifact || requests.Load() < 1 || requests.Load() > tc.requests {
+			t.Errorf("storage status %d made %d probes: %s", tc.status, requests.Load(), w.Body.String())
+		}
+	}
+}
+
+func TestRecoveryEvidenceUsesSelectedItemsRequiredSteps(t *testing.T) {
+	d := testDB(t)
+	root := t.TempDir()
+	config, err := json.Marshal(map[string]string{"path": root})
+	config = requireFixture(t, config, err)
+	dest, err := d.CreateStorageDestination(db.StorageDestination{Name: "Local recovery", Type: "local", Config: string(config), DedupEnabled: true})
+	dest = requireFixture(t, dest, err)
+	job, err := d.CreateJob(db.Job{Name: "Job", StorageDestID: dest})
+	job = requireFixture(t, job, err)
+	for relativePath, body := range map[string]string{
+		"job/new-item/archive/data.tar": strings.Repeat("\x00", 1024),
+		"_vault/repo.json":              `{"version":1}`,
+		"_vault/packs/ab/abcdef":        strings.Repeat("p", 128),
+	} {
+		file := filepath.Join(root, relativePath)
+		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw := strings.Repeat("ab", 32)
+	id, err := hex.DecodeString(raw)
+	id = requireFixture(t, id, err)
+	if err := d.UpsertDedupPack(db.DedupPack{ID: "abcdef", StorageID: dest, Path: "_vault/packs/ab/abcdef", SizeBytes: 128, ChunkCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpsertDedupChunk(db.DedupChunk{ChunkID: id, StorageID: dest, PackID: "abcdef", Offset: 24, Length: 40}); err != nil {
+		t.Fatal(err)
+	}
+	older := evidencePoint(t, d, job, 0, "full", "job/full", `{"item_sizes":{"another_item":12}}`)
+	newItem := evidencePoint(t, d, job, older, "incremental", "job/new-item", `{"item_sizes":{"archive":1024}}`)
+	metadata := fmt.Sprintf(`{"imported":true,"item_manifests":{"archive":%q}}`, raw)
+	imported := evidencePoint(t, d, job, 0, "incremental", "job/imported", metadata)
+	brokenImport := evidencePoint(t, d, job, 123456, "differential", "job/broken-import", metadata)
+
+	srv := NewServer(d, ServerConfig{})
+	key := issueAssistantKey(t, srv, "Backup Chain reader")
+	for _, tc := range []struct {
+		pointID  int64
+		status   runner.Status
+		eligible bool
+	}{
+		{newItem, "confirmed", true},
+		{imported, "confirmed", true},
+		{brokenImport, "missing", false},
+	} {
+		path := fmt.Sprintf("/api/v1/recovery/restore-points/%d/evidence%s", tc.pointID, evidenceQuery)
+		w := serve(srv, boundaryRequest(http.MethodGet, path, remotePeer, daemonHost, map[string]string{"X-API-Key": key.Key}))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+		}
+		var result runner.RecoveryEvidence
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Chain.Status != tc.status || result.EligibleForApproval != tc.eligible {
+			t.Errorf("wrong Backup Chain evidence: %s", w.Body.String())
+		}
+		steps := result.Chain.Steps
+		if tc.pointID == newItem && (len(steps) != 2 || steps[0].Membership != "missing" || steps[0].DataRequired ||
+			!steps[1].DataRequired || steps[1].Artifacts != "confirmed") {
+			t.Errorf("older point was required for a newly added item: %s", w.Body.String())
+		}
+		if tc.pointID == brokenImport && result.Chain.MissingRestorePointID != 123456 {
+			t.Errorf("known missing imported parent was not surfaced: %s", w.Body.String())
+		}
+	}
+}
+
+func TestClassicRecoveryEvidenceDetectsMissingAndUnusableArtifacts(t *testing.T) {
+	d := testDB(t)
+	root := t.TempDir()
+	config, err := json.Marshal(map[string]string{"path": root})
+	config = requireFixture(t, config, err)
+	dest, err := d.CreateStorageDestination(db.StorageDestination{Name: "Local backup", Type: "local", Config: string(config)})
+	dest = requireFixture(t, dest, err)
+	job, err := d.CreateJob(db.Job{Name: "Job", StorageDestID: dest})
+	job = requireFixture(t, job, err)
+	noDest, err := d.CreateJob(db.Job{Name: "Job with deleted Destination"})
+	noDest = requireFixture(t, noDest, err)
+	cases := []struct {
+		run, itemType string
+		jobID         int64
+		files         map[string]string
+		status        runner.Status
+		pointID       int64
+	}{
+		{run: "job/missing", itemType: "folder", jobID: job, status: "missing"},
+		{run: "job/sidecars-only", itemType: "folder", jobID: job, files: map[string]string{"listing.json": "{}"}, status: "missing"},
+		{run: "job/empty", itemType: "folder", jobID: job, files: map[string]string{"data.tar": ""}, status: "broken"},
+		{run: "job/collision", itemType: "folder", jobID: job, files: map[string]string{"data.tar": "backup", "data.tar.gz": "duplicate"}, status: "broken"},
+		{run: "job/container-no-image", itemType: "container", jobID: job, files: map[string]string{"config.json": "{}"}, status: "missing"},
+		{run: "job/deleted-destination", itemType: "folder", jobID: noDest, status: "missing"},
+	}
+	for i := range cases {
+		tc := &cases[i]
+		dir := filepath.Join(root, tc.run, "archive")
+		if tc.files != nil {
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for name, contents := range tc.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		tc.pointID = evidencePoint(t, d, tc.jobID, 0, "full", tc.run, fmt.Sprintf(`{"item_sizes":{"archive":1024},"item_types":{"archive":%q}}`, tc.itemType))
+	}
+
+	srv := NewServer(d, ServerConfig{})
+	key := issueAssistantKey(t, srv, "Classic storage reader")
+	headers := map[string]string{"X-API-Key": key.Key}
+	for _, tc := range cases {
+		path := fmt.Sprintf("/api/v1/recovery/restore-points/%d/evidence?item_type=%s&item_name=archive", tc.pointID, tc.itemType)
+		w := serve(srv, boundaryRequest(http.MethodGet, path, remotePeer, daemonHost, headers))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+		}
+		var result runner.RecoveryEvidence
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Chain.Steps) != 1 || result.Chain.Steps[0].Artifacts != tc.status || result.EligibleForApproval {
+			t.Errorf("expected %s artifact evidence: %s", tc.status, w.Body.String())
+		}
 	}
 }
