@@ -256,6 +256,9 @@ export const api = {
     return request('GET', `/restore-requests?${params}`)
   },
   getRestoreRequest: (id) => request('GET', `/restore-requests/${encodeURIComponent(id)}`),
+  reviewRestoreRequestMetadata: (id, reviewDigest, passphrase) => request('POST', id, { action: 'review', reviewDigest, passphrase }, {
+    buildRequest: buildRestoreApprovalRequest, timeoutMs: LONG_REQUEST_TIMEOUT_MS,
+  }),
   approveRestoreRequest: (id, reviewDigest, passphrase) => request('POST', id, { reviewDigest, passphrase }, {
     buildRequest: buildRestoreApprovalRequest, timeoutMs: LONG_REQUEST_TIMEOUT_MS,
   }),

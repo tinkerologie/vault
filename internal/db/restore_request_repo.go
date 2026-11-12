@@ -158,3 +158,11 @@ func (d *DB) HasExpiredRestoreRequests(ctx context.Context, now time.Time) (bool
 		WHERE status = 'pending' AND expires_at <= ?)`, now.UnixNano()).Scan(&due)
 	return due, err
 }
+
+// ReviewRestoreRequestMetadata updates the operation only while the exact
+// pending submission is current. It cannot change a claimed request.
+func (d *DB) ReviewRestoreRequestMetadata(ctx context.Context, id string, prior, reviewed json.RawMessage, now time.Time) (bool, error) {
+	return restoreRequestsChanged(d.ExecContext(ctx, `UPDATE restore_requests SET operation = ?
+		WHERE id = ? AND operation = ? AND status = 'pending' AND expires_at > ?`,
+		string(reviewed), id, string(prior), now.UnixNano()))
+}

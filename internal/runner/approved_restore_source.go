@@ -140,3 +140,11 @@ func checkRestoreObjectPassphrase(adapter storage.Adapter, object storage.FileIn
 	}
 	return plain.Close()
 }
+
+func approvedRestorePoints(plan ApprovedRestorePlan) []db.RestorePoint {
+	points := make([]db.RestorePoint, 0, len(plan.Steps))
+	for _, step := range plan.Steps {
+		points = append(points, step.Point)
+	}
+	return points
+}

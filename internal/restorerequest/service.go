@@ -107,6 +107,7 @@ func view(request db.RestoreRequest, operator bool, warning string) (View, error
 		result.ReviewDigest = reviewDigest(request.Operation)
 	} else {
 		result.Item = result.Item.Redacted()
+		result.Container = nil
 		result.JobName = runner.RedactRecoveryLabel(result.JobName)
 		result.RequesterName = runner.RedactRecoveryLabel(result.RequesterName)
 	}
@@ -129,7 +130,7 @@ func (s *Service) Submit(ctx context.Context, principal Principal, input Input) 
 	if _, err := s.assistant(ctx, principal); err != nil {
 		return View{}, err
 	}
-	op, err := Capture(ctx, s.db, input)
+	op, err := s.capture(ctx, input, "")
 	if err != nil {
 		return View{}, err
 	}

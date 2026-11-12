@@ -52,10 +52,10 @@ $action = $_POST['action'] ?? '';
 $id = $_POST['id'] ?? '';
 $digest = $_POST['review_digest'] ?? '';
 $passphrase = $_POST['passphrase'] ?? '';
-if ($action !== 'approve' || !is_string($id) || preg_match('/\A[a-f0-9]{32}\z/', $id) !== 1 ||
+if (!in_array($action, ['approve', 'review'], true) || !is_string($id) || preg_match('/\A[a-f0-9]{32}\z/', $id) !== 1 ||
     !is_string($digest) || preg_match('/\A[a-f0-9]{64}\z/', $digest) !== 1 ||
     !is_string($passphrase) || strlen($passphrase) > 1024) {
-    vault_restore_request_error(400, 'Invalid Restore Request approval');
+    vault_restore_request_error(400, 'Invalid Restore Request action');
 }
 
 $keyPath = '/run/vault-operator/approval.key';
@@ -83,13 +83,13 @@ try {
     ], JSON_THROW_ON_ERROR);
     $envelope = json_encode(['payload' => $payload, 'signature' => hash_hmac('sha256', $payload, $key)], JSON_THROW_ON_ERROR);
 } catch (Throwable $e) {
-    vault_restore_request_error(400, 'Invalid Restore Request approval');
+    vault_restore_request_error(400, 'Invalid Restore Request action');
 }
 unset($key, $passphrase, $payload, $_POST['passphrase']);
 set_time_limit(VAULT_HTTP_TIMEOUT_CONTENTS + 10);
-$result = vault_http_request('POST', '/api/v1/restore-requests/' . $id . '/approve', $envelope);
+$result = vault_http_request('POST', '/api/v1/restore-requests/' . $id . '/' . $action, $envelope);
 if (!$result['ok']) {
-    vault_restore_request_error(($result['errno'] ?? 0) === VAULT_CURLE_OPERATION_TIMEDOUT ? 504 : 502, 'Could not confirm approval with the Vault daemon');
+    vault_restore_request_error(($result['errno'] ?? 0) === VAULT_CURLE_OPERATION_TIMEDOUT ? 504 : 502, 'Could not confirm the Restore Request action with the Vault daemon');
 }
 http_response_code($result['status'] > 0 ? $result['status'] : 502);
 echo $result['body'];

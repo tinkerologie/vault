@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/engine"
 )
 
 var (
@@ -106,6 +107,8 @@ func approvedRestoreFailure(err error) string {
 	switch {
 	case errors.Is(err, ErrReviewedRestoreChanged):
 		return "reviewed_operation_changed"
+	case errors.Is(err, engine.ErrRestoreNeedsApproval):
+		return "manual_restore_required"
 	case errors.Is(err, ErrRestorePassphrase):
 		return "backup_passphrase_rejected"
 	default:
@@ -115,4 +118,13 @@ func approvedRestoreFailure(err error) string {
 
 func changedApprovedRestore(err error) error {
 	return fmt.Errorf("%w: %v", ErrReviewedRestoreChanged, err)
+}
+
+func (approved *ApprovedRestore) revalidateStaged(ctx context.Context) error {
+	approved.checks = append(approved.checks, FolderDataStaged)
+	if err := approved.Revalidate(ctx); err != nil {
+		return err
+	}
+	approved.checks = append(approved.checks, FolderReviewRevalidated)
+	return nil
 }

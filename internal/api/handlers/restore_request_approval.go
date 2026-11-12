@@ -57,3 +57,35 @@ func (h *RestoreRequestHandler) Approve(w http.ResponseWriter, r *http.Request) 
 	}
 	respondRestoreRequest(w, status, result, err)
 }
+
+func (h *RestoreRequestHandler) ReviewMetadata(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if h.proof == nil {
+		respondRestoreRequest(w, 0, nil, restorerequest.ErrPermission)
+		return
+	}
+	var envelope operatorproof.Envelope
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if !decodeRestoreRequest(w, r, &envelope) {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	action, ok := h.proof.Verify(envelope, "review", id)
+	if !ok {
+		respondRestoreRequest(w, 0, nil, restorerequest.ErrPermission)
+		return
+	}
+	result, err := h.service.ReviewMetadata(r.Context(), id, action.ReviewDigest, action.Passphrase)
+	switch {
+	case errors.Is(err, runner.ErrRunnerBusy), errors.Is(err, restorerequest.ErrReviewDigest):
+		respondError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, runner.ErrApprovedStorageUnavailable):
+		respondError(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, runner.ErrRestorePassphrase):
+		respondError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, restorerequest.ErrRequestTerminal):
+		respondError(w, http.StatusGone, err.Error())
+	default:
+		respondRestoreRequest(w, http.StatusOK, result, err)
+	}
+}

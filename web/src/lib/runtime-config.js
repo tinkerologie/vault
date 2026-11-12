@@ -143,7 +143,7 @@ export function buildRestoreApprovalRequest(method, id, { body }) {
   if (!canApproveRestoreRequest()) throw new Error('Open the signed-in Unraid Vault page to approve.')
   const cfg = getRuntimeConfig()
   const form = new URLSearchParams({
-    action: 'approve',
+    action: body.action ?? 'approve',
     id,
     review_digest: body.reviewDigest,
     passphrase: body.passphrase,

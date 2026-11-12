@@ -34,7 +34,7 @@ foreach (explode('/', $route) as $part) {
         $parts[] = $part;
     }
 }
-if (preg_match('#^api/v1/restore-requests/[^/]+/approve$#', implode('/', $parts)) === 1) {
+if (preg_match('#^api/v1/restore-requests/[^/]+/(approve|review)$#', implode('/', $parts)) === 1) {
     vault_proxy_error(403, 'Restore Request approval requires the native Unraid action');
 }
 

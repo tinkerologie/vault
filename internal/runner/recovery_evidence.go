@@ -488,7 +488,7 @@ func (p *evidenceProbe) classic(point db.RestorePoint, item ItemSelection) Statu
 	if item.ItemType == "vm" {
 		return vmDiskEvidence(selected, expected)
 	}
-	if item.ItemType == "folder" {
+	if item.ItemType == "folder" || item.ItemType == "container" {
 		slices.SortFunc(selected, func(a, b storage.FileInfo) int { return cmp.Compare(a.Path, b.Path) })
 		p.classicObjects = selected
 	}
