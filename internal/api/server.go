@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
@@ -32,19 +33,21 @@ type ServerConfig struct {
 	// AllowedOrigins lists the exact browser origins that may call the API
 	// cross-origin. Empty by default; those callers still need the API key.
 	AllowedOrigins []string
+	CredentialDir  string // durable directory containing vault.key
 }
 
 type Server struct {
-	db          *db.DB
-	hub         *ws.Hub
-	runner      *runner.Runner
-	syncer      *replication.Syncer
-	router      *chi.Mux
-	config      ServerConfig
-	schedReload ScheduleReloader
-	runStarted  atomic.Bool
-	mcp         *mcpserver.MCPServer
-	timedReads  sync.WaitGroup
+	db                   *db.DB
+	hub                  *ws.Hub
+	runner               *runner.Runner
+	syncer               *replication.Syncer
+	router               *chi.Mux
+	config               ServerConfig
+	schedReload          ScheduleReloader
+	runStarted           atomic.Bool
+	mcp                  *mcpserver.MCPServer
+	assistantRevocations *db.AssistantRevocations
+	timedReads           sync.WaitGroup
 
 	// nextRunResolver looks up the next scheduled run time for a job.
 	nextRunResolver func(jobID int64) (string, bool)
@@ -102,6 +105,16 @@ func NewServer(database *db.DB, cfg ServerConfig) *Server {
 	}
 	s.runner = runner.New(database, s.hub, cfg.ServerKey)
 	s.mountMgr = mount.NewManager(database, s.hub, cfg.ServerKey)
+	if !cfg.ReadOnly {
+		dir := cfg.CredentialDir
+		if dir == "" && database.Path() != ":memory:" {
+			dir = filepath.Dir(database.Path())
+		}
+		s.assistantRevocations = db.LoadAssistantRevocations(dir)
+		if !s.assistantRevocations.Ready() {
+			log.Print("Warning: assistant key revocation ledger unavailable; refusing Assistant Keys")
+		}
+	}
 	s.router = s.setupRoutes()
 	return s
 }

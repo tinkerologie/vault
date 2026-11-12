@@ -427,3 +427,28 @@ describe('dedup key recovery (issue #451)', () => {
     expect(err.status).toBe(503)
   })
 })
+
+describe('assistant keys', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('lists metadata, issues one key and revokes its ID', async () => {
+    const record = { id: 12, name: 'Recovery advisor', created_at: '2026-11-12T00:00:00Z' }
+    const issued = { ...record, assistant_key: 'fixture-key' }
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(Response.json([record]))
+      .mockResolvedValueOnce(Response.json(issued, { status: 201 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(api.listAssistantKeys()).resolves.toEqual([record])
+    await expect(api.createAssistantKey(record.name)).resolves.toEqual(issued)
+    await expect(api.revokeAssistantKey(record.id)).resolves.toBeNull()
+
+    expect(fetch.mock.calls.map(([path, request]) => [path, request.method])).toEqual([
+      ['/api/v1/settings/assistant-keys', 'GET'],
+      ['/api/v1/settings/assistant-keys', 'POST'],
+      ['/api/v1/settings/assistant-keys/12', 'DELETE'],
+    ])
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ name: record.name })
+  })
+})

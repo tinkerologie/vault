@@ -250,6 +250,9 @@ export const api = {
 
   // API Key
   getAPIKeyStatus: () => request('GET', '/settings/api-key'),
+  listAssistantKeys: () => request('GET', '/settings/assistant-keys'),
+  createAssistantKey: (name) => request('POST', '/settings/assistant-keys', { name }),
+  revokeAssistantKey: (id) => request('DELETE', `/settings/assistant-keys/${id}`),
   generateAPIKey: () => request('POST', '/settings/api-key/generate'),
   revealAPIKey: () => request('GET', '/settings/api-key/key'),
   rotateAPIKey: () => request('POST', '/settings/api-key/rotate'),

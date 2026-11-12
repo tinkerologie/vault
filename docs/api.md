@@ -24,6 +24,8 @@ The access rules apply to every API route, including `/health`.
 | Anyone else, including an MCP bridge or script on another machine         | Send the API key. Vault returns `401` until a key exists                                        |
 | A web page on another origin, on any method and from any address          | Vault returns `403` for origins outside the allowlist. Send the API key from a permitted origin |
 
+Send an [Assistant Key](mcp.md#assistant-keys) in the same header to read the recovery catalog. The key limits access on remote connections, loopback connections and SSH tunnels. Vault returns `401` for an invalid or revoked key and `403` for operations outside its permissions. Connect directly to the daemon. The Unraid plugin proxy refuses Assistant Key headers.
+
 A local request must come from an address on the Vault host. Its `Host` header must contain an IP address, `localhost`, or the Vault host name. A domain that points to `127.0.0.1` does not get local access. This prevents DNS rebinding.
 
 To make a key, open **Settings** → **Security** → **API Access** in Vault through the Unraid web UI. Generate the key. Copy the key to the client. On a headless server or Docker replica, use the CLI.
@@ -141,7 +143,12 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | POST   | `/settings/api-key/generate`      | Generate a new API key (local only, rate-limited)                                                      |
 | POST   | `/settings/api-key/rotate`        | Rotate the existing API key (local only, rate-limited)                                                 |
 | DELETE | `/settings/api-key`               | Revoke the API key, refusing remote clients until a new one exists (local only)                        |
+| GET    | `/settings/assistant-keys`        | List key IDs, names and creation times (daemon mode)                                                   |
+| POST   | `/settings/assistant-keys`        | Create a key with `{"name":"<assistant-name>"}` (daemon mode, local only, rate limited)                |
+| DELETE | `/settings/assistant-keys/{id}`   | Revoke the specified key (daemon mode, local only)                                                     |
 | GET    | `/settings/diagnostics`           | Download a diagnostics ZIP (system info, schema, runs, scheduler, daemon log — credentials redacted)   |
+
+Create returns `201` with `id`, `name`, `created_at` and the one-time `assistant_key` value. The response sets `Cache-Control: no-store`. A duplicate name returns `409`. A database restore in progress also returns `409` to a create or revoke request. Revoke returns `204` and closes that key's MCP sessions.
 
 ## Discovery
 
@@ -248,9 +255,16 @@ Responses never contain a source's API key: `config` shows `••••••�
 
 | Method | Endpoint               | Description                                                                                                      |
 | ------ | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| GET    | `/recovery/catalog`    | List recorded Job and Restore Point metadata (daemon mode, available to Assistant Keys)                          |
 | GET    | `/recovery/plan`       | Get the recovery plan and item status for each step. A step has status `warning` if an item has no restore point |
 | GET    | `/recovery/path-audit` | Find job and item paths that do not exist on this server. The Recover Vault wizard uses this operation           |
 | POST   | `/recovery/path-remap` | Rewrite audited paths to new locations (e.g. after a share or disk was renamed)                                  |
+
+### Recovery catalog
+
+`GET /recovery/catalog` returns the same data as the MCP tool `list_recovery_catalog`. Optional query parameters are `job_id` and `limit_per_job`. The default limit is 200 Restore Points per Job. The maximum is 1000. Each Job has a `truncated` flag.
+
+The response contains Job IDs, names, enabled and replicated flags, Restore Point metadata and recorded item membership. Membership is `recorded` or `unknown`. Chain status describes recorded parent links. Vault reads this catalog from the database. The catalog excludes storage paths, configuration and backup file contents.
 
 ### Restore approvals (`/jobs/{id}/restore`)
 
@@ -271,7 +285,7 @@ The MCP `restore_item` tool has no approval fields. The tool waits for the appro
 
 List the available backups first with `GET /storage/{id}/db-backups`.
 
-If this server has an API key, the restored database keeps that key rather than the one in the backup.
+Restoring a database preserves the configured API Key and the current Assistant Key set. The daemon keeps Assistant Key revocations alongside `vault.key` so an older snapshot cannot reactivate a revoked key.
 
 The response's `locked_credentials` counts restored storage destinations and replication sources sealed with a different `vault.key`. See [Stored credentials and vault.key](guides/disaster-recovery.md#stored-credentials-and-vaultkey).
 

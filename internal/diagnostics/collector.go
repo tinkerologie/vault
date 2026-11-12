@@ -541,7 +541,13 @@ func (c *Collector) collectSettings() SettingsInfo {
 		// elsewhere in the codebase ("false" disables the feature).
 		return v != "false" && v != "0" && v != "off"
 	}
+	var keyCount *int
+	var count int
+	if err := c.db.QueryRow(`SELECT COUNT(*) FROM assistant_keys`).Scan(&count); err == nil {
+		keyCount = &count
+	}
 	return SettingsInfo{
+		AssistantKeyCount:      keyCount,
 		EncryptionConfigured:   hasNonempty("encryption_passphrase") || hasNonempty("encryption_passphrase_sealed"),
 		APIKeyConfigured:       hasNonempty("api_key_hash"),
 		StagingDirOverride:     get("staging_dir_override", ""),

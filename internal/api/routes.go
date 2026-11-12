@@ -45,6 +45,35 @@ func keyByRemoteAddr(r *http.Request) (string, error) {
 // submitted passphrase with bcrypt (issue #564).
 const setEncryptionRatePerMinute = 10
 
+const recoveryCatalogRoute = "/recovery/catalog"
+
+func assistantRouteGuard(router chi.Router) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if requestAccess(r) == accessAssistant {
+				path := chi.RouteContext(r.Context()).RoutePath
+				pattern := router.Find(chi.NewRouteContext(), r.Method, path)
+				switch pattern {
+				case "/mcp", "/mcp/*":
+					switch r.Method {
+					case http.MethodGet, http.MethodPost, http.MethodDelete:
+						next.ServeHTTP(w, r)
+						return
+					}
+				case recoveryCatalogRoute:
+					if r.Method == http.MethodGet {
+						next.ServeHTTP(w, r)
+						return
+					}
+				}
+				respondJSON(w, http.StatusForbidden, map[string]string{"error": "not allowed for this Assistant Key"})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func (s *Server) setupRoutes() *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(QuietRequestLogger)
@@ -75,7 +104,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// Every route below is denied by default; see APIKeyAuth and
 		// TestRouteInventoryDeniesByDefault.
 		r.Use(CrossOriginGuard(allowedOrigins))
-		r.Use(APIKeyAuth(s.db))
+		r.Use(APIKeyAuth(s.db, s.assistantRevocations))
+		r.Use(assistantRouteGuard(r))
 
 		// Settings handler is shared between public and authenticated routes.
 		settingsH := handlers.NewSettingsHandler(s.db, s.config.ServerKey)
@@ -345,15 +375,35 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/recovery/path-remap", recoveryH.PathRemap)
 		}
 
-		// MCP is only available in daemon mode.
+		// Assistant Keys and MCP are available in daemon mode.
 		if !s.config.ReadOnly {
+			r.Get(recoveryCatalogRoute, recoveryH.Catalog)
+			assistantKeys := handlers.NewAssistantKeyHandler(s.db, s.assistantRevocations, storageH.MaintenanceLock(), func() {
+				if s.configChangeHook != nil {
+					s.configChangeHook()
+				}
+			})
+			r.Get("/settings/assistant-keys", assistantKeys.List)
+			r.With(LocalOnly, httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Post("/settings/assistant-keys", assistantKeys.Create)
+			r.With(LocalOnly).Delete("/settings/assistant-keys/{id}", assistantKeys.Revoke)
 			s.mcp = mcpserver.New(s.db, s.runner, intake, mcpserver.Config{
 				Version:  s.config.Version,
 				ReadOnly: s.config.ReadOnly,
 			})
-			mcpHandler := s.mcp.HTTPHandler()
-			r.Handle("/mcp", mcpHandler)
-			r.Handle("/mcp/*", mcpHandler)
+			assistantKeys.SetRevokeHook(s.mcp.CloseAssistant)
+			adminMCP := s.mcp.HTTPHandler()
+			mcpHandler := func(w http.ResponseWriter, r *http.Request) {
+				p := requestPrincipal(r)
+				if p.level == accessAssistant {
+					s.mcp.ServeAssistant(w, r, p.assistantID, func() bool {
+						return s.assistantRevocations.Permits(p.assistantDigest)
+					})
+					return
+				}
+				adminMCP.ServeHTTP(w, r)
+			}
+			r.HandleFunc("/mcp", mcpHandler)
+			r.HandleFunc("/mcp/*", mcpHandler)
 		}
 	})
 

@@ -8,6 +8,7 @@
   import { isEmbedded } from '../lib/runtime-config.js'
   import { isRemoteKeyClient } from '../lib/auth.svelte.js'
   import ApiKeyLocalOnlyNotice from '../components/ApiKeyLocalOnlyNotice.svelte'
+  import AssistantKeys from '../components/AssistantKeys.svelte'
   import { scrollHostTo } from '../lib/embed.js'
   import Toast from '../components/Toast.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
@@ -2051,6 +2052,10 @@
           {/if}
         </div>
       </div>
+
+      {#if !readOnly}
+        <AssistantKeys remote={isRemoteKeyClient()} notify={showToast} />
+      {/if}
 
       {/if}
 

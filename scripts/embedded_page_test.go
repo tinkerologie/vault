@@ -199,3 +199,22 @@ func TestProxyAcceptsAddressesAssignedToThisHost(t *testing.T) {
 		t.Errorf("vault_interface_addresses round trip = %s", got)
 	}
 }
+
+func TestProxyRefusesAssistantKeyBeforeForwarding(t *testing.T) {
+	php, err := exec.LookPath("php")
+	if err != nil {
+		t.Skip("php not installed")
+	}
+	proxy, err := filepath.Abs(filepath.Join("..", "plugin", "pages", "include", "proxy.php"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := fmt.Sprintf(`$_SERVER["HTTP_X_API_KEY"] = "vault_ak_fixture"; register_shutdown_function(function () { echo http_response_code(); }); require %q;`, proxy)
+	out, err := exec.Command(php, "-d", "display_errors=stderr", "-r", code).Output()
+	if err != nil {
+		t.Fatalf("PHP proxy: %v", err)
+	}
+	if string(out) != `{"error":"Assistant Keys must connect directly to Vault"}403` {
+		t.Fatalf("proxy result = %q", out)
+	}
+}

@@ -93,7 +93,11 @@ func getJob(ctx context.Context, q jobSQL, id int64) (Job, error) {
 }
 
 func (d *DB) ListJobs() ([]Job, error) {
-	rows, err := d.Query(selectJob + " ORDER BY name")
+	return d.ListJobsContext(context.Background())
+}
+
+func (d *DB) ListJobsContext(ctx context.Context) ([]Job, error) {
+	rows, err := d.QueryContext(ctx, selectJob+" ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -776,10 +780,14 @@ func (d *DB) CreateRestorePoint(rp RestorePoint) (int64, error) {
 }
 
 func (d *DB) ListRestorePoints(jobID int64) ([]RestorePoint, error) {
-	rows, err := d.Query(
+	return d.ListRestorePointsContext(context.Background(), jobID)
+}
+
+func (d *DB) ListRestorePointsContext(ctx context.Context, jobID int64) ([]RestorePoint, error) {
+	rows, err := d.QueryContext(ctx,
 		`SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
 			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), manifest_id, created_at
-		FROM restore_points WHERE job_id = ? ORDER BY created_at DESC`, jobID,
+		FROM restore_points WHERE job_id = ? ORDER BY created_at DESC, id DESC`, jobID,
 	)
 	if err != nil {
 		return nil, err

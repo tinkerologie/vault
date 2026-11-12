@@ -1,5 +1,4 @@
 <?php
-require_once '/usr/local/emhttp/plugins/vault/include/api.php';
 
 function vault_proxy_error($status, $message) {
     http_response_code($status);
@@ -7,6 +6,13 @@ function vault_proxy_error($status, $message) {
     echo json_encode(['error' => $message]);
     exit;
 }
+
+// The proxy makes keyless local requests on behalf of signed-in operators.
+if (preg_match('/(?:^|,)\s*vault_ak_/', $_SERVER['HTTP_X_API_KEY'] ?? '') === 1) {
+    vault_proxy_error(403, 'Assistant Keys must connect directly to Vault');
+}
+
+require_once '/usr/local/emhttp/plugins/vault/include/api.php';
 
 $path = $_GET['path'] ?? $_POST['path'] ?? '';
 if (!is_string($path) || $path === '' || $path[0] !== '/') {

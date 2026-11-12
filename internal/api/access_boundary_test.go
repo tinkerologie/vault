@@ -598,12 +598,14 @@ func TestSetEncryptionIsRateLimited(t *testing.T) {
 // localOnlyRoutes names the routes wrapped in LocalOnly, as "METHOD path" under
 // /api/v1. TestLocalOnlyRoutes checks each answers remote key holders 403.
 var localOnlyRoutes = map[string]bool{
-	"GET /settings/encryption/passphrase": true,
-	"GET /settings/server-key":            true,
-	"GET /settings/api-key/key":           true,
-	"POST /settings/api-key/generate":     true,
-	"POST /settings/api-key/rotate":       true,
-	"DELETE /settings/api-key":            true,
+	"GET /settings/encryption/passphrase":  true,
+	"GET /settings/server-key":             true,
+	"GET /settings/api-key/key":            true,
+	"POST /settings/api-key/generate":      true,
+	"POST /settings/api-key/rotate":        true,
+	"DELETE /settings/api-key":             true,
+	"POST /settings/assistant-keys":        true,
+	"DELETE /settings/assistant-keys/{id}": true,
 }
 
 // publicRoutes is every route reachable with no credential. Adding to this
@@ -612,7 +614,7 @@ var publicRoutes = map[string]bool{
 	"GET /*": true, // embedded SPA assets, no data
 }
 
-var secretLookingRoute = regexp.MustCompile(`(?i)(passphrase|server-key|api-key|secret|token|credential)`)
+var secretLookingRoute = regexp.MustCompile(`(?i)(passphrase|server-key|api-key|assistant-keys|secret|token|credential)`)
 
 // TestRouteInventoryDeniesByDefault walks the real router so a new route is
 // covered with no change here. Any route not in publicRoutes must refuse a
@@ -628,6 +630,10 @@ func TestRouteInventoryDeniesByDefault(t *testing.T) {
 				setTestAPIKey(t, database)
 			}
 			srv := NewServer(database, ServerConfig{Addr: ":0", ReadOnly: readOnly})
+			var assistantKey string
+			if !readOnly {
+				assistantKey = issueAssistantKey(t, srv, "Route inventory").Key
+			}
 			seen := 0
 			err := chi.Walk(srv.router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 				seen++
@@ -645,6 +651,17 @@ func TestRouteInventoryDeniesByDefault(t *testing.T) {
 				}
 				if w := serve(srv, boundaryRequest(method, path, loopbackPeer, daemonHost, map[string]string{"Origin": attacker})); w.Code != http.StatusForbidden {
 					t.Errorf("%s from a cross-origin page = %d, want 403 (readOnly=%v withKey=%v)", id, w.Code, readOnly, withKey)
+				}
+				scopedAllowed := id == "GET /api/v1/recovery/catalog" ||
+					((route == "/api/v1/mcp" || route == "/api/v1/mcp/*") &&
+						(method == http.MethodGet || method == http.MethodPost || method == http.MethodDelete))
+				if assistantKey != "" && !scopedAllowed {
+					for _, peer := range []string{remotePeer, loopbackPeer} {
+						w := serve(srv, boundaryRequest(method, path, peer, daemonHost, map[string]string{"X-API-Key": assistantKey}))
+						if w.Code != http.StatusForbidden {
+							t.Errorf("%s with an Assistant Key from %s = %d, want 403", id, peer, w.Code)
+						}
+					}
 				}
 				local := method + " " + strings.TrimSuffix(strings.TrimPrefix(route, "/api/v1"), "/")
 				if secretLookingRoute.MatchString(route) && !localOnlyRoutes[local] && !secretRouteNotLocalOnly[local] {
@@ -665,5 +682,6 @@ func TestRouteInventoryDeniesByDefault(t *testing.T) {
 // secretRouteNotLocalOnly lists routes matching secretLookingRoute that don't
 // return a secret.
 var secretRouteNotLocalOnly = map[string]bool{
-	"GET /settings/api-key": true, // reports only whether a key is configured
+	"GET /settings/api-key":        true, // reports only whether a key is configured
+	"GET /settings/assistant-keys": true, // lists only metadata
 }

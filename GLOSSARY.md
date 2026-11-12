@@ -152,6 +152,10 @@ _Avoid_: server key, API key
 A credential authorizing remote access to Vault.
 _Avoid_: server key, backup passphrase
 
+**Assistant Key**:
+A named credential for an assistant. It gives access to the recovery catalog and can be revoked independently.
+_Avoid_: API Key, Server Key
+
 **Credentials Locked**:
 The condition in which saved credentials cannot be opened with the available Server Key.
 _Avoid_: missing credentials, invalid remote password

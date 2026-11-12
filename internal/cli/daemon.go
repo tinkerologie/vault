@@ -481,6 +481,7 @@ var daemonCmd = &cobra.Command{
 		log.Println("Starting Vault daemon...")
 
 		cfg := api.ServerConfig{
+			CredentialDir:  filepath.Dir(keyPath),
 			Addr:           addr,
 			TLSCert:        tlsCert,
 			TLSKey:         tlsKey,

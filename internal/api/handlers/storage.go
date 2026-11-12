@@ -817,6 +817,13 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, fmt.Errorf("preserving API key: %w", err))
 		return
 	}
+	if err := db.CarryAssistantKeys(r.Context(), h.db, testDB); err != nil {
+		_ = testDB.Close()
+		_ = os.Remove(tmpPath)
+		// The database driver may include bound values in errors.
+		respondError(w, http.StatusInternalServerError, "could not preserve Assistant Keys")
+		return
+	}
 	_ = testDB.Close()
 
 	// Replace the current database.

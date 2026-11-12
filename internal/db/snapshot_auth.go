@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -416,4 +417,60 @@ func CarryAPIKey(from, to *DB) error {
 		return err
 	}
 	return to.SetSetting("api_key_sealed", sealed)
+}
+
+// CarryAssistantKeys replaces the candidate key set with the live key set,
+// preserving IDs and their allocation high-water mark across a database swap.
+func CarryAssistantKeys(ctx context.Context, from, to *DB) error {
+	type credential struct {
+		AssistantKey
+		digest string
+	}
+	read := func() ([]credential, error) {
+		rows, err := from.QueryContext(ctx, `SELECT id, name, key_digest, created_at FROM assistant_keys`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var keys []credential
+		for rows.Next() {
+			var key credential
+			if err := rows.Scan(&key.ID, &key.Name, &key.digest, &key.CreatedAt); err != nil {
+				return nil, err
+			}
+			keys = append(keys, key)
+		}
+		return keys, rows.Err()
+	}
+	keys, err := read()
+	if err != nil {
+		return err
+	}
+
+	var highWater int64
+	if err := from.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM sqlite_sequence WHERE name = 'assistant_keys'`).Scan(&highWater); err != nil {
+		return err
+	}
+	tx, err := to.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM assistant_keys`); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO assistant_keys (id, name, key_digest, created_at) VALUES (?, ?, ?, ?)`,
+			key.ID, key.Name, key.digest, key.CreatedAt); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sqlite_sequence (name, seq)
+        SELECT 'assistant_keys', 0 WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'assistant_keys')`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'assistant_keys'`, highWater); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
