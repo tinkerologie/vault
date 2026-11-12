@@ -571,6 +571,14 @@ func TestRestoreRequestReviewsClassicReplayAndReportsMissingOriginal(t *testing.
 		t.Fatalf("review of chain replay: %+v", result)
 	}
 
+	withdraw := func(id string) {
+		t.Helper()
+		w := callRestoreRequest(srv, http.MethodPost, restoreRequestsPath+"/"+id+"/withdraw", remotePeer, key.Key, "")
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"status":"withdrawn"`) {
+			t.Fatalf("withdraw previous review: %d %s", w.Code, w.Body)
+		}
+	}
+	withdraw(result.ID)
 	items, err := d.GetJobItems(job)
 	items = requireFixture(t, items, err)
 	if err := d.UpdateJobItemSettings(items[0].ID, `{"path":"/etc"}`); err != nil {
@@ -580,6 +588,7 @@ func TestRestoreRequestReviewsClassicReplayAndReportsMissingOriginal(t *testing.
 	if result.Eligible || !reflect.DeepEqual(result.Reasons, []string{"original_target_disallowed"}) {
 		t.Errorf("review of disallowed original: %+v", result)
 	}
+	withdraw(result.ID)
 	if err := d.UpdateJobItemSettings(items[0].ID, "{}"); err != nil {
 		t.Fatal(err)
 	}
@@ -903,4 +912,97 @@ func TestRestoreRequestLimitsBoundDurableAcceptanceAcrossRESTAndMCP(t *testing.T
 	if w := post(restarted, 6); w.Code != http.StatusCreated || flushes.Load() != 9 {
 		t.Fatalf("rolling allowance did not renew: %d %s, flushes %d", w.Code, w.Body, flushes.Load())
 	}
+}
+
+func TestRestoreRequestRetriesReuseTheOriginalReviewAfterEvidenceChanges(t *testing.T) {
+	d := testDB(t)
+	flushes := 0
+	srv := NewServer(d, ServerConfig{RestoreRequestFlush: func() error {
+		flushes++
+		return nil
+	}})
+	key := issueAssistantKey(t, srv, "Assistant")
+	grantRestoreRequests(t, srv, key.ID, true)
+	job, point, _, target := requestFolderFixture(t, d)
+	created := submitFolderRequest(t, srv, key.Key, job, point, fmt.Sprintf(`,"destination":%q`, target+"/"))
+	readReview := func() restorerequest.View {
+		t.Helper()
+		w := callRestoreRequest(srv, http.MethodGet, restoreRequestsPath+"/"+created.ID, loopbackPeer, "", "")
+		var review restorerequest.View
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &review) != nil || review.ReviewDigest == "" {
+			t.Fatalf("operator review: %d %s", w.Code, w.Body)
+		}
+		return review
+	}
+	original := readReview()
+
+	verification, err := d.CreateVerifyRun(point, "quick")
+	verification = requireFixture(t, verification, err)
+	if err := d.FinishVerifyRun(verification, "passed", ""); err != nil {
+		t.Fatal(err)
+	}
+	freshEvidence := callRestoreRequest(srv, http.MethodGet, fmt.Sprintf("/api/v1/recovery/restore-points/%d/evidence%s", point, evidenceQuery), remotePeer, key.Key, "")
+	if freshEvidence.Code != http.StatusOK || !strings.Contains(freshEvidence.Body.String(), `"status":"passed"`) {
+		t.Fatalf("updated verification evidence: %d %s", freshEvidence.Code, freshEvidence.Body)
+	}
+
+	body := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"archive","write_mode":"merge","destination":%q}`, job, point, target)
+	w := callRestoreRequest(srv, http.MethodPost, restoreRequestsPath, remotePeer, key.Key, body)
+	var reused restorerequest.View
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &reused) != nil || !reused.Reused ||
+		reused.ID != created.ID || !reused.ExpiresAt.Equal(created.ExpiresAt) || flushes != 1 {
+		t.Fatalf("retry changed request identity, expiry or persistence: %d %s, flushes %d", w.Code, w.Body, flushes)
+	}
+	if after := readReview(); after.ReviewDigest != original.ReviewDigest || after.Verification.Status != original.Verification.Status {
+		t.Fatalf("retry changed the review the operator would approve: before %+v, after %+v", original, after)
+	}
+}
+
+func TestRestoreRequestWithdrawalRetryKeepsWarningAndBoundsFlashWrites(t *testing.T) {
+	d := testDB(t)
+	now := time.Date(2026, 11, 11, 6, 0, 0, 1, time.UTC)
+	flushes := 0
+	flashUnavailable := false
+	cfg := ServerConfig{RestoreRequestClock: func() time.Time { return now }, RestoreRequestFlush: func() error {
+		flushes++
+		if flashUnavailable {
+			return errors.New("fixture private flash error")
+		}
+		return nil
+	}}
+	srv := NewServer(d, cfg)
+	key := issueAssistantKey(t, srv, "Assistant")
+	grantRestoreRequests(t, srv, key.ID, true)
+	job, point, _, _ := requestFolderFixture(t, d)
+	request := submitFolderRequest(t, srv, key.Key, job, point, "")
+	path := restoreRequestsPath + "/" + request.ID
+	check := func(method, suffix string, warned bool, wantFlushes int) {
+		t.Helper()
+		w := callRestoreRequest(srv, method, path+suffix, remotePeer, key.Key, "")
+		var result restorerequest.View
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &result) != nil ||
+			result.Status != "withdrawn" || (result.PersistenceWarning != "") != warned ||
+			strings.Contains(w.Body.String(), "fixture private") || flushes != wantFlushes {
+			t.Fatalf("withdrawal persistence: %d %s, flushes %d, want %d", w.Code, w.Body, flushes, wantFlushes)
+		}
+	}
+	flashUnavailable = true
+	check(http.MethodPost, "/withdraw", true, 2)
+	check(http.MethodPost, "/withdraw", true, 2)
+	check(http.MethodGet, "", true, 2)
+
+	if err := d.Reopen(); err != nil {
+		t.Fatal(err)
+	}
+	srv = NewServer(d, cfg)
+	check(http.MethodPost, "/withdraw", true, 2)
+	now = now.Add(time.Minute)
+	check(http.MethodPost, "/withdraw", true, 3)
+	check(http.MethodPost, "/withdraw", true, 3)
+
+	flashUnavailable = false
+	now = now.Add(time.Minute)
+	check(http.MethodPost, "/withdraw", false, 4)
+	check(http.MethodGet, "", false, 4)
+	check(http.MethodPost, "/withdraw", false, 4)
 }
