@@ -114,12 +114,11 @@ func (r *Runner) backupDatabaseToDest(ctx context.Context, dest db.StorageDestin
 	}
 
 	latestPath := filepath.Join(dbBackupBaseDir, "vault.db.latest"+ext)
-	err = writeDBOnce(adapter, snapshot, latestPath, passphrase)
+	if err := writeDBOnce(adapter, snapshot, latestPath, passphrase); err != nil {
+		return fmt.Errorf("destination %d (%q) latest write: %w", dest.ID, dest.Name, err)
+	}
 	if ctx.Err() == nil {
 		pruneDBBackups(adapter, dest.Name)
-	}
-	if err != nil {
-		return fmt.Errorf("destination %d (%q) latest write: %w", dest.ID, dest.Name, err)
 	}
 	return nil
 }

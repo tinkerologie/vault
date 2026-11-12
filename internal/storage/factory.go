@@ -13,8 +13,8 @@ import (
 type Options struct {
 	VerboseLogging bool
 	DestLabel      string // human destination name for logs/metrics
-	// WebDAVContext bounds requests made by a WebDAV adapter for a single
-	// operation. Nil leaves requests subject to the usual transport timeouts.
+	// WebDAVContext binds the operation context to WebDAV client requests.
+	// Nil leaves requests subject to the usual transport timeouts.
 	WebDAVContext context.Context
 	// Diag, when set, receives retry and transient-error counts from the
 	// retry middleware so a run log can report them (#455).
@@ -59,7 +59,7 @@ func NewAdapterWithOptions(storageType, configJSON string, opts Options) (Adapte
 	if err != nil {
 		return nil, err
 	}
-	if webdav, ok := provider.(*WebDAVAdapter); ok {
+	if webdav, ok := provider.(*WebDAVAdapter); ok && opts.WebDAVContext != nil {
 		webdav.requestContext = opts.WebDAVContext
 	}
 

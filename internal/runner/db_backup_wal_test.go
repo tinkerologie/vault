@@ -226,13 +226,23 @@ func TestDatabaseBackupTimestampedFailurePreservesLatest(t *testing.T) {
 	}
 }
 
-func TestDatabaseBackupLatestFailureKeepsTimestampedSnapshot(t *testing.T) {
+func TestDatabaseBackupLatestFailureSkipsPrune(t *testing.T) {
 	r, database := a458Runner(t)
 	root := t.TempDir()
 	dest := a458LocalDest(t, database, "job destination", root)
 	dir := filepath.Join(root, dbBackupBaseDir)
 	if err := os.MkdirAll(filepath.Join(dir, "vault.db.latest.db"), 0o700); err != nil {
 		t.Fatal(err)
+	}
+	const oldest = "vault.db.2025-11-12T01-00-00.db"
+	if err := os.WriteFile(filepath.Join(dir, oldest), []byte("oldest snapshot"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for i := range dbBackupsKept - 1 {
+		name := "vault.db." + time.Date(2026, 10, 1+i, 1, 0, 0, 0, time.UTC).Format("2006-01-02T15-04-05") + ".db"
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	snapshot := filepath.Join(t.TempDir(), "snapshot.db")
 	if err := database.BackupToFile(t.Context(), snapshot); err != nil {
@@ -245,6 +255,9 @@ func TestDatabaseBackupLatestFailureKeepsTimestampedSnapshot(t *testing.T) {
 	}
 	if got, want := readDatabaseExport(t, filepath.Join(dir, "vault.db."+stamp+".db"), ""), readDatabaseExport(t, snapshot, ""); !bytes.Equal(got, want) {
 		t.Error("timestamped snapshot differs after latest write failed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, oldest)); err != nil {
+		t.Errorf("latest write failure pruned the previous oldest snapshot: %v", err)
 	}
 }
 

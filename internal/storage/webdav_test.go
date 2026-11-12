@@ -18,10 +18,26 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	xwebdav "golang.org/x/net/webdav"
 )
+
+func TestWebDAVRetryBackoffHonorsDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		deadline := webDAVChunkRetryBackoffs[0] / 2
+		ctx, cancel := context.WithTimeout(t.Context(), deadline)
+		defer cancel()
+		start := time.Now()
+		if err := waitWebDAVBackoff(ctx, 1); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("expected deadline during retry backoff, got %v", err)
+		}
+		if elapsed := time.Since(start); elapsed != deadline {
+			t.Errorf("backoff returned after %v, want %v", elapsed, deadline)
+		}
+	})
+}
 
 func TestNewWebDAVAdapter(t *testing.T) {
 	t.Parallel()

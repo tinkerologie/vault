@@ -132,6 +132,19 @@ func isWebDAVRetriable(err error) bool {
 	return code >= http.StatusInternalServerError
 }
 
+func waitWebDAVBackoff(ctx context.Context, attempt int) error {
+	if attempt == 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(webDAVChunkRetryBackoffs[attempt-1])
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	return ctx.Err()
+}
+
 // mkdirAllWithRetry creates dir (and any missing parents) on the WebDAV server,
 // retrying transient failures with the same backoff schedule and classification
 // used for chunk PUTs. This matters for servers like Koofr that return a brief
@@ -144,11 +157,11 @@ func isWebDAVRetriable(err error) bool {
 // that to success), but some servers answer differently — Hetzner storage
 // boxes return 403 — which previously failed an entire multi-hour VM backup
 // on the final metadata write into an already-created directory (issue #242).
-func mkdirAllWithRetry(c *gowebdav.Client, dir string) error {
+func mkdirAllWithRetry(ctx context.Context, c *gowebdav.Client, dir string) error {
 	var lastErr error
 	for attempt := 0; attempt <= len(webDAVChunkRetryBackoffs); attempt++ {
-		if attempt > 0 {
-			time.Sleep(webDAVChunkRetryBackoffs[attempt-1])
+		if err := waitWebDAVBackoff(ctx, attempt); err != nil {
+			return err
 		}
 		lastErr = c.MkdirAll(dir, 0750)
 		if lastErr == nil {
@@ -232,7 +245,7 @@ func NewWebDAVAdapter(cfg WebDAVConfig) (*WebDAVAdapter, error) {
 	cfg = moveURLCredentials(cfg, url)
 	warnPlaintextWebDAV(cfg.URL)
 	cfg.BasePath = strings.Trim(cfg.BasePath, "/")
-	return &WebDAVAdapter{config: cfg}, nil
+	return &WebDAVAdapter{config: cfg, requestContext: context.Background()}, nil
 }
 
 // moveURLCredentials moves credentials embedded in the server URL into the
@@ -654,8 +667,8 @@ func (w *WebDAVAdapter) writeStreamWithLength(c *gowebdav.Client, full string, r
 func (w *WebDAVAdapter) writeBytesWithChunkRetry(c *gowebdav.Client, full string, data []byte) error {
 	var lastErr error
 	for attempt := 0; attempt <= len(webDAVChunkRetryBackoffs); attempt++ {
-		if attempt > 0 {
-			time.Sleep(webDAVChunkRetryBackoffs[attempt-1])
+		if err := waitWebDAVBackoff(w.requestContext, attempt); err != nil {
+			return err
 		}
 		lastErr = w.writeStreamWithLength(c, full, bytes.NewReader(data), int64(len(data)))
 		if lastErr == nil {
@@ -860,7 +873,7 @@ func (w *WebDAVAdapter) Write(p string, reader io.Reader) error {
 	}
 	c := w.client()
 	if dir := path.Dir(full); dir != "/" && dir != "." {
-		if err := mkdirAllWithRetry(c, dir); err != nil {
+		if err := mkdirAllWithRetry(w.requestContext, c, dir); err != nil {
 			return fmt.Errorf("webdav: mkdir %s: %w", dir, err)
 		}
 	}
