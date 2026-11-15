@@ -19,7 +19,9 @@ func (op *Operation) captureVM(ctx context.Context, r *runner.Runner, passphrase
 	}
 
 	review, err := r.InspectVMRestoreRequest(ctx, op.plan, op.Input.Destination, passphrase)
-	if review.Membership == runner.Missing {
+	// A point that records this item as another type cannot hold the VM,
+	// even when the point's item list is unknown.
+	if review.Membership == runner.Missing || review.ItemTypeEvidence == runner.Missing {
 		return Invalid("the selected Restore Point does not contain that VM")
 	}
 	op.Effects = []string{}

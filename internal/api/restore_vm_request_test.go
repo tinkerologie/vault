@@ -272,3 +272,36 @@ func TestVMRestoreRequestTracksOutcomeAfterApproval(t *testing.T) {
 		})
 	}
 }
+
+func TestVMRestoreRequestRefusesPointThatRecordsAnotherItemType(t *testing.T) {
+	database := testDB(t)
+	server := NewServer(database, ServerConfig{})
+	assistant := issueAssistantKey(t, server, "VM recovery assistant")
+	grantRestoreRequests(t, server, assistant.ID, true)
+	dest, err := database.CreateStorageDestination(db.StorageDestination{
+		Name: "Fixture storage", Type: "local", Config: fmt.Sprintf(`{"path":%q}`, t.TempDir()),
+	})
+	job, err := database.CreateJob(db.Job{Name: "VM fixture", StorageDestID: requireFixture(t, dest, err)})
+	job = requireFixture(t, job, err)
+	submit := func(metadata string) *httptest.ResponseRecorder {
+		point := evidencePoint(t, database, job, 0, "full", "private-fixture/typed", metadata)
+		args := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"guest","item_type":"vm","write_mode":"replace"}`, job, point)
+		return callRestoreRequest(server, http.MethodPost, restoreRequestsPath, remotePeer, assistant.Key, args)
+	}
+	// The item list is unknown, but the recorded type contradicts the request.
+	for _, metadata := range []string{
+		`{"item_types":{"guest":"folder"}}`,
+		`{"manifest_items":[{"name":"guest","type":"container"}]}`,
+	} {
+		if response := submit(metadata); response.Code != http.StatusBadRequest {
+			t.Errorf("VM request for a point recording %s: %d %s", metadata, response.Code, response.Body)
+		}
+	}
+	// Without any recorded type the request stays reviewable but ineligible.
+	response := submit(`{"item_types":{"other":"vm"}}`)
+	var unknown restorerequest.View
+	if response.Code != http.StatusCreated || json.Unmarshal(response.Body.Bytes(), &unknown) != nil ||
+		unknown.Eligible || unknown.ItemTypeEvidence != runner.Unknown {
+		t.Errorf("VM request for an untyped point: %d %s", response.Code, response.Body)
+	}
+}
