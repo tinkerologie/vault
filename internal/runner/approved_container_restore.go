@@ -80,7 +80,7 @@ func (r *Runner) reviewContainerRestore(ctx context.Context, plan ApprovedRestor
 	item := work.backupItem(plan.Item.ItemName)
 	id, chunked, err := lookupItemManifest(plan.Point, plan.Item.ItemName)
 	if err != nil {
-		return ContainerRestoreWork{}, err
+		return ContainerRestoreWork{}, fmt.Errorf("reading container item manifest: %w", err)
 	}
 	if chunked {
 		repo, err := OpenDedupRepoWithFallback(r.db, adapter, plan.Destination.ID, r.serverKey)
@@ -96,10 +96,13 @@ func (r *Runner) reviewContainerRestore(ctx context.Context, plan ApprovedRestor
 		}
 		manifest, err := repo.GetManifest(id)
 		if err != nil {
-			return work, err
+			return work, fmt.Errorf("loading container manifest: %w", err)
 		}
 		work.Reviewed, err = handler.ReviewChunkedRestore(ctx, item, manifest, repo, destination, clean)
-		return work, err
+		if err != nil {
+			return work, fmt.Errorf("reviewing chunked container restore: %w", err)
+		}
+		return work, nil
 	}
 
 	remaining := 16 << 20
@@ -125,14 +128,17 @@ func (r *Runner) reviewContainerRestore(ctx context.Context, plan ApprovedRestor
 			}
 			*target, err = readApprovedRestoreMetadata(adapter, object, passphrase, min(engine.ContainerReviewMetadataLimit, int64(remaining)))
 			if err != nil {
-				return work, err
+				return work, fmt.Errorf("reading container metadata %s: %w", name, err)
 			}
 			remaining -= len(*target)
 		}
 		steps = append(steps, metadata)
 	}
 	work.Reviewed, err = handler.ReviewClassicRestore(ctx, item, steps, destination, clean)
-	return work, err
+	if err != nil {
+		return work, fmt.Errorf("reviewing container restore: %w", err)
+	}
+	return work, nil
 }
 
 func readApprovedRestoreMetadata(adapter storage.Adapter, file storage.FileInfo, passphrase string, limit int64) ([]byte, error) {
@@ -157,7 +163,7 @@ func readApprovedRestoreMetadata(adapter storage.Adapter, file storage.FileInfo,
 		return nil, ErrRestorePassphrase
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening container metadata %s: %w", name, err)
 	}
 	defer closePlain() //nolint:errcheck
 	return bounded.ReadAll(plain, limit)
@@ -181,12 +187,12 @@ func (work ContainerRestoreWork) restore(ctx context.Context, r *Runner, approve
 	}
 	stage, cleanup, err := tempdir.CreateRestoreDirOutside(stageOverride, targets...)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating container restore staging: %w", err)
 	}
 	defer cleanup()
 	handler, err := engine.NewContainerHandler()
 	if err != nil {
-		return err
+		return fmt.Errorf("opening container restore host: %w", err)
 	}
 	ctx = engine.WithRestoreTrust(ctx, engine.RestoreTrust{ArtifactTrusted: work.Trusted})
 	ctx = engine.WithReviewedContainerRestore(ctx, work.Reviewed, func(check string) {
@@ -206,11 +212,11 @@ func (work ContainerRestoreWork) restore(ctx context.Context, r *Runner, approve
 	if chunked {
 		prepared, err := r.stageApprovedContainerChunks(ctx, plan, id, passphrase, stage, reporter)
 		if err != nil {
-			return err
+			return fmt.Errorf("staging container chunks: %w", err)
 		}
 		defer prepared.cache.Close()
 		if err := approved.revalidateStaged(ctx); err != nil {
-			return err
+			return fmt.Errorf("revalidating staged container restore: %w", err)
 		}
 		return approvedContainerResult(handler.RestorePreparedChunked(ctx, item, prepared, id, work.Destination, progress))
 	}
@@ -219,7 +225,7 @@ func (work ContainerRestoreWork) restore(ctx context.Context, r *Runner, approve
 	for i, step := range plan.Steps {
 		dir := filepath.Join(stage, fmt.Sprintf("step-%d", i))
 		if err := os.Mkdir(dir, 0o700); err != nil {
-			return err
+			return fmt.Errorf("creating container step staging: %w", err)
 		}
 		if len(step.Objects) == 0 {
 			return ErrReviewedRestoreChanged
@@ -244,10 +250,10 @@ func (work ContainerRestoreWork) restore(ctx context.Context, r *Runner, approve
 		}
 	}
 	if err := approved.revalidateStaged(ctx); err != nil {
-		return err
+		return fmt.Errorf("revalidating staged container restore: %w", err)
 	}
 	if err := approvedContainerResult(handler.Restore(ctx, item, source, progress)); err != nil {
-		return err
+		return fmt.Errorf("restoring container %s: %w", plan.Item.ItemName, err)
 	}
 	if len(stepDirs) > 1 {
 		r.pruneVouchedContainerChain(approvedRestorePoints(plan), plan.Item.ItemName, stepDirs, source,
@@ -299,7 +305,7 @@ func (r *Runner) stageApprovedContainerChunks(ctx context.Context, plan Approved
 	}
 	cache, err := os.CreateTemp(stage, "chunks-")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating container chunk cache: %w", err)
 	}
 	prepared := &stagedContainerRepository{
 		preparedFolderChunks: preparedFolderChunks{cache: cache, chunks: make(map[dedup.ID]stagedChunk)},
@@ -325,7 +331,7 @@ func (r *Runner) stageApprovedContainerChunks(ctx context.Context, plan Approved
 					return approvedRestoreStorageError(ctx, err)
 				}
 				if _, err := cache.Write(data); err != nil {
-					return err
+					return fmt.Errorf("caching container chunk: %w", err)
 				}
 				chunk = stagedChunk{offset: offset, length: len(data)}
 				prepared.chunks[chunkID] = chunk

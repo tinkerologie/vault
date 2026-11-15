@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -28,7 +29,10 @@ func (h *VMHandler) ReviewVMRestore(ctx context.Context, name, destination strin
 	stopAbort := h.abortLibvirtOnCancel(ctx, 0)
 	defer stopAbort()
 	reviewed, digest, err := h.reviewVMRestore(ctx, name, destination, xmlData, metadata, artifacts, key)
-	return reviewed.Effects, digest, err
+	if err != nil {
+		return VMRestoreEffects{}, "", fmt.Errorf("reviewing VM %s restore: %w", name, err)
+	}
+	return reviewed.Effects, digest, nil
 }
 
 type vmFileIdentity struct {
@@ -49,12 +53,12 @@ func (h *VMHandler) reviewVMRestore(ctx context.Context, name, destination strin
 	}
 	reviewed, err := buildApprovedVMPlan(name, destination, xmlData, metadata, artifacts)
 	if err != nil {
-		return vmApprovedPlan{}, "", err
+		return vmApprovedPlan{}, "", fmt.Errorf("building VM restore plan: %w", err)
 	}
 	effects := &reviewed.Effects
 	uuid, err := vmUUIDBytes(effects.UUID)
 	if err != nil {
-		return vmApprovedPlan{}, "", err
+		return vmApprovedPlan{}, "", fmt.Errorf("parsing VM UUID: %w", err)
 	}
 	current, err := h.conn.DomainLookupByName(name)
 	var previousXML []string
@@ -294,17 +298,17 @@ func readApprovedVMSource(dir string) (xmlData, metadata []byte, artifacts []str
 	}{{"domain.xml", &xmlData}, {vmMetadataFileName, &metadata}} {
 		body, err := os.Open(filepath.Join(dir, file.name)) // #nosec G304 -- fixed names in private Runner staging
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, fmt.Errorf("opening staged VM %s: %w", file.name, err)
 		}
 		*file.dest, err = bounded.ReadAll(body, VMRestoreSidecarLimit)
 		_ = body.Close()
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, fmt.Errorf("reading staged VM %s: %w", file.name, err)
 		}
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("listing staged VM files: %w", err)
 	}
 	for _, entry := range entries {
 		if entry.Type().IsRegular() {

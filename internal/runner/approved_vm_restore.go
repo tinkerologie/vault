@@ -142,7 +142,7 @@ func (r *Runner) inspectVMRestore(ctx context.Context, result *VMRestoreReview, 
 		return nil
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("loading VM restore storage destination: %w", err)
 	}
 	plan.Destination = dest
 	adapter, err := storage.NewAdapterWithOptions(dest.Type, dest.Config, storage.Options{
@@ -159,7 +159,7 @@ func (r *Runner) inspectVMRestore(ctx context.Context, result *VMRestoreReview, 
 	mac := hmac.New(sha256.New, r.serverKey)
 	encoder := json.NewEncoder(mac)
 	if err := encoder.Encode([]any{"vault-reviewed-vm-source-v1", dest.ID, dest.Type, dest.Config, plan.Job.Compression}); err != nil {
-		return err
+		return fmt.Errorf("digesting VM restore source: %w", err)
 	}
 	xmlData, metadata, files, err := r.captureVMRestoreChain(ctx, result, &work, adapter, passphrase, encoder)
 	if err != nil || result.Chain.Status != Confirmed {
@@ -177,7 +177,7 @@ func (r *Runner) inspectVMRestore(ctx context.Context, result *VMRestoreReview, 
 		return nil
 	}
 	if err := encoder.Encode(expectation); err != nil {
-		return err
+		return fmt.Errorf("digesting VM restore expectation: %w", err)
 	}
 	work.expectation = expectation
 	work.stagingAvoid = append(work.stagingAvoid, effects.Destination)
@@ -218,7 +218,7 @@ func (r *Runner) captureVMRestoreChain(ctx context.Context, result *VMRestoreRev
 		member := Membership(point, plan.Item)
 		typeEvidence := recordedItemType(point, plan.Item)
 		if err := digest.Encode(point); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, fmt.Errorf("digesting VM chain Restore Point %d: %w", point.ID, err)
 		}
 
 		entry := RecoveryChainStep{RestorePointID: point.ID, BackupType: IdentifyPoint(point).BackupType,
@@ -245,7 +245,7 @@ func (r *Runner) captureVMRestoreChain(ctx context.Context, result *VMRestoreRev
 				mac := hmac.New(sha256.New, r.serverKey)
 				dest := plan.Destination
 				if err := json.NewEncoder(mac).Encode([]any{"vault-reviewed-vm-source-anchor-v1", dest.ID, dest.Type, dest.Config, plan.Job.Compression, point, files}); err != nil {
-					return nil, nil, nil, err
+					return nil, nil, nil, fmt.Errorf("anchoring VM restore source: %w", err)
 				}
 				result.SourceAnchor = hex.EncodeToString(mac.Sum(nil))
 			}
@@ -290,10 +290,10 @@ func (r *Runner) captureVMRestoreChain(ctx context.Context, result *VMRestoreRev
 			}
 			fingerprint, err := vmSidecarDigest(r.serverKey, xmlData, metadata)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, fmt.Errorf("fingerprinting VM sidecars: %w", err)
 			}
 			if err := digest.Encode([]any{files, fingerprint}); err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, fmt.Errorf("digesting VM chain objects: %w", err)
 			}
 			plan.Steps = append(plan.Steps, ApprovedRestoreStep{Point: point, Objects: files})
 			work.steps = append(work.steps, vmReviewedStep{evidence: evidence, digest: fingerprint})
@@ -330,7 +330,7 @@ func (r *Runner) captureVMRestoreChain(ctx context.Context, result *VMRestoreRev
 			break
 		}
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, fmt.Errorf("loading parent Restore Point %d: %w", parentID, err)
 		}
 		if parent.JobID != point.JobID || parent.SourceID != point.SourceID {
 			result.Chain.Status, result.Chain.Reason = Broken, "foreign_parent"
@@ -501,7 +501,7 @@ func vmObjectNames(files []storage.FileInfo) []string {
 func vmSidecarDigest(key, xmlData, metadata []byte) (string, error) {
 	mac := hmac.New(sha256.New, key)
 	if err := json.NewEncoder(mac).Encode([]any{"vault-reviewed-vm-sidecars-v1", xmlData, metadata}); err != nil {
-		return "", err
+		return "", fmt.Errorf("digesting VM sidecars: %w", err)
 	}
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
@@ -511,7 +511,7 @@ func (work vmRestoreWork) restore(ctx context.Context, r *Runner, approved *Appr
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
 	stage, cleanup, err := tempdir.CreateRestoreDirOutside(stageOverride, work.stagingAvoid...)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating VM restore staging: %w", err)
 	}
 	defer cleanup()
 
@@ -519,7 +519,7 @@ func (work vmRestoreWork) restore(ctx context.Context, r *Runner, approved *Appr
 	for i, step := range plan.Steps {
 		dir := filepath.Join(stage, fmt.Sprintf("step-%d", i))
 		if err := os.Mkdir(dir, 0o700); err != nil {
-			return err
+			return fmt.Errorf("creating VM restore step staging: %w", err)
 		}
 		start, end := i*40/len(plan.Steps), (i+1)*40/len(plan.Steps)
 		if err := r.stageRestorePointItemFrom(ctx, plan.Job, plan.Destination, step.Point, plan.Item.ItemName, dir, passphrase, start, end, reporter, step.Objects); err != nil {
@@ -542,26 +542,26 @@ func (work vmRestoreWork) restore(ctx context.Context, r *Runner, approved *Appr
 		r.reportRestoreProgress(reporter, 40, "Assembling reviewed VM disk layers")
 		disks, err := work.stagedChainDisks(dirs)
 		if err != nil {
-			return err
+			return fmt.Errorf("planning VM disk layers: %w", err)
 		}
 		assembled := filepath.Join(stage, "assembled")
 		if err := os.Mkdir(assembled, 0o700); err != nil {
-			return err
+			return fmt.Errorf("creating VM disk assembly staging: %w", err)
 		}
 		if err := flattenVMChainDisks(ctx, source, assembled, disks); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return err
+			return fmt.Errorf("assembling VM disk layers: %w", err)
 		}
 		source = assembled
 	}
 	if err := approved.revalidateStaged(ctx); err != nil {
-		return err
+		return fmt.Errorf("revalidating staged VM restore: %w", err)
 	}
 	handler, err := r.openVMRestoreHost()
 	if err != nil {
-		return err
+		return fmt.Errorf("opening VM restore host: %w", err)
 	}
 	defer handler.Close()
 
@@ -577,17 +577,20 @@ func (work vmRestoreWork) restore(ctx context.Context, r *Runner, approved *Appr
 	if errors.Is(err, engine.ErrVMReviewedEffectsChanged) {
 		return ErrReviewedRestoreChanged
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("restoring VM %s: %w", plan.Item.ItemName, err)
+	}
+	return nil
 }
 
 func (step vmReviewedStep) checkStaged(dir string, key []byte) error {
 	xmlData, err := readStagedVMReviewSidecar(dir, "domain.xml")
 	if err != nil {
-		return err
+		return fmt.Errorf("reading staged VM domain: %w", err)
 	}
 	metadata, err := readStagedVMReviewSidecar(dir, "vm_meta.json")
 	if err != nil {
-		return err
+		return fmt.Errorf("reading staged VM metadata: %w", err)
 	}
 	digest, err := vmSidecarDigest(key, xmlData, metadata)
 	if err != nil || !hmac.Equal([]byte(digest), []byte(step.digest)) {
@@ -607,7 +610,7 @@ func (step vmReviewedStep) checkStaged(dir string, key []byte) error {
 func readStagedVMReviewSidecar(dir, name string) ([]byte, error) {
 	f, err := os.Open(filepath.Join(dir, name)) // #nosec G304 -- fixed names in private restore staging
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening staged VM sidecar %s: %w", name, err)
 	}
 	defer f.Close()
 	return bounded.ReadAll(f, engine.VMRestoreSidecarLimit)
