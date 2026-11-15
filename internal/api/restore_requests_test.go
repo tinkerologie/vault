@@ -339,7 +339,7 @@ func TestRestoreRequestMCPChecksEveryCallsKeyAndOwner(t *testing.T) {
 	}
 }
 
-func TestRestoreRequestUsesPointEvidenceAndValidatesFolderOnlyInputs(t *testing.T) {
+func TestRestoreRequestUsesPointEvidenceAndValidatesFolderInputs(t *testing.T) {
 	d := testDB(t)
 	srv := NewServer(d, ServerConfig{})
 	key := issueAssistantKey(t, srv, "Assistant")
@@ -370,7 +370,7 @@ func TestRestoreRequestUsesPointEvidenceAndValidatesFolderOnlyInputs(t *testing.
 	}{
 		{job, wrongType, ""}, {job, knownAbsent, ""}, {job + 999, point, ""},
 		{job, point, `,"destination":"/etc"`}, {job, point, `,"file_paths":["archive"]`},
-		{job, point, `,"passphrase":"fixture-secret"`}, {job, point, `,"item_type":"vm"`},
+		{job, point, `,"passphrase":"fixture-secret"`},
 	} {
 		body := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"archive","write_mode":"replace"%s}`, tc.job, tc.point, tc.extra)
 		w := callRestoreRequest(srv, http.MethodPost, restoreRequestsPath, remotePeer, key.Key, body)
@@ -381,6 +381,17 @@ func TestRestoreRequestUsesPointEvidenceAndValidatesFolderOnlyInputs(t *testing.
 	alt := submitFolderRequest(t, srv, key.Key, job, point, `,"destination":"/mnt/user/recovery/fixture"`)
 	if alt.TargetChoice != "alternate" || alt.ResolvedPath != "" || alt.EffectiveWriteMode != "merge" || !alt.Eligible {
 		t.Errorf("alternate merge: %+v", alt)
+	}
+	// VM requests are in scope (#645). This point has no VM evidence, so the
+	// request is reviewable but cannot be approved.
+	if w := callRestoreRequest(srv, http.MethodPost, restoreRequestsPath+"/"+alt.ID+"/withdraw", remotePeer, key.Key, ""); w.Code != http.StatusOK {
+		t.Fatalf("withdraw to free a slot: %d %s", w.Code, w.Body)
+	}
+	vmBody := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"archive","item_type":"vm","write_mode":"replace"}`, job, point)
+	w := callRestoreRequest(srv, http.MethodPost, restoreRequestsPath, remotePeer, key.Key, vmBody)
+	var vm restorerequest.View
+	if w.Code != http.StatusCreated || json.Unmarshal(w.Body.Bytes(), &vm) != nil || vm.Eligible || len(vm.Reasons) == 0 {
+		t.Errorf("VM request without VM evidence: %d %s", w.Code, w.Body)
 	}
 	replica := NewServer(d, ServerConfig{ReadOnly: true})
 	if err := replica.ReconcileRestoreRequests(t.Context()); err != nil {
