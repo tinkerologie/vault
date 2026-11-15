@@ -473,3 +473,74 @@ func TestContainerRequestUsesRecordedDedupImageDigest(t *testing.T) {
 		})
 	}
 }
+
+func TestMetadataReviewRefusesStaleUnneededAndTerminalRequests(t *testing.T) {
+	database := testDB(t)
+	proof := [32]byte{25}
+	server := NewServer(database, ServerConfig{OperatorProof: operatorproof.New(proof, nil)})
+	assistant := issueAssistantKey(t, server, "Container assistant")
+	grantRestoreRequests(t, server, assistant.ID, true)
+	job, point, dir := containerRequestFixture(t, database, "", false)
+	const secret = "metadata review fixture passphrase"
+	configPath := filepath.Join(dir, "config.json")
+	config, err := os.ReadFile(configPath)
+	config = requireFixture(t, config, err)
+	var ciphertext bytes.Buffer
+	recipient, err := age.NewScryptRecipient(secret)
+	requireFixture(t, recipient, err).SetWorkFactor(10)
+	writer, err := age.Encrypt(&ciphertext, recipient)
+	writer = requireFixture(t, writer, err)
+	if _, err := writer.Write(config); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeContainerFixture(t, configPath+".age", ciphertext.Bytes())
+	if err := os.Remove(configPath); err != nil {
+		t.Fatal(err)
+	}
+	path, locked := submitContainerFixture(t, server, assistant.Key, job, point, "")
+	if !locked.RequiresMetadataReview {
+		t.Fatalf("fixture did not need a metadata review: %+v", locked)
+	}
+
+	stale := locked
+	stale.ReviewDigest = strings.Repeat("0", len(locked.ReviewDigest))
+	unknown := restorerequest.View{ID: strings.Repeat("a", 32), ReviewDigest: locked.ReviewDigest}
+	for _, tc := range []struct {
+		name       string
+		path       string
+		review     restorerequest.View
+		passphrase string
+		want       int
+	}{
+		{"stale digest", path, stale, secret, http.StatusConflict},
+		{"missing passphrase", path, locked, "", http.StatusBadRequest},
+		{"unknown request", restoreRequestsPath + "/" + unknown.ID, unknown, secret, http.StatusNotFound},
+	} {
+		response := postContainerAction(t, server, proof, tc.path, "review", tc.review, tc.passphrase, fmt.Sprint(len(tc.name)%10))
+		if response.Code != tc.want || strings.Contains(response.Body.String(), secret) {
+			t.Errorf("%s: %d, want %d: %s", tc.name, response.Code, tc.want, response.Body)
+		}
+	}
+
+	folderJob, folderPoint, _, _ := requestFolderFixture(t, database)
+	folder := submitFolderRequest(t, server, assistant.Key, folderJob, folderPoint, "")
+	folderPath := restoreRequestsPath + "/" + folder.ID
+	var folderReview restorerequest.View
+	response := callRestoreRequest(server, http.MethodGet, folderPath, loopbackPeer, "", "")
+	if json.Unmarshal(response.Body.Bytes(), &folderReview) != nil || folderReview.ReviewDigest == "" {
+		t.Fatalf("folder review: %d %s", response.Code, response.Body)
+	}
+	if response := postContainerAction(t, server, proof, folderPath, "review", folderReview, secret, "a"); response.Code != http.StatusBadRequest {
+		t.Errorf("unneeded metadata review: %d %s", response.Code, response.Body)
+	}
+
+	if response := callRestoreRequest(server, http.MethodPost, path+"/withdraw", remotePeer, assistant.Key, ""); response.Code != http.StatusOK {
+		t.Fatalf("withdraw: %d %s", response.Code, response.Body)
+	}
+	if response := postContainerAction(t, server, proof, path, "review", locked, secret, "b"); response.Code != http.StatusGone {
+		t.Errorf("review after withdrawal: %d %s", response.Code, response.Body)
+	}
+}

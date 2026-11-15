@@ -273,7 +273,7 @@ func TestVMRestoreRequestTracksOutcomeAfterApproval(t *testing.T) {
 	}
 }
 
-func TestVMRestoreRequestRefusesPointThatRecordsAnotherItemType(t *testing.T) {
+func TestVMRestoreRequestRefusesInvalidInputsAndContradictedItemTypes(t *testing.T) {
 	database := testDB(t)
 	server := NewServer(database, ServerConfig{})
 	assistant := issueAssistantKey(t, server, "VM recovery assistant")
@@ -287,6 +287,13 @@ func TestVMRestoreRequestRefusesPointThatRecordsAnotherItemType(t *testing.T) {
 		point := evidencePoint(t, database, job, 0, "full", "private-fixture/typed", metadata)
 		args := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"guest","item_type":"vm","write_mode":"replace"}`, job, point)
 		return callRestoreRequest(server, http.MethodPost, restoreRequestsPath, remotePeer, assistant.Key, args)
+	}
+	typed := evidencePoint(t, database, job, 0, "full", "private-fixture/vm", `{"item_sizes":{"guest":20},"item_types":{"guest":"vm"}}`)
+	for _, extra := range []string{`"write_mode":"merge"`, `"write_mode":"replace","destination":"/etc"`} {
+		args := fmt.Sprintf(`{"job_id":%d,"restore_point_id":%d,"item_name":"guest","item_type":"vm",%s}`, job, typed, extra)
+		if response := callRestoreRequest(server, http.MethodPost, restoreRequestsPath, remotePeer, assistant.Key, args); response.Code != http.StatusBadRequest {
+			t.Errorf("VM request with %s: %d %s", extra, response.Code, response.Body)
+		}
 	}
 	// The item list is unknown, but the recorded type contradicts the request.
 	for _, metadata := range []string{
