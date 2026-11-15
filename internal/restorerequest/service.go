@@ -186,7 +186,7 @@ func (s *Service) submit(ctx context.Context, principal Principal, input Input, 
 		}
 	}
 
-	pending, err := s.db.PendingRestoreRequest(ctx, owner, s.now(), string(submission), string(rawSubmission))
+	pending, err := s.pendingSubmission(ctx, owner, string(submission), string(rawSubmission))
 	if err == nil {
 		result, err := view(pending, false, "")
 		if err == nil && legacyMCP && result.ManualRestoreRequired {
@@ -238,6 +238,18 @@ func (s *Service) submit(ctx context.Context, principal Principal, input Input, 
 	}
 	result.Reused = !created
 	return result, err
+}
+
+// pendingSubmission finds a reusable pending request. It holds the maintenance
+// lock like every other ledger access so a database replacement in progress
+// refuses the call instead of answering from the database being replaced.
+// The lock is released before capture, which may probe storage.
+func (s *Service) pendingSubmission(ctx context.Context, owner, submission, rawSubmission string) (db.RestoreRequest, error) {
+	if !s.maintenance.TryLock() {
+		return db.RestoreRequest{}, ErrBusy
+	}
+	defer s.maintenance.Unlock()
+	return s.db.PendingRestoreRequest(ctx, owner, s.now(), submission, rawSubmission)
 }
 
 // Canonicalize the default folder type and the spelling of an alternate
