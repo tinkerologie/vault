@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/runner"
@@ -20,7 +21,7 @@ func (s *Service) ReviewMetadata(ctx context.Context, id, digest, passphrase str
 	}
 	current, err := s.db.GetRestoreRequest(ctx, id, "")
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("loading Restore Request for metadata review: %w", err)
 	}
 	if digest != reviewDigest(current.Operation) {
 		return View{}, ErrReviewDigest
@@ -30,7 +31,7 @@ func (s *Service) ReviewMetadata(ctx context.Context, id, digest, passphrase str
 	}
 	var stored Operation
 	if err := json.Unmarshal(current.Operation, &stored); err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("decoding reviewed Restore Request operation: %w", err)
 	}
 	if !stored.RequiresMetadataReview {
 		return View{}, Invalid("this Restore Request does not need a metadata review")
@@ -46,11 +47,11 @@ func (s *Service) ReviewMetadata(ctx context.Context, id, digest, passphrase str
 		return View{}, ErrReviewDigest
 	}
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("recapturing Restore Request after metadata review: %w", err)
 	}
 	data, err := json.Marshal(fresh)
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("encoding reviewed Restore Request operation: %w", err)
 	}
 	if !s.maintenance.TryLock() {
 		return View{}, ErrBusy
@@ -58,7 +59,7 @@ func (s *Service) ReviewMetadata(ctx context.Context, id, digest, passphrase str
 	defer s.maintenance.Unlock()
 	changed, err := s.db.ReviewRestoreRequestMetadata(ctx, id, current.Operation, data, s.now().UTC())
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("saving metadata review: %w", err)
 	}
 	if !changed {
 		return View{}, ErrReviewDigest

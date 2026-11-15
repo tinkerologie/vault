@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/tinkerologie/vault/internal/engine"
@@ -48,7 +49,7 @@ func (op *Operation) captureContainer(ctx context.Context, r *runner.Runner, pas
 	op.plan.Work = work
 	fingerprint, err := json.Marshal([]any{work.Reviewed, work.Trusted})
 	if err != nil {
-		return err
+		return fmt.Errorf("fingerprinting reviewed container work: %w", err)
 	}
 	op.WorkDigest = reviewDigest(fingerprint)
 	op.Effects = []string{"stop_existing_container", "remove_existing_container", "recreate_container"}

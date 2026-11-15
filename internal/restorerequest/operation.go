@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -79,14 +80,14 @@ func (s *Service) capture(ctx context.Context, in Input, passphrase string) (Ope
 	}
 	point, err := database.GetRestorePointContext(ctx, in.RestorePointID)
 	if err != nil {
-		return Operation{}, err
+		return Operation{}, fmt.Errorf("loading Restore Point %d: %w", in.RestorePointID, err)
 	}
 	if point.JobID != in.JobID {
 		return Operation{}, Invalid("Restore Point does not belong to the selected Job")
 	}
 	job, err := database.GetJobContext(ctx, in.JobID)
 	if err != nil {
-		return Operation{}, err
+		return Operation{}, fmt.Errorf("loading Job %d: %w", in.JobID, err)
 	}
 	op := Operation{
 		Input: in, StorageDestID: job.StorageDestID,
@@ -105,7 +106,7 @@ func (s *Service) capture(ctx context.Context, in Input, passphrase string) (Ope
 		op.RequiresMetadataReview = true
 		op.Reasons = append(op.Reasons, "backup_metadata_locked")
 	} else if err != nil {
-		return Operation{}, err
+		return Operation{}, fmt.Errorf("capturing %s Restore Request: %w", itemType, err)
 	}
 	op.RequiresPassphrase = op.RequiresPassphrase || op.RequiresMetadataReview || op.plan.RequiresPassphrase()
 	op.Eligible = len(op.Reasons) == 0
@@ -117,7 +118,7 @@ func (s *Service) captureClassic(ctx context.Context, op *Operation, passphrase 
 	itemType := op.Item.ItemType
 	evidence, err := recovery.GetEvidence(ctx, database, op.plan.Point.ID, op.Item)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading Restore Point evidence: %w", err)
 	}
 	if evidence.Membership == runner.Missing || evidence.ItemTypeEvidence == runner.Missing {
 		return Invalid("the selected Restore Point does not contain that Backup Item")
@@ -154,7 +155,7 @@ func (s *Service) captureClassic(ctx context.Context, op *Operation, passphrase 
 	}
 	op.SourceDigest, err = captureSource(ctx, database, op)
 	if err != nil {
-		return err
+		return fmt.Errorf("binding Restore Request source: %w", err)
 	}
 	switch itemType {
 	case "folder":
@@ -184,11 +185,11 @@ func captureSource(ctx context.Context, database *db.DB, op *Operation) (string,
 	case errors.Is(err, db.ErrNotFound):
 		op.Reasons = appendOnce(op.Reasons, "required_data_unusable")
 	case err != nil:
-		return "", err
+		return "", fmt.Errorf("loading storage destination: %w", err)
 	}
 	op.plan.Destination = dest
 	if err := encoder.Encode([]any{dest.ID, dest.Type, dest.Config, dest.DedupEnabled, op.plan.Job.Compression}); err != nil {
-		return "", err
+		return "", fmt.Errorf("digesting storage destination: %w", err)
 	}
 	for _, step := range op.Chain.Steps {
 		point, err := database.GetRestorePointContext(ctx, step.RestorePointID)
@@ -197,10 +198,10 @@ func captureSource(ctx context.Context, database *db.DB, op *Operation) (string,
 			continue
 		}
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("loading chain Restore Point %d: %w", step.RestorePointID, err)
 		}
 		if err := encoder.Encode([]any{point, step.ClassicObjects}); err != nil {
-			return "", err
+			return "", fmt.Errorf("digesting chain Restore Point %d: %w", step.RestorePointID, err)
 		}
 		if step.DataRequired {
 			op.plan.Steps = append(op.plan.Steps, runner.ApprovedRestoreStep{Point: point, Objects: step.ClassicObjects})
@@ -218,7 +219,7 @@ func (op *Operation) captureTarget(ctx context.Context, database *db.DB) error {
 	if original {
 		items, err := database.GetJobItemsContext(ctx, op.Input.JobID)
 		if err != nil {
-			return err
+			return fmt.Errorf("loading Job items: %w", err)
 		}
 		for _, item := range items {
 			if item.ItemType == "folder" && item.ItemName == op.Item.ItemName {

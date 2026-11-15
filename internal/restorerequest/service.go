@@ -143,7 +143,10 @@ func (s *Service) assistant(ctx context.Context, principal Principal) (db.Assist
 	if errors.Is(err, db.ErrNotFound) || (err == nil && !s.revocations.PermitsRestoreRequests(key)) {
 		return db.AssistantKey{}, ErrPermission
 	}
-	return key, err
+	if err != nil {
+		return db.AssistantKey{}, fmt.Errorf("loading Assistant Key: %w", err)
+	}
+	return key, nil
 }
 
 func (s *Service) Submit(ctx context.Context, principal Principal, input Input) (View, error) {
@@ -176,13 +179,13 @@ func (s *Service) submit(ctx context.Context, principal Principal, input Input, 
 	normalized := normalizedSubmission(input)
 	submission, err := json.Marshal(normalized)
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("encoding Restore Request submission: %w", err)
 	}
 	rawSubmission := submission
 	if input != normalized {
 		rawSubmission, err = json.Marshal(input)
 		if err != nil {
-			return View{}, err
+			return View{}, fmt.Errorf("encoding Restore Request submission: %w", err)
 		}
 	}
 
@@ -196,19 +199,19 @@ func (s *Service) submit(ctx context.Context, principal Principal, input Input, 
 		return result, err
 	}
 	if !errors.Is(err, db.ErrNotFound) {
-		return View{}, err
+		return View{}, fmt.Errorf("finding a reusable Restore Request: %w", err)
 	}
 
 	op, err := s.capture(ctx, normalized, "")
 	if err != nil {
-		return View{}, err
+		return View{}, err // capture adds its own context
 	}
 	if legacyMCP && op.ManualRestoreRequired {
 		return View{}, manualContainerRestore
 	}
 	operation, err := json.Marshal(op)
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("encoding Restore Request operation: %w", err)
 	}
 	if !s.maintenance.TryLock() {
 		return View{}, ErrBusy
@@ -219,7 +222,7 @@ func (s *Service) submit(ctx context.Context, principal Principal, input Input, 
 		return View{}, err
 	}
 	var id [16]byte
-	rand.Read(id[:])
+	rand.Read(id[:]) // crypto/rand.Read never returns an error since Go 1.24.
 	now := s.now().UTC()
 	request := db.RestoreRequest{
 		ID: hex.EncodeToString(id[:]), OwnerDigest: owner,
@@ -230,7 +233,7 @@ func (s *Service) submit(ctx context.Context, principal Principal, input Input, 
 		return View{}, ErrLimit
 	}
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("admitting Restore Request: %w", err)
 	}
 	result, err := view(record, false, s.flushChange(created))
 	if err == nil && legacyMCP && result.ManualRestoreRequired {
@@ -278,7 +281,7 @@ func (s *Service) Get(ctx context.Context, principal Principal, id string) (View
 	}
 	request, err := s.db.GetRestoreRequest(ctx, id, principal.AssistantDigest)
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("loading Restore Request: %w", err)
 	}
 	warning := ""
 	if request.Status == "pending" && !request.ExpiresAt.After(s.now()) {
@@ -288,7 +291,7 @@ func (s *Service) Get(ctx context.Context, principal Principal, id string) (View
 		}
 		request, err = s.db.GetRestoreRequest(ctx, id, principal.AssistantDigest)
 		if err != nil {
-			return View{}, err
+			return View{}, fmt.Errorf("reloading expired Restore Request: %w", err)
 		}
 	}
 	return s.view(ctx, request, principal.AssistantDigest == "", warning)
@@ -310,7 +313,7 @@ func (s *Service) Withdraw(ctx context.Context, principal Principal, id string) 
 	}
 	request, err := s.db.GetRestoreRequest(ctx, id, principal.AssistantDigest)
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("loading Restore Request to withdraw: %w", err)
 	}
 	now := s.now().UTC()
 	if request.Status != "pending" {
@@ -331,7 +334,7 @@ func (s *Service) Withdraw(ctx context.Context, principal Principal, id string) 
 		changed, err = s.db.WithdrawRestoreRequest(ctx, id, principal.AssistantDigest, now, flushAfter)
 	}
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("updating withdrawn Restore Request: %w", err)
 	}
 	warning := ""
 	if expiring {
@@ -341,7 +344,7 @@ func (s *Service) Withdraw(ctx context.Context, principal Principal, id string) 
 	}
 	request, err = s.db.GetRestoreRequest(ctx, id, principal.AssistantDigest)
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("reloading withdrawn Restore Request: %w", err)
 	}
 	return s.view(ctx, request, false, warning)
 }
@@ -398,7 +401,7 @@ func (s *Service) List(ctx context.Context, principal Principal, statuses []stri
 	}
 	requests, err := s.db.ListRestoreRequests(ctx, statuses, before, limit+1)
 	if err != nil {
-		return Page{}, err
+		return Page{}, fmt.Errorf("listing Restore Requests: %w", err)
 	}
 	count := min(len(requests), limit)
 	result := Page{Requests: make([]View, 0, count), PersistenceWarning: warning}
@@ -427,8 +430,11 @@ func (s *Service) expire(ctx context.Context, id string) (string, error) {
 	now := s.now().UTC()
 	if id == "" {
 		due, err := s.db.HasExpiredRestoreRequests(ctx, now)
-		if err != nil || !due {
-			return "", err
+		if err != nil {
+			return "", fmt.Errorf("checking for expired Restore Requests: %w", err)
+		}
+		if !due {
+			return "", nil
 		}
 	}
 	if !s.maintenance.TryLock() {
@@ -437,7 +443,7 @@ func (s *Service) expire(ctx context.Context, id string) (string, error) {
 	defer s.maintenance.Unlock()
 	changed, err := s.db.ExpireRestoreRequests(ctx, now, id)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("expiring Restore Requests: %w", err)
 	}
 	return s.flushChange(changed), nil
 }

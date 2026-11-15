@@ -2,6 +2,7 @@ package restorerequest
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/safepath"
@@ -30,8 +31,11 @@ func (op *Operation) captureVM(ctx context.Context, r *runner.Runner, passphrase
 	op.Chain, op.Verification = review.Chain, review.Verification
 	op.Reasons, op.Warnings = review.Reasons, review.Warnings
 	op.SourceAnchor, op.SourceDigest = review.SourceAnchor, review.SourceDigest
-	if err != nil || review.Effects == nil {
-		return err
+	if err != nil {
+		return fmt.Errorf("reviewing VM restore: %w", err)
+	}
+	if review.Effects == nil {
+		return nil
 	}
 
 	effects := review.Effects

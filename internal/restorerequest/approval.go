@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -36,7 +37,7 @@ func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase 
 	}
 	current, err := s.db.GetRestoreRequest(ctx, id, "")
 	if err != nil {
-		return View{}, false, err
+		return View{}, false, fmt.Errorf("loading Restore Request for approval: %w", err)
 	}
 	if digest != reviewDigest(current.Operation) {
 		return View{}, false, ErrReviewDigest
@@ -59,12 +60,15 @@ func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase 
 		if !current.ExpiresAt.After(now) {
 			changed, err := s.db.ExpireRestoreRequests(ctx, now, id)
 			s.flushChange(changed)
-			return approved, err
+			if err != nil {
+				return approved, fmt.Errorf("expiring Restore Request at approval: %w", err)
+			}
+			return approved, nil
 		}
 
 		var stored Operation
 		if err := json.Unmarshal(current.Operation, &stored); err != nil {
-			return approved, err
+			return approved, fmt.Errorf("decoding reviewed Restore Request operation: %w", err)
 		}
 		if !stored.Eligible {
 			if stored.RequiresMetadataReview {
@@ -94,7 +98,7 @@ func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase 
 			}
 			data, err := json.Marshal(fresh)
 			if err != nil {
-				return Operation{}, err
+				return Operation{}, fmt.Errorf("encoding revalidated Restore Request operation: %w", err)
 			}
 			if !fresh.Eligible || reviewDigest(data) != digest {
 				return Operation{}, runner.ErrReviewedRestoreChanged
@@ -111,7 +115,10 @@ func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase 
 		if errors.Is(err, runner.ErrReviewedRestoreChanged) {
 			changed, err := s.db.InvalidateRestoreRequest(ctx, id, s.now().UTC())
 			s.flushChange(changed)
-			return approved, err
+			if err != nil {
+				return approved, fmt.Errorf("invalidating changed Restore Request: %w", err)
+			}
+			return approved, nil
 		}
 		if err != nil {
 			return approved, err
@@ -120,8 +127,11 @@ func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase 
 		run := db.JobRun{JobID: fresh.plan.Job.ID, BackupType: fresh.plan.Point.BackupType, ItemsTotal: 1, RunType: "restore", Status: "running"}
 		approval := db.RestoreApproval{RequestID: id, OperatorName: operator, ReviewDigest: digest}
 		run.ID, err = s.db.ClaimRestoreApproval(ctx, approval, run, s.now)
-		if err != nil || run.ID == 0 {
-			return approved, err
+		if err != nil {
+			return approved, fmt.Errorf("claiming Restore Request approval: %w", err)
+		}
+		if run.ID == 0 {
+			return approved, nil
 		}
 		if s.flush != nil {
 			if err := s.flush(); err != nil {
@@ -151,17 +161,17 @@ func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase 
 
 	current, err = s.db.GetRestoreRequest(ctx, id, "")
 	if err != nil {
-		return View{}, false, err
+		return View{}, false, fmt.Errorf("reloading approved Restore Request: %w", err)
 	}
 	if current.Status == "pending" && !current.ExpiresAt.After(s.now()) {
 		changed, err := s.db.ExpireRestoreRequests(ctx, s.now().UTC(), id)
 		if err != nil {
-			return View{}, false, err
+			return View{}, false, fmt.Errorf("expiring unapproved Restore Request: %w", err)
 		}
 		s.flushChange(changed)
 		current, err = s.db.GetRestoreRequest(ctx, id, "")
 		if err != nil {
-			return View{}, false, err
+			return View{}, false, fmt.Errorf("reloading expired Restore Request: %w", err)
 		}
 	}
 	return s.approvalOutcome(ctx, current, runID != 0)
@@ -211,7 +221,7 @@ func (s *Service) view(ctx context.Context, request db.RestoreRequest, operator 
 		return result, nil
 	}
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("loading Restore Request approval: %w", err)
 	}
 	result.RunID = approval.RunID
 	if operator {
@@ -222,7 +232,7 @@ func (s *Service) view(ctx context.Context, request db.RestoreRequest, operator 
 		return result, nil // The Job was explicitly deleted; the audit link survives.
 	}
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("loading approved Restore Run: %w", err)
 	}
 	runView := RunView{
 		Status: run.Status, ItemsTotal: run.ItemsTotal, ItemsDone: run.ItemsDone, ItemsFailed: run.ItemsFailed,
