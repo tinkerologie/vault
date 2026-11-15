@@ -44,8 +44,16 @@ func registerRestoreRequests(server *mcp.Server, service *restorerequest.Service
 func restoreRequestToolError(err error) error {
 	var validation restorerequest.Invalid
 	switch {
-	case err == nil, errors.As(err, &validation), errors.Is(err, restorerequest.ErrPermission), errors.Is(err, restorerequest.ErrBusy), errors.Is(err, restorerequest.ErrLimit):
-		return err
+	case err == nil:
+		return nil
+	case errors.As(err, &validation):
+		return validation
+	case errors.Is(err, restorerequest.ErrPermission):
+		return restorerequest.ErrPermission
+	case errors.Is(err, restorerequest.ErrBusy):
+		return restorerequest.ErrBusy
+	case errors.Is(err, restorerequest.ErrLimit):
+		return restorerequest.ErrLimit
 	case errors.Is(err, db.ErrNotFound):
 		return errors.New("restore request or selected restore point not found")
 	default:

@@ -38,16 +38,16 @@ func (h *RestoreRequestHandler) Approve(w http.ResponseWriter, r *http.Request) 
 	status := http.StatusOK
 	switch {
 	case errors.Is(err, runner.ErrRunnerBusy), errors.Is(err, runner.ErrRunnerDraining):
-		respondError(w, http.StatusConflict, err.Error())
+		respondError(w, http.StatusConflict, sentinelMessage(err, runner.ErrRunnerBusy, runner.ErrRunnerDraining))
 		return
 	case errors.Is(err, restorerequest.ErrApprovalPersistence), errors.Is(err, runner.ErrApprovedStorageUnavailable):
-		respondError(w, http.StatusServiceUnavailable, err.Error())
+		respondError(w, http.StatusServiceUnavailable, sentinelMessage(err, restorerequest.ErrApprovalPersistence, runner.ErrApprovedStorageUnavailable))
 		return
 	case errors.Is(err, runner.ErrRestorePassphrase):
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondError(w, http.StatusBadRequest, runner.ErrRestorePassphrase.Error())
 		return
 	case errors.Is(err, restorerequest.ErrReviewDigest):
-		respondError(w, http.StatusConflict, err.Error())
+		respondError(w, http.StatusConflict, restorerequest.ErrReviewDigest.Error())
 		return
 	case errors.Is(err, restorerequest.ErrRequestTerminal):
 		respondJSON(w, http.StatusGone, result)
@@ -78,14 +78,24 @@ func (h *RestoreRequestHandler) ReviewMetadata(w http.ResponseWriter, r *http.Re
 	result, err := h.service.ReviewMetadata(r.Context(), id, action.ReviewDigest, action.Passphrase)
 	switch {
 	case errors.Is(err, runner.ErrRunnerBusy), errors.Is(err, restorerequest.ErrReviewDigest):
-		respondError(w, http.StatusConflict, err.Error())
+		respondError(w, http.StatusConflict, sentinelMessage(err, runner.ErrRunnerBusy, restorerequest.ErrReviewDigest))
 	case errors.Is(err, runner.ErrApprovedStorageUnavailable):
-		respondError(w, http.StatusServiceUnavailable, err.Error())
+		respondError(w, http.StatusServiceUnavailable, runner.ErrApprovedStorageUnavailable.Error())
 	case errors.Is(err, runner.ErrRestorePassphrase):
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondError(w, http.StatusBadRequest, runner.ErrRestorePassphrase.Error())
 	case errors.Is(err, restorerequest.ErrRequestTerminal):
-		respondError(w, http.StatusGone, err.Error())
+		respondError(w, http.StatusGone, restorerequest.ErrRequestTerminal.Error())
 	default:
 		respondRestoreRequest(w, http.StatusOK, result, err)
 	}
+}
+
+// sentinelMessage returns the fixed text of the matching sentinel, so context
+// added while the error was wrapped never reaches the client. The caller has
+// already matched one of them; the last one is the fallback.
+func sentinelMessage(err error, first, second error) string {
+	if errors.Is(err, first) {
+		return first.Error()
+	}
+	return second.Error()
 }

@@ -91,13 +91,13 @@ func respondRestoreRequest(w http.ResponseWriter, status int, result any, err er
 	case errors.As(err, &validation):
 		respondError(w, http.StatusBadRequest, validation.Error())
 	case errors.Is(err, restorerequest.ErrPermission):
-		respondError(w, http.StatusForbidden, err.Error())
+		respondError(w, http.StatusForbidden, restorerequest.ErrPermission.Error())
 	case errors.Is(err, db.ErrNotFound):
 		respondError(w, http.StatusNotFound, "Restore Request or selected Restore Point not found")
 	case errors.Is(err, restorerequest.ErrLimit):
-		respondError(w, http.StatusTooManyRequests, err.Error())
+		respondError(w, http.StatusTooManyRequests, restorerequest.ErrLimit.Error())
 	case errors.Is(err, restorerequest.ErrBusy):
-		respondError(w, http.StatusConflict, err.Error())
+		respondError(w, http.StatusConflict, restorerequest.ErrBusy.Error())
 	default:
 		respondInternalError(w, err)
 	}
