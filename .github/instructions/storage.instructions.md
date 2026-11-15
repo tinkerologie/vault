@@ -14,6 +14,8 @@ affected provider before editing.
 - Verify supported providers in the factory switch and implementation files.
 - Preserve the factory middleware order: provider, throttle, retry, metrics,
   logging.
+  The one exception is a bounded metadata probe (`MetadataProbeLimit`), which
+  skips throttle and retry but keeps metrics and logging.
 - `WriteFrom` must reopen a fresh source stream for each retry.
 - `ReadRange` must release underlying handles and honor its EOF/range contract.
 - Return `ErrUsageNotSupported` when a provider cannot report free/total space.

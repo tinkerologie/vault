@@ -67,8 +67,17 @@ func NewAdapterWithOptions(storageType, configJSON string, opts Options) (Adapte
 		webdav.requestContext = opts.WebDAVContext
 	}
 
+	label := opts.DestLabel
+	if label == "" {
+		label = storageType
+	}
 	if opts.MetadataProbeLimit > 0 {
-		return newMetadataAdapter(provider, opts), nil
+		// A bounded metadata probe dispatches on the concrete provider, so
+		// it sits directly on it. It skips throttle (its reads are a few
+		// bounded listings and sidecars) and retry (a probe failure must
+		// surface as "storage unavailable" within its deadline), but keeps
+		// metrics and logging outermost like every other adapter.
+		return withLogging(withMetrics(newMetadataAdapter(provider, opts), label), label, opts.VerboseLogging), nil
 	}
 
 	a := provider
@@ -93,10 +102,6 @@ func NewAdapterWithOptions(storageType, configJSON string, opts Options) (Adapte
 	// retry wraps throttle so a throttled-then-failed attempt is re-issued.
 	a = withRetry(a, DefaultRetryPolicy, opts.Diag)
 	// metrics + logging outermost record the logical op and final outcome.
-	label := opts.DestLabel
-	if label == "" {
-		label = storageType
-	}
 	a = withMetrics(a, label)
 	a = withLogging(a, label, opts.VerboseLogging)
 	return a, nil

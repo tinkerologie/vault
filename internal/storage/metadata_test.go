@@ -167,3 +167,26 @@ func TestBoundedMetadataNFSUsesReadOnlyMount(t *testing.T) {
 		t.Fatalf("metadata mount was not closed: mounted %q, unmounted %q", mounted, unmounted)
 	}
 }
+
+func TestBoundedMetadataKeepsMetricsAndLogging(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	a, err := NewAdapterWithOptions("local", fmt.Sprintf(`{"path":%q}`, root), Options{MetadataProbeLimit: 2, DestLabel: "probe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer CloseAdapter(a)
+	if _, ok := a.(*loggingAdapter); !ok {
+		t.Fatalf("metadata probe adapter is not logged: %T", a)
+	}
+	if _, err := a.List("missing"); !IsNotExist(err) {
+		t.Fatalf("missing directory: %v", err)
+	}
+	metrics, ok := a.(*loggingAdapter).inner.(*metricsAdapter)
+	if !ok {
+		t.Fatalf("metadata probe adapter has no metrics: %T", a.(*loggingAdapter).inner)
+	}
+	if stat := metrics.Snapshot()["list"]; stat.Calls != 1 || stat.Errors != 1 {
+		t.Fatalf("list metrics: %+v", stat)
+	}
+}
