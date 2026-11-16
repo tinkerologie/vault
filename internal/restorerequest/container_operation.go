@@ -38,7 +38,7 @@ func (op *Operation) captureContainer(ctx context.Context, r *runner.Runner, pas
 	effects := work.Reviewed.Effects
 	for i := range op.Chain.Steps {
 		step := &op.Chain.Steps[i]
-		if step.Artifacts == runner.Unknown && len(step.ClassicObjects) != 0 {
+		if step.ContainerVolumesUnresolved(op.Item.ItemType) {
 			step.Artifacts = runner.Confirmed
 		}
 	}

@@ -141,8 +141,7 @@ func (s *Service) captureClassic(ctx context.Context, op *Operation, passphrase 
 		// A classic Docker listing can give us the exact storage objects
 		// without knowing which mounts they cover. Resolve that here from
 		// the saved configuration before the request can be approved.
-		checkContainerVolumes := itemType == "container" && step.Artifacts == runner.Unknown && len(step.ClassicObjects) != 0
-		if step.DataRequired && step.Artifacts != runner.Confirmed && !checkContainerVolumes {
+		if step.DataRequired && step.Artifacts != runner.Confirmed && !step.ContainerVolumesUnresolved(itemType) {
 			op.Reasons = appendOnce(op.Reasons, "required_data_unusable")
 		}
 		if step.DataRequired && step.ItemTypeEvidence != runner.Confirmed {

@@ -37,6 +37,13 @@ type RecoveryEvidence struct {
 	Warnings            []string             `json:"warnings"`
 }
 
+// ContainerVolumesUnresolved reports a classic Docker step whose exact storage
+// objects are known but whose volume coverage must still be resolved from the
+// saved container configuration before the step's artifacts are confirmed.
+func (step RecoveryChainStep) ContainerVolumesUnresolved(itemType string) bool {
+	return itemType == "container" && step.Artifacts == Unknown && len(step.ClassicObjects) != 0
+}
+
 type RecoveryChain struct {
 	Status                Status              `json:"status"`
 	Reason                string              `json:"reason,omitempty"`
@@ -199,8 +206,7 @@ func InspectRecovery(ctx context.Context, database *db.DB, id int64, item ItemSe
 	result.EligibleForApproval = result.Membership == Confirmed && result.Chain.Status == Confirmed
 	hasUnknownArtifacts := false
 	for _, step := range result.Chain.Steps {
-		if step.Artifacts == Broken || step.Artifacts == Missing ||
-			(item.ItemType == "container" && step.Artifacts == Unknown && len(step.ClassicObjects) != 0) {
+		if step.Artifacts == Broken || step.Artifacts == Missing || step.ContainerVolumesUnresolved(item.ItemType) {
 			result.EligibleForApproval = false
 		}
 		hasUnknownArtifacts = hasUnknownArtifacts || step.Artifacts == Unknown
