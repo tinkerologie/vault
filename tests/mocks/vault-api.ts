@@ -459,8 +459,10 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
         body: JSON.stringify({
           ok: true,
           checks: [
-            { id: 'storage', label: 'Storage reachable', status: 'ok', detail: 'Destination storage is online and accessible' },
-            { id: 'archive', label: 'Archive present', status: 'ok', detail: 'Backup archive verified' },
+            { id: 'reachable', label: 'Storage reachable', status: 'ok', detail: 'Main Storage' },
+            { id: 'present', label: 'Backup present on storage', status: 'ok', detail: '1 file' },
+            { id: 'decryptable', label: 'Decryptable', status: 'skip', detail: 'backup is not encrypted' },
+            { id: 'space', label: 'Restore staging space', status: 'ok', detail: '40.0 GiB free at /mnt/cache (cache). Estimated space for the selected items is 20.0 GiB.' },
           ],
         }),
       });

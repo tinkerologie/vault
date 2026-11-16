@@ -306,7 +306,7 @@ test.describe('Typed confirmation: RestoreWizard details (#525)', () => {
     await flow.arrive(page);
     await (await flow.opener(page, 'mouse')).click();
     await page.keyboard.press('Escape');
-    await expect(page.getByText('Free space').first()).toBeVisible();
+    await expect(page.getByText('backup files were not found on storage', { exact: false })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Restore anyway' })).toBeFocused();
     await expect(page.getByRole('button', { name: /^Start Restore/ })).toBeDisabled();
   });

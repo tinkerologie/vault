@@ -327,7 +327,9 @@ The Restore wizard supports selecting items that belong to different backup jobs
    - If an item has no restore point, remove it from the selection or return to the item selector.
 3. **Step 3 (Restore Options & Pre-Flight):**
    - Examine each source job separately. Each job has its own destination overrides, passphrase, clean destination option, and file selection.
-   - Vault does pre-flight checks for each job before the restore starts.
+   - Vault runs preflight checks for each restore unit before it starts. For staged restores, it estimates space on the configured staging override, an eligible cache pool, or system temp and names the path it probed.
+   - The estimate uses the recorded sizes of the selected Backup Items when available. If any size is missing, Vault labels the estimate as the whole backup size. Incremental and differential estimates exclude earlier Backup Chain steps.
+   - Vault checks an explicit filesystem destination separately and names the existing parent it probed if the path is missing. Original-location targets, including VM disk and NVRAM paths resolved from the saved domain XML at restore time, remain unchecked. Low-space warnings are advisory.
    - Vault restores the jobs in sequence. Vault shows progress and logs for each job.
    - Two container approvals are off by default. Vault stops and lists the requested host permissions if an imported or replicated backup requests privileged mode, host networking, devices, or host paths. Select _Allow host-level access_ to give those permissions.
    - If Vault cannot get the image by digest for a deduplicated backup, you can select _Use the image's current tag_. Otherwise Vault uses the image from the backup. If Vault changes the tag and the restore fails, it puts the previous image tag back. After a restore, Unraid reports updates for the image in the restored container.

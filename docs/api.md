@@ -88,6 +88,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | GET    | `/jobs/{id}/retention-preview`                     | Preview which restore points the configured retention policy would prune                  |
 | DELETE | `/jobs/{id}/restore-points/{rpid}`                 | Delete a specific restore point and its files                                             |
 | GET    | `/jobs/{id}/restore-points/{rpid}/contents?item=…` | List files inside a restore point (works for classic and dedup restore points)            |
+| POST   | `/jobs/{id}/restore-points/{rpid}/preflight`       | Check a restore before starting                                                           |
 | POST   | `/jobs/{id}/restore-points/{rpid}/verify`          | Start SHA-256 verification of a restore point                                             |
 | GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                                |
 | GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                      |
@@ -95,6 +96,13 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | POST   | `/jobs/{id}/cancel`                                | Cancel a running backup or manual restore, or remove a queued operation                   |
 | POST   | `/jobs/{id}/restore`                               | Start a restore. Set `destination` to an absolute path or, for a ZFS item, a dataset name |
 | GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                            |
+
+Preflight accepts optional `items`, `passphrase` and `destination` fields.
+Pass Backup Item names in `items`. Omitting it or passing an empty array
+uses the whole Restore Point size. The `space` check reports the staging
+filesystem. When a custom destination is supplied, `destination_space`
+reports that filesystem separately or is skipped for a ZFS dataset target.
+A space warning is advisory and leaves `ok` true when the other checks pass.
 
 A Restore Request run uses the [exact-run stop action](#restore-requests).
 

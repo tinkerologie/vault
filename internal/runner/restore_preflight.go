@@ -1,8 +1,12 @@
 package runner
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"math"
 	"os"
+	"path/filepath"
 
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
@@ -10,6 +14,7 @@ import (
 	"github.com/tinkerologie/vault/internal/docsmeta"
 	"github.com/tinkerologie/vault/internal/fsstat"
 	"github.com/tinkerologie/vault/internal/storage"
+	"github.com/tinkerologie/vault/internal/tempdir"
 )
 
 // PreflightCheck is a single pre-restore validation result.
@@ -27,6 +32,15 @@ type PreflightResult struct {
 	Checks []PreflightCheck `json:"checks"`
 }
 
+// PreflightRestoreOptions describes the selected restore unit. An empty Items
+// slice requests the legacy whole-backup estimate.
+type PreflightRestoreOptions struct {
+	Passphrase       string
+	Destination      string
+	Items            []string
+	DestinationIsZFS bool
+}
+
 // freeSpaceAt returns the bytes available at path. Overridable in tests.
 var freeSpaceAt = func(path string) (int64, error) {
 	u, err := fsstat.Stat(path)
@@ -42,7 +56,7 @@ var freeSpaceAt = func(path string) (int64, error) {
 // free space to stage the data. It performs only cheap probes (no full data
 // read) so it stays interactive. Verifying a backup's bytes end-to-end is the
 // separate, heavier VerifyRestorePoint operation.
-func (r *Runner) PreflightRestore(job db.Job, rp db.RestorePoint, passphrase, destination string) PreflightResult {
+func (r *Runner) PreflightRestore(job db.Job, rp db.RestorePoint, opts PreflightRestoreOptions) PreflightResult {
 	var checks []PreflightCheck
 	blocked := false
 	add := func(c PreflightCheck) {
@@ -66,13 +80,38 @@ func (r *Runner) PreflightRestore(job db.Job, rp db.RestorePoint, passphrase, de
 
 	if err := adapter.TestConnection(); err != nil {
 		add(PreflightCheck{ID: "reachable", Label: "Storage reachable", Status: "fail", Detail: err.Error()})
-	} else {
-		add(PreflightCheck{ID: "reachable", Label: "Storage reachable", Status: "ok", Detail: dest.Name})
+		return PreflightResult{OK: false, Checks: checks}
 	}
+	add(PreflightCheck{ID: "reachable", Label: "Storage reachable", Status: "ok", Detail: dest.Name})
 
 	add(checkRestorePointPresent(adapter, dest, rp))
-	add(r.checkDecryptable(job, passphrase))
-	add(r.checkFreeSpace(destination, rp))
+	add(r.checkDecryptable(job, opts.Passphrase))
+
+	requirement := estimateRestoreSize(rp, opts.Items)
+	override, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
+	path, source := tempdir.PreviewRestoreStaging(override)
+	free, err := freeSpaceAt(path)
+	stage := capacityCheck("space", "Restore staging space", path, source, free, err, requirement)
+	if rp.BackupType == "incremental" || rp.BackupType == "differential" {
+		stage.Detail += " Earlier Backup Chain steps are also staged and are outside this estimate."
+	}
+	if opts.Destination == "" {
+		stage.Detail += " Original-location targets, including VM disk and NVRAM paths, are unchecked."
+	}
+	add(stage)
+
+	if opts.Destination != "" {
+		if opts.DestinationIsZFS {
+			add(PreflightCheck{ID: "destination_space", Label: "Restore destination space", Status: "skip", Detail: "ZFS dataset target. Filesystem free space is unchecked."})
+		} else {
+			path, free, err := probeRestoreDestination(opts.Destination)
+			destSpace := capacityCheck("destination_space", "Restore destination space", path, "destination", free, err, requirement)
+			if path != opts.Destination {
+				destSpace.Detail += fmt.Sprintf(" Probed the nearest existing ancestor for %s.", opts.Destination)
+			}
+			add(destSpace)
+		}
+	}
 
 	return PreflightResult{OK: !blocked, Checks: checks}
 }
@@ -145,33 +184,73 @@ func (r *Runner) checkDecryptable(job db.Job, passphrase string) PreflightCheck 
 	return c
 }
 
-// checkFreeSpace is a best-effort, non-blocking check that the restore target
-// (the custom destination if given, otherwise the staging directory) has room
-// for the backup. Indeterminate targets are skipped rather than failed.
-func (r *Runner) checkFreeSpace(destination string, rp db.RestorePoint) PreflightCheck {
-	c := PreflightCheck{ID: "space", Label: "Free space"}
-	target := destination
-	if target == "" {
-		// The staging override is optional; if it can't be read (missing or a
-		// settings error) fall back to the temp dir, which is still a valid
-		// target to probe for free space.
-		if override, err := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override")); err == nil && override != "" {
-			target = override
-		} else {
-			target = os.TempDir()
+type restoreSizeEstimate struct {
+	bytes int64
+	scope string
+	known bool
+}
+
+func estimateRestoreSize(rp db.RestorePoint, items []string) restoreSizeEstimate {
+	whole := restoreSizeEstimate{bytes: rp.SizeBytes, scope: "whole backup", known: rp.SizeBytes > 0}
+	if len(items) == 0 {
+		return whole
+	}
+	sizes, _ := rp.ItemSizes()
+	seen := make(map[string]struct{}, len(items))
+	var total int64
+	for _, item := range items {
+		if _, duplicate := seen[item]; duplicate {
+			continue
 		}
+		size, known := sizes[item]
+		if !known || size < 0 || size > math.MaxInt64-total {
+			return whole
+		}
+		seen[item] = struct{}{}
+		total += size
 	}
-	free, err := freeSpaceAt(target)
+	return restoreSizeEstimate{bytes: total, scope: "selected items", known: true}
+}
+
+// probeRestoreDestination walks up only when the requested path is missing.
+// Permission and other probe errors must not be mistaken for available space
+// on a parent filesystem.
+func probeRestoreDestination(path string) (string, int64, error) {
+	for {
+		free, err := freeSpaceAt(path)
+		parent := filepath.Dir(path)
+		if !errors.Is(err, fs.ErrNotExist) || parent == path {
+			return path, free, err
+		}
+		// Statfs also returns ENOENT for a dangling symlink. Its parent
+		// filesystem doesn't describe where the restore would write.
+		if _, lstatErr := os.Lstat(path); !errors.Is(lstatErr, fs.ErrNotExist) {
+			return path, free, err
+		}
+		path = parent
+	}
+}
+
+func capacityCheck(id, label, path, source string, free int64, err error, estimate restoreSizeEstimate) PreflightCheck {
+	c := PreflightCheck{ID: id, Label: label}
+	requirement := "unknown"
+	if estimate.known {
+		requirement = humanBytes(estimate.bytes)
+	}
+	detail := fmt.Sprintf("Estimated space for the %s is %s.", estimate.scope, requirement)
 	if err != nil {
-		c.Status, c.Detail = "skip", "could not determine free space at the target"
+		c.Status, c.Detail = "skip", fmt.Sprintf("Could not determine free space at %s (%s). %s", path, source, detail)
 		return c
 	}
-	if rp.SizeBytes > 0 && free < rp.SizeBytes {
+	c.Detail = fmt.Sprintf("%s free at %s (%s). %s", humanBytes(free), path, source, detail)
+	switch {
+	case !estimate.known || estimate.bytes <= 0:
+		c.Status = "skip"
+	case free < estimate.bytes:
 		c.Status = "warn"
-		c.Detail = fmt.Sprintf("%s free, but the backup is %s", humanBytes(free), humanBytes(rp.SizeBytes))
-		return c
+	default:
+		c.Status = "ok"
 	}
-	c.Status, c.Detail = "ok", fmt.Sprintf("%s free", humanBytes(free))
 	return c
 }
 

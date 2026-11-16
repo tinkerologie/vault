@@ -1334,20 +1334,24 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		Passphrase  string `json:"passphrase"`
-		Destination string `json:"destination"`
+		Passphrase  string   `json:"passphrase"`
+		Destination string   `json:"destination"`
+		Items       []string `json:"items"`
 	}
 	// Body is optional (unencrypted, original-location restore needs nothing).
-	_ = json.NewDecoder(r.Body).Decode(&req)
-	// A preflight does not name its items, so a ZFS dataset name is accepted
-	// here too; Restore checks the destination against the items' type.
-	if req.Destination != "" && !engine.ValidZFSDatasetName(req.Destination) {
-		normalized, err := normalizeRestoreDestination(req.Destination)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.Items = nil
+	}
+	opts := runner.PreflightRestoreOptions{Passphrase: req.Passphrase, Destination: req.Destination, Items: req.Items}
+	// Unscoped requests still accept either kind of destination.
+	if len(req.Items) == 0 && req.Destination != "" {
+		opts.DestinationIsZFS = engine.ValidZFSDatasetName(req.Destination)
+		normalized, err := restoreDestinationFor(req.Destination, opts.DestinationIsZFS)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
 			return
 		}
-		req.Destination = normalized
+		opts.Destination = normalized
 	}
 
 	job, err := h.db.GetJob(id)
@@ -1372,7 +1376,74 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 		respondError(w, http.StatusNotFound, "restore point not found")
 		return
 	}
-	respondJSON(w, http.StatusOK, h.runner.PreflightRestore(job, rp, req.Passphrase, req.Destination))
+	if len(req.Items) > 0 {
+		jobItems, err := h.db.GetJobItems(id)
+		if err != nil {
+			respondInternalError(w, fmt.Errorf("fetching job items: %w", err))
+			return
+		}
+		targets, err := resolveNamedRestoreTargets(jobItems, req.Items)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := validateRestorePointTargets(rp, targets); err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if req.Destination != "" {
+			opts.Destination, opts.DestinationIsZFS, err = restoreDestinationForTargets(req.Destination, targets)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
+				return
+			}
+		}
+	}
+	respondJSON(w, http.StatusOK, h.runner.PreflightRestore(job, rp, opts))
+}
+
+type restoreTarget struct {
+	Name string
+	Type string
+}
+
+func resolveNamedRestoreTargets(jobItems []db.JobItem, names []string) ([]restoreTarget, error) {
+	types := make(map[string]string, len(jobItems))
+	for _, item := range jobItems {
+		types[item.ItemName] = item.ItemType
+	}
+	targets := make([]restoreTarget, 0, len(names))
+	for _, name := range names {
+		itemType, ok := types[name]
+		if !ok {
+			return nil, fmt.Errorf("item not found in job: %s", name)
+		}
+		targets = append(targets, restoreTarget{Name: name, Type: itemType})
+	}
+	return targets, nil
+}
+
+func validateRestorePointTargets(point db.RestorePoint, targets []restoreTarget) error {
+	members, known := point.BackedUpItems()
+	if !known {
+		return nil
+	}
+	for _, target := range targets {
+		if _, ok := members[target.Name]; !ok {
+			return fmt.Errorf("%s is not in this restore point", target.Name)
+		}
+	}
+	return nil
+}
+
+func restoreDestinationForTargets(dest string, targets []restoreTarget) (string, bool, error) {
+	allZFS := !slices.ContainsFunc(targets, func(t restoreTarget) bool { return t.Type != "zfs" })
+	// Each ZFS item force-receives into the destination.
+	if allZFS && len(targets) > 1 {
+		return "", true, errors.New("a destination can be given only when restoring one ZFS item; restore each item separately")
+	}
+	normalized, err := restoreDestinationFor(dest, allZFS)
+	return normalized, allZFS, err
 }
 
 // Restore triggers a restore from a specific restore point.
@@ -1462,11 +1533,6 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	// 1. Legacy single item: item_name + item_type
 	// 2. Named list: items array (types resolved from job_items)
 	// 3. All items: no items/item_name → restore everything in the job
-	type restoreTarget struct {
-		Name string
-		Type string
-	}
-
 	var targets []restoreTarget
 
 	if req.ItemName != "" && req.ItemType != "" {
@@ -1479,20 +1545,11 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 			respondInternalError(w, fmt.Errorf("fetching job items: %w", itemsErr))
 			return
 		}
-		itemTypeMap := make(map[string]string, len(jobItems))
-		for _, ji := range jobItems {
-			itemTypeMap[ji.ItemName] = ji.ItemType
-		}
-
 		if len(req.Items) > 0 {
-			// Restore specific named items.
-			for _, name := range req.Items {
-				iType, ok := itemTypeMap[name]
-				if !ok {
-					respondError(w, http.StatusBadRequest, "item not found in job: "+name)
-					return
-				}
-				targets = append(targets, restoreTarget{Name: name, Type: iType})
+			targets, err = resolveNamedRestoreTargets(jobItems, req.Items)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, err.Error())
+				return
 			}
 		} else {
 			// Restore all items from the job.
@@ -1508,17 +1565,7 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Destination != "" {
-		allZFS := true
-		for _, t := range targets {
-			allZFS = allZFS && t.Type == "zfs"
-		}
-		// Each ZFS item force-receives into the destination, so one dataset
-		// cannot take several of them.
-		if allZFS && len(targets) > 1 {
-			respondError(w, http.StatusBadRequest, "invalid destination: a destination can be given only when restoring one ZFS item; restore each item separately")
-			return
-		}
-		dest, err := restoreDestinationFor(req.Destination, allZFS)
+		dest, _, err := restoreDestinationForTargets(req.Destination, targets)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
 			return
@@ -1530,13 +1577,9 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	// after these backups ran). Restoring them would fail mid-run; fail fast
 	// with a clear message instead. Skipped for legacy restore points whose
 	// per-item membership is unknown.
-	if members, known := found.BackedUpItems(); known {
-		for _, t := range targets {
-			if _, ok := members[t.Name]; !ok {
-				respondError(w, http.StatusBadRequest, t.Name+" is not in this restore point")
-				return
-			}
-		}
+	if err := validateRestorePointTargets(*found, targets); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	// Build runner targets and execute tracked restore asynchronously.

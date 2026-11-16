@@ -8,6 +8,43 @@ import (
 	"testing"
 )
 
+func TestPreviewRestoreStaging(t *testing.T) {
+	override, cache, unusable := t.TempDir(), t.TempDir(), t.TempDir()
+	stage := filepath.Join(cache, StageDirName)
+	if err := os.Mkdir(stage, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(stage, filepath.Join(unusable, StageDirName)); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, override, want, source string
+		caches                       []string
+	}{
+		{"override first", override, override, "override", []string{cache}},
+		{"bad override falls through", unusable, stage, "cache", []string{cache}},
+		{"missing override falls through", filepath.Join(override, "missing"), stage, "cache", []string{cache}},
+		{"unsafe cache falls through", "", stage, "cache", []string{unusable, cache}},
+		{"system fallback", "", os.TempDir(), "system temp", []string{unusable}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(SetCachePathsForTest(tc.caches))
+			path, source := PreviewRestoreStaging(tc.override)
+			if path != tc.want || source != tc.source {
+				t.Errorf("path = %q, source = %q, want %q, %q", path, source, tc.want, tc.source)
+			}
+		})
+	}
+	if _, err := os.Lstat(filepath.Join(override, StageDirName)); !os.IsNotExist(err) {
+		t.Errorf("preview changed the override: lstat error = %v", err)
+	}
+	entries, err := os.ReadDir(stage)
+	if err != nil || len(entries) > 0 {
+		t.Errorf("preview wrote to staging: entries = %v, error = %v", entries, err)
+	}
+}
+
 func TestCreateBackupDir(t *testing.T) {
 	tests := []struct {
 		name string

@@ -29,8 +29,9 @@ export async function mockFailedPreflight(page: Page) {
     route.fulfill(json({
       ok: false,
       checks: [
-        { id: 'storage', label: 'Storage reachable', status: 'ok', detail: 'online' },
-        { id: 'space', label: 'Free space', status: 'fail', detail: 'needs 40 GB more' },
+        { id: 'reachable', label: 'Storage reachable', status: 'ok', detail: 'online' },
+        { id: 'present', label: 'Backup present on storage', status: 'fail', detail: 'backup files were not found on storage' },
+        { id: 'space', label: 'Restore staging space', status: 'warn', detail: '13.0 GiB free at /mnt/cache (cache). Estimated space for the selected items is 20.0 GiB.' },
       ],
     })),
   );
@@ -107,7 +108,7 @@ export const RISKY_FLOWS: RiskyFlow[] = [
     opener: async (page) => page.getByRole('button', { name: 'Restore anyway' }),
     isAction: (r) => r.method() === 'POST' && /\/jobs\/\d+\/restore$/.test(r.url()),
     calls: 2,
-    source: ['VM Backups', 'Docker & Appdata', 'Free space: needs 40 GB more', 'Original location'],
+    source: ['VM Backups', 'Docker & Appdata', 'Backup present on storage: backup files were not found on storage', 'Original location'],
     loss: ['All 2 selected jobs are submitted, including 1 that failed pre-flight checks', 'Existing data at the destination is overwritten', 'incomplete data'],
     actionUrl: /\/jobs\/\d+\/restore$/,
     afterConfirm: async (page) => {

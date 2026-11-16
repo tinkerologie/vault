@@ -121,6 +121,93 @@ test.describe('Restore Run outcomes (#654)', () => {
   });
 });
 
+test.describe('Scoped restore preflight (#655)', () => {
+  const job1Preflight = '**/jobs/1/restore-points/*/preflight';
+  const job2Preflight = '**/jobs/2/restore-points/*/preflight';
+
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page);
+    await page.goto('/#/restore');
+  });
+
+  test('checks the selected VM and displays the advisory staging warning', async ({ page }) => {
+    const detail = '13.0 GiB free at /mnt/cache (cache). Estimated space for the selected items is 20.0 GiB.';
+    await page.route(job2Preflight, route => route.fulfill({
+      json: { ok: true, checks: [{ id: 'space', label: 'Restore staging space', status: 'warn', detail }] },
+    }));
+    await page.getByRole('button', { name: /home-assistant/i }).click();
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByRole('button', { name: /VM Backups/i }).first().click();
+
+    const request = page.waitForRequest(job2Preflight);
+    await page.getByRole('button', { name: 'Run checks', exact: true }).click();
+    expect((await request).postDataJSON()).toEqual({ items: ['home-assistant'] });
+    await expect(page.getByText(detail, { exact: false })).toBeVisible();
+    await expect(page.getByLabel('warning', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start Restore', exact: true })).toBeEnabled();
+  });
+
+  test('requires new checks after the item selection changes', async ({ page }) => {
+    const next = page.getByRole('button', { name: 'Next', exact: true });
+    const point = page.getByRole('button', { name: /Docker & Appdata/i }).first();
+    const check = page.getByRole('button', { name: 'Run checks', exact: true });
+    const start = page.getByRole('button', { name: 'Start Restore', exact: true });
+    await page.getByRole('button', { name: /plex/i }).click();
+    await next.click();
+    await point.click();
+    await check.click();
+    await expect(start).toBeEnabled();
+
+    await page.getByRole('button', { name: 'Back to versions', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to items', exact: true }).click();
+    await page.getByRole('button', { name: /nextcloud/i }).click();
+    await next.click();
+    await point.click();
+    await expect(start).toBeDisabled();
+
+    const request = page.waitForRequest(job1Preflight);
+    await check.click();
+    expect((await request).postDataJSON().items).toEqual(['plex', 'nextcloud']);
+    await expect(start).toBeEnabled();
+  });
+
+  test('keeps the newer check when an old destination response arrives late', async ({ page }) => {
+    let releaseOld!: () => void;
+    const holdOld = new Promise<void>(resolve => { releaseOld = resolve; });
+    await page.route(job2Preflight, async route => {
+      if (route.request().postDataJSON().destination) {
+        await route.fulfill({ json: { ok: true, checks: [{ id: 'space', label: 'New staging result', status: 'ok' }] } });
+      } else {
+        await holdOld;
+        await route.fulfill({ json: { ok: false, checks: [{ id: 'present', label: 'Old result', status: 'fail' }] } });
+      }
+    });
+    await page.getByRole('button', { name: /home-assistant/i }).click();
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByRole('button', { name: /VM Backups/i }).first().click();
+
+    const first = page.waitForRequest(job2Preflight);
+    await page.getByRole('button', { name: 'Run checks', exact: true }).click();
+    await first;
+    await page.getByLabel('Custom destination', { exact: true }).check();
+    await page.getByLabel(/Custom restore destination/i).fill('/mnt/cache/vm-copy');
+    const start = page.getByRole('button', { name: 'Start Restore', exact: true });
+    await expect(start).toBeDisabled();
+    await expect(page.getByText(/Inputs changed since the last check/)).toBeVisible();
+    await page.getByRole('button', { name: 'Run checks', exact: true }).click();
+    await expect(page.getByText('New staging result')).toBeVisible();
+    await expect(start).toBeEnabled();
+
+    const late = page.waitForResponse(res => res.url().endsWith('/preflight') && !res.request().postDataJSON().destination);
+    releaseOld();
+    await (await late).finished();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(page.getByText('New staging result')).toBeVisible();
+    await expect(page.getByText('Old result')).toHaveCount(0);
+    await expect(start).toBeEnabled();
+  });
+});
+
 test.describe('Restore Wizard Multi-Job Flow (#438)', () => {
   test.beforeEach(async ({ page }) => {
     await setupVaultMockApi(page);
@@ -193,8 +280,13 @@ test.describe('Restore Wizard Multi-Job Flow (#438)', () => {
       }
     });
 
+    const preflights = [1, 2].map(id => page.waitForRequest(req =>
+      req.method() === 'POST' && req.url().includes(`/jobs/${id}/restore-points/`) && req.url().endsWith('/preflight')));
     // Run pre-flight checks to enable restore
     await page.getByRole('button', { name: /Run all pre-flight checks/i }).click();
+    const [job1Preflight, job2Preflight] = await Promise.all(preflights);
+    expect(job1Preflight.postDataJSON().items).toEqual(['plex']);
+    expect(job2Preflight.postDataJSON().items).toEqual(['home-assistant']);
 
     // Verify pre-flight checks passed
     await expect(page.getByLabel('passed').first()).toBeVisible();
