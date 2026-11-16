@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"slices"
 	"testing"
@@ -79,5 +80,55 @@ func TestVMCovInspectConfirmsWebDAVBackupFromRecordedNames(t *testing.T) {
 	unrecorded := record(map[string]any{"item_types": types, "item_sizes": sizes})
 	if _, err := f.inspect(t, unrecorded, ""); !errors.Is(err, ErrApprovedStorageUnavailable) {
 		t.Fatalf("unrecorded names: %v", err)
+	}
+}
+
+// statOnlyAdapter stands in for the SFTP review adapter: it never lists, and
+// it records every object the review stats.
+type statOnlyAdapter struct {
+	storage.Adapter
+	stats []string
+}
+
+func (a *statOnlyAdapter) List(string) ([]storage.FileInfo, error) {
+	return nil, errors.New("bounded storage metadata unavailable")
+}
+
+func (a *statOnlyAdapter) Stat(p string) (storage.FileInfo, error) {
+	a.stats = append(a.stats, p)
+	return storage.FileInfo{Path: p, Size: 1}, nil
+}
+
+func TestVMCovSFTPReviewStatsOnlyRecordedObjects(t *testing.T) {
+	t.Parallel()
+	recorded := map[string]any{"domain.xml": "a", "vm_meta.json": "b", "vdisk0.qcow2": "c"}
+	point := func(checksums map[string]any) db.RestorePoint {
+		t.Helper()
+		encoded, err := json.Marshal(map[string]any{"checksums": map[string]any{"test-vm": checksums}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return db.RestorePoint{StoragePath: "vm-backup/full", Metadata: string(encoded)}
+	}
+
+	adapter := &statOnlyAdapter{}
+	files, err := listVMReviewStep(adapter, point(recorded), "test-vm")
+	if err != nil || len(files) != 3 {
+		t.Fatalf("files = %+v, err = %v", files, err)
+	}
+	slices.Sort(adapter.stats)
+	want := []string{"vm-backup/full/test-vm/domain.xml", "vm-backup/full/test-vm/vdisk0.qcow2", "vm-backup/full/test-vm/vm_meta.json"}
+	if !slices.Equal(adapter.stats, want) {
+		t.Fatalf("stats = %v, want %v", adapter.stats, want)
+	}
+
+	// More recorded objects than the review allows are refused before any stat.
+	many := map[string]any{}
+	for i := range maxVMReviewObjects + 1 {
+		many[fmt.Sprintf("vdisk%d.img", i)] = "x"
+	}
+	adapter = &statOnlyAdapter{}
+	if _, err := listVMReviewStep(adapter, point(many), "test-vm"); !errors.Is(err, ErrApprovedStorageUnavailable) || len(adapter.stats) != 0 {
+		t.Fatalf("over-limit recorded names: err = %v, stats = %d", err, len(adapter.stats))
 	}
 }

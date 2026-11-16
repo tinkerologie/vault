@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -50,13 +51,48 @@ func boundedListContract(t *testing.T, root string, open func(context.Context) A
 	}
 }
 
-func TestBoundedMetadataSFTPList(t *testing.T) {
+// pkg/sftp can only read a whole directory, so review-time SFTP probes never
+// list: they refuse before sending a request, and callers stat the objects
+// the Restore Point recorded.
+func TestBoundedMetadataSFTPNeverLists(t *testing.T) {
 	t.Parallel()
 	srv := startSFTP458Server(t)
 	root := t.TempDir()
-	boundedListContract(t, root, func(ctx context.Context) Adapter {
-		return newMetadataAdapter(srv.adapter(t, root), Options{MetadataProbeLimit: 2, MetadataProbeContext: ctx})
-	})
+	sub := filepath.Join(root, "point")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 500 {
+		if err := os.WriteFile(filepath.Join(sub, fmt.Sprintf("archive-%03d.tar", i)), []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	probe := newMetadataAdapter(srv.adapter(t, root), Options{MetadataProbeLimit: 128, MetadataProbeContext: t.Context()})
+	if list, err := probe.List("point"); !errors.Is(err, errBoundedMetadataUnavailable) || len(list) != 0 {
+		t.Fatalf("SFTP list: %+v, %v", list, err)
+	}
+	info, err := probe.Stat("point/archive-042.tar")
+	if err != nil || info.Size != 7 || info.IsDir {
+		t.Fatalf("recorded object stat: %+v, %v", info, err)
+	}
+
+	// No request reaches the server: a probe of an unreachable host still
+	// reports the missing listing, not a connection failure.
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := closed.Addr().(*net.TCPAddr).Port
+	_ = closed.Close()
+	offline, err := NewSFTPAdapter(SFTPConfig{Host: "127.0.0.1", Port: port, User: sftp458User, Password: sftp458Password, BasePath: root, HostKey: srv.fingerprint})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = offline.Close() }()
+	unreachable := newMetadataAdapter(offline, Options{MetadataProbeLimit: 128, MetadataProbeContext: t.Context()})
+	if _, err := unreachable.List("point"); !errors.Is(err, errBoundedMetadataUnavailable) {
+		t.Fatalf("SFTP list contacted the server: %v", err)
+	}
 }
 
 func TestBoundedMetadataSMBList(t *testing.T) {
