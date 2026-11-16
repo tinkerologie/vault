@@ -52,6 +52,7 @@ type smbFile interface {
 	io.ReadWriteSeeker
 	io.Closer
 	Sync() error
+	Readdir(n int) ([]os.FileInfo, error)
 }
 
 // smbSession is the subset of *smb2.Session the adapter uses.

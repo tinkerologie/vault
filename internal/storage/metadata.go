@@ -161,6 +161,11 @@ func (s *SFTPAdapter) listBounded(ctx context.Context, prefix string, limit int)
 	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, fullPath); err != nil {
 		return nil, err
 	}
+	// pkg/sftp v1.13.12 offers no incremental directory read: ReadDirContext
+	// (and Walk, which uses it) is the only public READDIR path and returns
+	// the whole directory, and File cannot read a directory handle. The
+	// limit is therefore applied after the read; the probe context still
+	// bounds how long it may take.
 	entries, err := client.ReadDirContext(ctx, fullPath)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
@@ -196,7 +201,7 @@ func (s *SMBAdapter) listBounded(ctx context.Context, prefix string, limit int) 
 	if scoped, ok := share.(smbContextShare); ok {
 		reader = scoped.withContext(ctx)
 	}
-	entries, err := reader.ReadDir(fullPath)
+	entries, err := readSMBDirBounded(reader, fullPath, limit+1)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
@@ -204,6 +209,35 @@ func (s *SMBAdapter) listBounded(ctx context.Context, prefix string, limit int) 
 		return nil, wrapSMBListError(err, fullPath)
 	}
 	return boundedEntries(ctx, prefix, limit, entries, func(dir, name string) string { return filepath.Join(dir, name) })
+}
+
+// readSMBDirBounded reads at most max entries of a directory, so a listing
+// over the limit is refused without enumerating the rest of it.
+func readSMBDirBounded(share smbShare, dir string, max int) (_ []os.FileInfo, retErr error) {
+	f, err := share.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := f.Close(); err != nil && retErr == nil {
+			retErr = err
+		}
+	}()
+	var entries []os.FileInfo
+	for len(entries) < max {
+		batch, err := f.Readdir(max - len(entries))
+		entries = append(entries, batch...)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+	}
+	return entries, nil
 }
 
 func (a *S3Adapter) listBounded(ctx context.Context, prefix string, limit int) ([]FileInfo, error) {

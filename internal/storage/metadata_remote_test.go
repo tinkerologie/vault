@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -64,4 +65,26 @@ func TestBoundedMetadataSMBList(t *testing.T) {
 	boundedListContract(t, share.root, func(ctx context.Context) Adapter {
 		return newMetadataAdapter(a, Options{MetadataProbeLimit: 2, MetadataProbeContext: ctx})
 	})
+}
+
+func TestBoundedMetadataSMBListStopsAfterLimit(t *testing.T) {
+	t.Parallel()
+	a, share, _ := newFakeSMB(t, "")
+	sub := filepath.Join(share.root, "point")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 50 {
+		if err := os.WriteFile(filepath.Join(sub, fmt.Sprintf("archive-%02d.tar", i)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const limit = 2
+	probe := newMetadataAdapter(a, Options{MetadataProbeLimit: limit, MetadataProbeContext: t.Context()})
+	if list, err := probe.List("point"); !errors.Is(err, errBoundedMetadataUnavailable) || len(list) != 0 {
+		t.Fatalf("overflow: %+v, %v", list, err)
+	}
+	if share.entriesRead > limit+1 {
+		t.Fatalf("read %d entries of an over-limit directory, want at most %d", share.entriesRead, limit+1)
+	}
 }
