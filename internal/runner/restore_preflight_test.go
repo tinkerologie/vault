@@ -331,4 +331,18 @@ func TestPreflightRestore_ArchiveExpansionAndSharedSpace(t *testing.T) {
 		!strings.Contains(check.Detail, "Estimated space for the selected items is 20.0 GiB") {
 		t.Errorf("direct dedup restore should check one copy of the data: %+v", check)
 	}
+
+	stubFreeSpace(t, 150<<30)
+	point.Metadata = `{"item_sizes":{"vm":10737418240,"data":107374182400},"item_manifests":{"data":"0000000000000000000000000000000000000000000000000000000000000001"}}`
+	result = r.PreflightRestore(job, point, PreflightRestoreOptions{
+		Items: []string{"vm", "data"}, Destination: destination, ItemTypes: map[string]string{"vm": "vm", "data": "folder"},
+	})
+	if check := checkByID(result, "space"); check.Status != "ok" ||
+		!strings.Contains(check.Detail, "Estimated space for the selected items that use staging is 10.0 GiB") {
+		t.Errorf("only the VM uses classic staging: %+v", check)
+	}
+	if check := checkByID(result, "destination_space"); check.Status != "ok" ||
+		!strings.Contains(check.Detail, "Estimated space for the selected items is 120.0 GiB") {
+		t.Errorf("shared space should include both target copies and only the staged VM: %+v", check)
+	}
 }

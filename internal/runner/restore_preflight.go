@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
-	"os"
 	"path/filepath"
 
 	"github.com/tinkerologie/vault/internal/crypto"
@@ -14,6 +13,7 @@ import (
 	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/docsmeta"
 	"github.com/tinkerologie/vault/internal/fsstat"
+	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/storage"
 	"github.com/tinkerologie/vault/internal/tempdir"
 )
@@ -90,14 +90,30 @@ func (r *Runner) PreflightRestore(job db.Job, rp db.RestorePoint, opts Preflight
 	add(r.checkDecryptable(job, opts.Passphrase))
 
 	requirement := estimateRestoreSize(rp, opts.Items)
-	staged, archiveSizes := preflightStagingNeeds(rp, opts)
+	stagingItems, staged, archiveSizes := preflightStagingNeeds(rp, opts)
 	requirement.archiveSizes = archiveSizes
-	override, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
-	path, source := tempdir.PreviewRestoreStaging(override)
-	free, err := freeSpaceAt(path)
-	stage := capacityCheck("space", "Restore staging space", path, source, free, err, requirement)
-	if rp.BackupType == "incremental" || rp.BackupType == "differential" {
-		stage.Detail += " Earlier Backup Chain steps are also staged and are outside this estimate."
+	staging := requirement
+	if staged && len(stagingItems) < len(opts.Items) {
+		staging = estimateRestoreSize(rp, stagingItems)
+		staging.archiveSizes = archiveSizes
+		if staging.scope == "selected items" {
+			staging.scope = "selected items that use staging"
+		}
+	}
+	stage := PreflightCheck{ID: "space", Label: "Restore staging space", Status: "skip", Detail: "The selected Backup Items restore directly from deduplicated storage."}
+	var stagePath string
+	var stageFree int64
+	if len(opts.Items) == 0 || staged {
+		override, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
+		path, source := tempdir.PreviewRestoreStaging(override)
+		free, err := freeSpaceAt(path)
+		if err == nil {
+			stagePath, stageFree = path, free
+		}
+		stage = capacityCheck("space", "Restore staging space", path, source, free, err, staging)
+		if rp.BackupType == "incremental" || rp.BackupType == "differential" {
+			stage.Detail += " Earlier Backup Chain steps are also staged and are outside this estimate."
+		}
 	}
 	if opts.Destination == "" {
 		stage.Detail += " Original-location targets, including VM disk and NVRAM paths, are unchecked."
@@ -108,7 +124,7 @@ func (r *Runner) PreflightRestore(job db.Job, rp db.RestorePoint, opts Preflight
 		if opts.DestinationIsZFS {
 			add(PreflightCheck{ID: "destination_space", Label: "Restore destination space", Status: "skip", Detail: "ZFS dataset target. Filesystem free space is unchecked."})
 		} else {
-			add(checkDestinationSpace(opts.Destination, path, free, staged && err == nil, requirement))
+			add(checkDestinationSpace(opts.Destination, stagePath, stageFree, staged, requirement, staging))
 		}
 	}
 
@@ -193,7 +209,7 @@ type restoreSizeEstimate struct {
 // Classic VM and ZFS artifacts are staged before transport compression. Classic
 // container, folder and plugin backups can record engine-compressed archives.
 // Per-item manifests distinguish direct dedup restores in mixed restore points.
-func preflightStagingNeeds(rp db.RestorePoint, opts PreflightRestoreOptions) (staged, archiveSizes bool) {
+func preflightStagingNeeds(rp db.RestorePoint, opts PreflightRestoreOptions) (items []string, staged, archiveSizes bool) {
 	var meta struct {
 		Manifests map[string]string `json:"item_manifests"`
 	}
@@ -201,19 +217,19 @@ func preflightStagingNeeds(rp db.RestorePoint, opts PreflightRestoreOptions) (st
 		_ = json.Unmarshal([]byte(rp.Metadata), &meta)
 	}
 	if len(opts.Items) == 0 {
-		return len(meta.Manifests) == 0 && len(rp.ManifestID) == 0, false
+		return nil, len(meta.Manifests) == 0 && len(rp.ManifestID) == 0, false
 	}
 	for _, item := range opts.Items {
 		if meta.Manifests[item] != "" || (meta.Manifests == nil && len(rp.ManifestID) != 0) {
 			continue
 		}
-		staged = true
+		items = append(items, item)
 		switch opts.ItemTypes[item] {
 		case "container", "folder", "plugin":
-			return true, true
+			archiveSizes = true
 		}
 	}
-	return staged, false
+	return items, len(items) > 0, archiveSizes
 }
 
 func estimateRestoreSize(rp db.RestorePoint, items []string) restoreSizeEstimate {
@@ -241,7 +257,11 @@ func estimateRestoreSize(rp db.RestorePoint, items []string) restoreSizeEstimate
 // probeRestoreDestination walks up only when the requested path is missing.
 // Permission and other probe errors must not be mistaken for available space
 // on a parent filesystem.
-func probeRestoreDestination(path string) (string, int64, error) {
+func probeRestoreDestination(destination string) (string, int64, error) {
+	path, validationErr := safepath.CheckCustomRestoreDestination(destination)
+	if validationErr != nil {
+		return destination, 0, validationErr
+	}
 	for {
 		free, err := freeSpaceAt(path)
 		parent := filepath.Dir(path)
@@ -250,27 +270,27 @@ func probeRestoreDestination(path string) (string, int64, error) {
 		}
 		// Statfs also returns ENOENT for a dangling symlink. Its parent
 		// filesystem doesn't describe where the restore would write.
-		if _, lstatErr := os.Lstat(path); !errors.Is(lstatErr, fs.ErrNotExist) {
+		if _, lstatErr := safepath.LstatPinned(path); !errors.Is(lstatErr, fs.ErrNotExist) {
 			return path, free, err
 		}
 		path = parent
 	}
 }
 
-func checkDestinationSpace(destination, stagePath string, stageFree int64, includeStaging bool, estimate restoreSizeEstimate) PreflightCheck {
+func checkDestinationSpace(destination, stagePath string, stageFree int64, includeStaging bool, estimate, staging restoreSizeEstimate) PreflightCheck {
 	path, free, err := probeRestoreDestination(destination)
 	var shared bool
 	var deviceErr error
-	if err == nil && includeStaging {
+	if err == nil && includeStaging && stagePath != "" {
 		shared, deviceErr = fsstat.SameFilesystem(stagePath, path)
 	}
 	if shared {
 		free = min(free, stageFree)
-		// A staged archive and its restored copy can coexist.
-		if estimate.bytes > math.MaxInt64/2 {
+		// Only classic items hold a staging allocation while restoring.
+		if !estimate.known || !staging.known || staging.bytes > math.MaxInt64-estimate.bytes {
 			estimate.known = false
 		} else {
-			estimate.bytes *= 2
+			estimate.bytes += staging.bytes
 		}
 	}
 	check := capacityCheck("destination_space", "Restore destination space", path, "destination", free, err, estimate)
@@ -278,7 +298,7 @@ func checkDestinationSpace(destination, stagePath string, stageFree int64, inclu
 		check.Detail += fmt.Sprintf(" Probed the nearest existing ancestor for %s.", destination)
 	}
 	if shared {
-		check.Detail += " Staging and the destination share this filesystem. The estimate includes both copies."
+		check.Detail += " Staging and the destination share this filesystem. The estimate includes the staged copy of items that use staging."
 	}
 	if deviceErr != nil {
 		if check.Status == "ok" {

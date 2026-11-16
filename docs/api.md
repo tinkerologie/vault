@@ -102,8 +102,8 @@ Pass Backup Item names in `items`. Omitting it or passing an empty array
 uses the whole Restore Point size. A malformed request body returns HTTP 400.
 The `space` check reports the staging filesystem. For a custom destination, `destination_space`
 reports that filesystem separately or is skipped for a ZFS dataset target.
-A classic restore to a destination on the staging filesystem estimates space
-for both copies. For selected classic archive items, recorded sizes may omit
+A destination on the staging filesystem includes space for the restored data
+and the copy of each item that uses staging. For selected classic archive items, recorded sizes may omit
 expansion, so sufficient recorded space alone leaves the capacity check skipped.
 A space warning is advisory and leaves `ok` true when the other checks pass.
 

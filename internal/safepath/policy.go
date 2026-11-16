@@ -124,7 +124,7 @@ func CheckSnapshotLocation(p string) (string, error) {
 	}
 	// Inspected through a handle pinned to the resolved parent rather than by
 	// pathname, so the answer is about the file in the checked directory.
-	info, err := lstatPinned(cleaned)
+	info, err := LstatPinned(cleaned)
 	if errors.Is(err, fs.ErrNotExist) {
 		return cleaned, nil
 	}
@@ -154,9 +154,9 @@ func ResolvesUnderRoots(p string, roots []string) bool {
 	return false
 }
 
-// lstatPinned returns Lstat of p's final component, read through a pinned handle
-// to p's resolved parent directory.
-func lstatPinned(p string) (os.FileInfo, error) {
+// LstatPinned inspects p's final component through a pinned handle to its
+// resolved parent. Callers apply the appropriate path policy first.
+func LstatPinned(p string) (os.FileInfo, error) {
 	parent, err := resolveExistingPrefix(filepath.Dir(p))
 	if err != nil {
 		return nil, err
