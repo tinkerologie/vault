@@ -3233,7 +3233,7 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo Container
 				return err
 			}
 		}
-		if err := restoreChunkedVolumeFile(repo, v, target); err != nil {
+		if err := restoreChunkedVolumeFile(ctx, repo, v, target); err != nil {
 			return fmt.Errorf("restore volume file %s: %w", dest, err)
 		}
 		fileCounter := itemProgressFrom(ctx)
@@ -3252,7 +3252,11 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo Container
 // The parent directory is created first: a file mount's host path need not
 // exist yet on a restore to a fresh system, and Docker would otherwise
 // materialise a directory in its place when the container starts.
-func restoreChunkedVolumeFile(repo ContainerRestoreRepository, entry dedup.ManifestEntry, target string) error {
+//
+// The chunks usually come from a staged local cache, so cancelling storage
+// does not interrupt the loop: ctx is checked before every chunk read and
+// every write so an accepted stop ends a large file mount mid-file.
+func restoreChunkedVolumeFile(ctx context.Context, repo ContainerRestoreRepository, entry dedup.ManifestEntry, target string) error {
 	parentDir := filepath.Dir(target)
 	if !restorePathSafe(parentDir) || strings.Contains(parentDir, "../") || strings.Contains(parentDir, "..\\") {
 		return fmt.Errorf("suspicious file mount parent directory %q", parentDir)
@@ -3290,10 +3294,18 @@ func restoreChunkedVolumeFile(repo ContainerRestoreRepository, entry dedup.Manif
 		return err
 	}
 	for _, id := range entry.Chunks {
+		if err := ctx.Err(); err != nil {
+			_ = out.Close()
+			return err
+		}
 		chunk, gErr := repo.Get(id)
 		if gErr != nil {
 			_ = out.Close()
 			return fmt.Errorf("reading chunk: %w", gErr)
+		}
+		if err := ctx.Err(); err != nil {
+			_ = out.Close()
+			return err
 		}
 		if _, wErr := out.Write(chunk); wErr != nil {
 			_ = out.Close()
