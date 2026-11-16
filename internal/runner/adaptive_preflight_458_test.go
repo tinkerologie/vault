@@ -204,19 +204,19 @@ func TestPreflightRestoreReachabilityFailuresA458(t *testing.T) {
 	r, d := a458Runner(t)
 	stubFreeSpace(t, 1<<40)
 
-	if res := r.PreflightRestore(db.Job{StorageDestID: 4242}, db.RestorePoint{}, "", ""); res.OK {
+	if res := r.PreflightRestore(db.Job{StorageDestID: 4242}, db.RestorePoint{}, PreflightRestoreOptions{}); res.OK {
 		t.Fatal("missing destination must block")
 	}
 
 	bogusID, err := d.CreateStorageDestination(db.StorageDestination{Name: "bogus", Type: "bogus", Config: "{}"})
 	if err == nil {
-		if res := r.PreflightRestore(db.Job{StorageDestID: bogusID}, db.RestorePoint{}, "", ""); res.OK {
+		if res := r.PreflightRestore(db.Job{StorageDestID: bogusID}, db.RestorePoint{}, PreflightRestoreOptions{}); res.OK {
 			t.Fatal("unknown adapter type must block")
 		}
 	}
 
 	missing := a458LocalDest(t, d, "missing-root", filepath.Join(t.TempDir(), "does-not-exist"))
-	res := r.PreflightRestore(db.Job{StorageDestID: missing.ID}, db.RestorePoint{StoragePath: "x"}, "", "")
+	res := r.PreflightRestore(db.Job{StorageDestID: missing.ID}, db.RestorePoint{StoragePath: "x"}, PreflightRestoreOptions{})
 	if c := checkByID(res, "reachable"); c.Status != "fail" {
 		t.Fatalf("reachable = %+v, want fail", c)
 	}
@@ -282,17 +282,20 @@ func TestCheckFreeSpaceOverrideAndErrorA458(t *testing.T) {
 	r, d := a458Runner(t)
 	override := t.TempDir()
 	a458SetSetting(t, d, "staging_dir_override", override)
+	dest := a458LocalDest(t, d, "preflight", t.TempDir())
+	job := db.Job{StorageDestID: dest.ID}
+	point := db.RestorePoint{SizeBytes: 1}
 
 	var probed string
 	orig := freeSpaceAt
 	t.Cleanup(func() { freeSpaceAt = orig })
 	freeSpaceAt = func(p string) (int64, error) { probed = p; return 1 << 30, nil }
-	if c := r.checkFreeSpace("", db.RestorePoint{}); c.Status != "ok" || probed != override {
+	if c := checkByID(r.PreflightRestore(job, point, PreflightRestoreOptions{}), "space"); c.Status != "ok" || probed != override {
 		t.Fatalf("override: %+v probed %q", c, probed)
 	}
 
 	freeSpaceAt = func(string) (int64, error) { return 0, errors.New("statfs failed") }
-	if c := r.checkFreeSpace("/x", db.RestorePoint{}); c.Status != "skip" {
+	if c := checkByID(r.PreflightRestore(job, point, PreflightRestoreOptions{}), "space"); c.Status != "skip" {
 		t.Fatalf("error: %+v, want skip", c)
 	}
 }

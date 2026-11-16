@@ -35,3 +35,16 @@ func TestStatAcceptsFilePath(t *testing.T) {
 		t.Fatalf("Stat(file) = %+v, %v", u, err)
 	}
 }
+
+func TestSameFilesystem(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	if same, err := SameFilesystem(first, second); err != nil || !same {
+		t.Fatalf("SameFilesystem(temp directories) = %v, %v", same, err)
+	}
+	if same, err := SameFilesystem("\x00", second); err == nil || same {
+		t.Fatalf("SameFilesystem(invalid first path) = %v, %v", same, err)
+	}
+	if same, err := SameFilesystem(first, "\x00"); err == nil || same {
+		t.Fatalf("SameFilesystem(invalid second path) = %v, %v", same, err)
+	}
+}

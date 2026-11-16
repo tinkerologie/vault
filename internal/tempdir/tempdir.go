@@ -215,6 +215,43 @@ func CreateRestoreDir(dest StorageConfig, override string) (string, func(), erro
 	return createDir(dest, "restore-*", override, nil)
 }
 
+// PreviewRestoreStaging reports where the classic restore cascade would stage
+// data with an empty StorageConfig. It only inspects candidates, so write
+// failures can still cause the restore to fall back at execution time.
+func PreviewRestoreStaging(override string) (path, source string) {
+	if override != "" {
+		if path := stagingProbePath(override); path != "" {
+			return path, "override"
+		}
+	}
+	for _, base := range rankCandidatesByFreeSpace(cachePaths()) {
+		if path := stagingProbePath(base); path != "" {
+			return path, "cache"
+		}
+	}
+	return os.TempDir(), "system temp"
+}
+
+func stagingProbePath(base string) string {
+	if info, err := os.Stat(base); err != nil || !info.IsDir() {
+		return ""
+	}
+	stage := filepath.Join(base, StageDirName)
+	if _, err := safepath.CheckFolderLocation(stage); err != nil {
+		return ""
+	}
+	info, err := os.Lstat(stage)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return base
+	case err == nil && info.IsDir():
+		// An existing staging directory can itself be a mount point.
+		return stage
+	default:
+		return ""
+	}
+}
+
 // CreateRestoreDirOutside uses the restore cascade without writing staging
 // data beneath the reviewed target, where replacement could delete it.
 func CreateRestoreDirOutside(override string, targets ...string) (string, func(), error) {

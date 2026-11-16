@@ -39,8 +39,9 @@
   let deletingRpId = $state(null)
   let confirmDeleteRpId = $state(null)
 
-  // Per-unit settings (key: jobId -> { restoreDestination, showDestOverride, cleanDestination, acknowledgeContainerRemap, passphrase, preflightResult, preflightRunning, preflightSig })
+  // Per-unit settings keyed by job ID.
   let unitSettings = $state(new SvelteMap())
+  let preflightRequestSeq = 0
 
   const DEFAULT_UNIT_SETTINGS = Object.freeze({
     restoreDestination: '',
@@ -51,7 +52,7 @@
     acknowledgeContainerRemap: false,
     passphrase: '',
     preflightResult: null,
-    preflightRunning: false,
+    preflightRequestId: 0,
     preflightSig: '',
   })
 
@@ -299,10 +300,15 @@
   }
 
   // Pre-flight checks per unit
+  function unitItemNames(unit) {
+    return Array.from(new Set(unit.items.map(item => item.name)))
+  }
+
   function getUnitRestoreSig(unit) {
     const s = getUnitSettings(unit.jobId)
     return JSON.stringify({
       r: unit?.point?.id ?? null,
+      items: unitItemNames(unit).sort(),
       p: s.passphrase,
       o: s.showDestOverride,
       d: s.showDestOverride ? s.restoreDestination : '',
@@ -314,23 +320,31 @@
     return s.preflightResult != null && s.preflightSig === getUnitRestoreSig(unit)
   }
 
-  async function runPreflight(unit) {
-    if (!unit?.point) return
+  function isUnitPreflightRunning(unit) {
     const s = getUnitSettings(unit.jobId)
-    const sigAtRun = getUnitRestoreSig(unit)
-    updateUnitSetting(unit.jobId, { preflightRunning: true, preflightResult: null })
+    return s.preflightRequestId !== 0 && s.preflightSig === getUnitRestoreSig(unit)
+  }
+
+  async function runPreflight(unit) {
+    if (!unit?.point || isUnitPreflightRunning(unit)) return
+    const s = getUnitSettings(unit.jobId)
+    const requestId = ++preflightRequestSeq
+    updateUnitSetting(unit.jobId, {
+      preflightRequestId: requestId,
+      preflightResult: null,
+      preflightSig: getUnitRestoreSig(unit),
+    })
+    const payload = { items: unitItemNames(unit) }
+    if (s.showDestOverride && s.restoreDestination.trim()) payload.destination = s.restoreDestination.trim()
+    if (s.passphrase) payload.passphrase = s.passphrase
+    let result
     try {
-      const payload = {}
-      if (s.showDestOverride && s.restoreDestination.trim()) payload.destination = s.restoreDestination.trim()
-      if (s.passphrase) payload.passphrase = s.passphrase
-      const res = await api.preflightRestore(unit.jobId, unit.point.id, payload)
-      updateUnitSetting(unit.jobId, { preflightResult: res, preflightSig: sigAtRun, preflightRunning: false })
+      result = await api.preflightRestore(unit.jobId, unit.point.id, payload)
     } catch (e) {
-      updateUnitSetting(unit.jobId, {
-        preflightResult: { ok: false, checks: [{ id: 'error', label: 'Pre-flight could not run', status: 'fail', detail: e.message || 'request failed' }] },
-        preflightSig: sigAtRun,
-        preflightRunning: false,
-      })
+      result = { ok: false, checks: [{ id: 'error', label: 'Pre-flight could not run', status: 'fail', detail: e.message || 'request failed' }] }
+    }
+    if (!destroyed && unitSettings.get(unit.jobId)?.preflightRequestId === requestId) {
+      updateUnitSetting(unit.jobId, { preflightResult: result, preflightRequestId: 0 })
     }
   }
 
@@ -1039,7 +1053,7 @@
   )
 
   let anyUnitPreflightRunning = $derived(
-    restoreUnits.some(unit => getUnitSettings(unit.jobId).preflightRunning)
+    restoreUnits.some(isUnitPreflightRunning)
   )
 
   let allUnitsPreflightFresh = $derived(
@@ -1054,7 +1068,9 @@
 
   let canRestoreAnyway = $derived(
     !isRestoreRunning &&
-    !anyUnitBlocked
+    !anyUnitBlocked &&
+    allUnitsPreflightFresh &&
+    !allUnitsPreflightPassing
   )
 
   let recommendedRpId = $derived(restorePoints[0]?.id ?? null)
@@ -1081,8 +1097,8 @@
     return `Kept because ${count} newer restore point${count === 1 ? '' : 's'} still depend on it.`
   }
 
-  async function doRestore() {
-    if (anyUnitBlocked) return
+  async function doRestore(overridePreflight = false) {
+    if (!(overridePreflight ? canRestoreAnyway : canStartRestore)) return
 
     restoreGeneration += 1
     adoptedRunId = null
@@ -1095,6 +1111,8 @@
     selectedLogUnitJobId = restoreUnits[0]?.jobId ?? null
 
     const submissionTime = Date.now()
+    // Capture the checked options before any request yields to the UI.
+    const submissions = []
     unitRuns.clear()
     for (const unit of restoreUnits) {
       unitRuns.set(unit.jobId, {
@@ -1109,14 +1127,12 @@
         error: null,
         sizeBytes: 0,
       })
-    }
 
-    for (const unit of restoreUnits) {
       const s = getUnitSettings(unit.jobId)
 
       const payload = {
         restore_point_id: unit.point.id,
-        items: Array.from(new Set(unit.items.map(i => i.name))),
+        items: unitItemNames(unit),
         clean_destination: s.cleanDestination && !unitHasPartialSelection(unit),
       }
       if (s.showDestOverride && s.restoreDestination.trim()) {
@@ -1141,13 +1157,16 @@
       if (Object.keys(filePaths).length > 0) {
         payload.file_paths = filePaths
       }
+      submissions.push({ jobId: unit.jobId, payload })
+    }
 
+    for (const { jobId, payload } of submissions) {
       try {
-        const res = await onrestore(unit.jobId, payload)
+        const res = await onrestore(jobId, payload)
         if (res && res.ok === false) {
-          const cur = unitRuns.get(unit.jobId)
+          const cur = unitRuns.get(jobId)
           if (cur) {
-            unitRuns.set(unit.jobId, {
+            unitRuns.set(jobId, {
               ...cur,
               state: 'rejected',
               error: res.error || 'Server rejected restore request',
@@ -1155,9 +1174,9 @@
           }
         }
       } catch (err) {
-        const cur = unitRuns.get(unit.jobId)
+        const cur = unitRuns.get(jobId)
         if (cur) {
-          unitRuns.set(unit.jobId, {
+          unitRuns.set(jobId, {
             ...cur,
             state: 'rejected',
             error: err?.message || 'Failed to submit restore request',
@@ -1189,7 +1208,7 @@
 
   function confirmRestoreAnywayNow() {
     confirmRestoreAnyway = false
-    doRestore()
+    void doRestore(true)
   }
 
   function goBack() {
@@ -1618,6 +1637,7 @@
       {@const needsAgePassphrase = unit.point?.encryption === 'age'}
       {@const isBroken = unit.point?.chain_status === 'broken'}
       {@const fresh = isUnitPreflightFresh(unit)}
+      {@const checking = isUnitPreflightRunning(unit)}
       {@const preflight = s.preflightResult}
 
       <div class="bg-surface-2 border border-border rounded-xl p-5 mb-6 space-y-5">
@@ -1917,9 +1937,9 @@
               <p class="text-sm font-medium text-text">Pre-flight checks ({unit.jobName})</p>
               <p class="text-xs text-text-dim mt-0.5">Confirm backup can be restored before starting.</p>
             </div>
-            <button type="button" onclick={() => runPreflight(unit)} disabled={s.preflightRunning || (needsAgePassphrase && !s.passphrase)}
+            <button type="button" onclick={() => runPreflight(unit)} disabled={checking || (needsAgePassphrase && !s.passphrase)}
               class="text-xs px-3 py-1.5 rounded-lg border border-border text-text-muted hover:text-text hover:border-vault/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer inline-flex items-center gap-1.5 shrink-0">
-              {#if s.preflightRunning}
+              {#if checking}
                 <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                 Checking…
               {:else}
@@ -1927,7 +1947,7 @@
               {/if}
             </button>
           </div>
-          {#if preflight && !fresh}
+          {#if s.preflightSig && s.preflightSig !== getUnitRestoreSig(unit)}
             <p class="mt-3 text-xs text-text-dim">Inputs changed since the last check. Run the checks again.</p>
           {:else if preflight}
             <ul class="mt-3 space-y-1.5">
@@ -1974,7 +1994,7 @@
 
     <!-- Actions bar -->
     <div class="flex items-center gap-4 flex-wrap">
-      <button type="button" onclick={doRestore}
+      <button type="button" onclick={() => doRestore()}
         disabled={!canStartRestore}
         class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer">
         {#if isRestoreRunning}

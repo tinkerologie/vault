@@ -20,3 +20,15 @@ func Stat(path string) (Usage, error) {
 		Free:  uint64(s.Bavail) * bsize, //nolint:unconvert // uint64 on Linux, may differ elsewhere
 	}, nil
 }
+
+// SameFilesystem compares the device IDs of two existing local paths.
+func SameFilesystem(first, second string) (bool, error) {
+	var a, b unix.Stat_t
+	if err := unix.Stat(first, &a); err != nil {
+		return false, fmt.Errorf("stat %s: %w", first, err)
+	}
+	if err := unix.Stat(second, &b); err != nil {
+		return false, fmt.Errorf("stat %s: %w", second, err)
+	}
+	return a.Dev == b.Dev, nil
+}
