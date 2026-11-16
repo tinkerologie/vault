@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Stop an active approved Restore Run by its exact ID from the signed-in Unraid Vault page. Deduplicated folder restores stop between chunks. Vault saves who requested the stop and when before acknowledging it, and the linked request records the actual outcome (#643).
 - Review and approve Docker Restore Requests in Unraid, including saved image and volume effects, and follow container startup and database replay outcomes (#644).
 - Review and approve VM Restore Requests with the required checkpoint chain and disk, firmware and domain effects. Tracked VM Restore Runs show measured guest readiness outcomes. Review works on SFTP, SMB and WebDAV storage, and treats a disk named through another Unraid share mount as in use (#645).
+- Add an Unraid restore drill guide and helper to verify folder contents and follow scoped MCP Restore Requests (#647).
 
 ### Changed
 
