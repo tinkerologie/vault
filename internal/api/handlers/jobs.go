@@ -1338,9 +1338,15 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 		Destination string   `json:"destination"`
 		Items       []string `json:"items"`
 	}
-	// Body is optional (unencrypted, original-location restore needs nothing).
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		req.Items = nil
+	// The body can be empty or contain exactly one JSON value.
+	decoder := json.NewDecoder(r.Body)
+	decodeErr := decoder.Decode(&req)
+	if decodeErr == nil {
+		decodeErr = decoder.Decode(new(json.RawMessage))
+	}
+	if !errors.Is(decodeErr, io.EOF) {
+		respondError(w, http.StatusBadRequest, "invalid JSON")
+		return
 	}
 	opts := runner.PreflightRestoreOptions{Passphrase: req.Passphrase, Destination: req.Destination, Items: req.Items}
 	// Unscoped requests still accept either kind of destination.
@@ -1390,6 +1396,10 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 		if err := validateRestorePointTargets(rp, targets); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		opts.ItemTypes = make(map[string]string, len(targets))
+		for _, target := range targets {
+			opts.ItemTypes[target.Name] = target.Type
 		}
 		if req.Destination != "" {
 			opts.Destination, opts.DestinationIsZFS, err = restoreDestinationForTargets(req.Destination, targets)

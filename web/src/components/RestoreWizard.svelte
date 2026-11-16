@@ -1111,6 +1111,8 @@
     selectedLogUnitJobId = restoreUnits[0]?.jobId ?? null
 
     const submissionTime = Date.now()
+    // Capture the checked options before any request yields to the UI.
+    const submissions = []
     unitRuns.clear()
     for (const unit of restoreUnits) {
       unitRuns.set(unit.jobId, {
@@ -1125,9 +1127,7 @@
         error: null,
         sizeBytes: 0,
       })
-    }
 
-    for (const unit of restoreUnits) {
       const s = getUnitSettings(unit.jobId)
 
       const payload = {
@@ -1157,13 +1157,16 @@
       if (Object.keys(filePaths).length > 0) {
         payload.file_paths = filePaths
       }
+      submissions.push({ jobId: unit.jobId, payload })
+    }
 
+    for (const { jobId, payload } of submissions) {
       try {
-        const res = await onrestore(unit.jobId, payload)
+        const res = await onrestore(jobId, payload)
         if (res && res.ok === false) {
-          const cur = unitRuns.get(unit.jobId)
+          const cur = unitRuns.get(jobId)
           if (cur) {
-            unitRuns.set(unit.jobId, {
+            unitRuns.set(jobId, {
               ...cur,
               state: 'rejected',
               error: res.error || 'Server rejected restore request',
@@ -1171,9 +1174,9 @@
           }
         }
       } catch (err) {
-        const cur = unitRuns.get(unit.jobId)
+        const cur = unitRuns.get(jobId)
         if (cur) {
-          unitRuns.set(unit.jobId, {
+          unitRuns.set(jobId, {
             ...cur,
             state: 'rejected',
             error: err?.message || 'Failed to submit restore request',

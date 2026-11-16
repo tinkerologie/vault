@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -38,6 +39,7 @@ type PreflightRestoreOptions struct {
 	Passphrase       string
 	Destination      string
 	Items            []string
+	ItemTypes        map[string]string
 	DestinationIsZFS bool
 }
 
@@ -88,6 +90,8 @@ func (r *Runner) PreflightRestore(job db.Job, rp db.RestorePoint, opts Preflight
 	add(r.checkDecryptable(job, opts.Passphrase))
 
 	requirement := estimateRestoreSize(rp, opts.Items)
+	staged, archiveSizes := preflightStagingNeeds(rp, opts)
+	requirement.archiveSizes = archiveSizes
 	override, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
 	path, source := tempdir.PreviewRestoreStaging(override)
 	free, err := freeSpaceAt(path)
@@ -104,12 +108,7 @@ func (r *Runner) PreflightRestore(job db.Job, rp db.RestorePoint, opts Preflight
 		if opts.DestinationIsZFS {
 			add(PreflightCheck{ID: "destination_space", Label: "Restore destination space", Status: "skip", Detail: "ZFS dataset target. Filesystem free space is unchecked."})
 		} else {
-			path, free, err := probeRestoreDestination(opts.Destination)
-			destSpace := capacityCheck("destination_space", "Restore destination space", path, "destination", free, err, requirement)
-			if path != opts.Destination {
-				destSpace.Detail += fmt.Sprintf(" Probed the nearest existing ancestor for %s.", opts.Destination)
-			}
-			add(destSpace)
+			add(checkDestinationSpace(opts.Destination, path, free, staged && err == nil, requirement))
 		}
 	}
 
@@ -185,9 +184,36 @@ func (r *Runner) checkDecryptable(job db.Job, passphrase string) PreflightCheck 
 }
 
 type restoreSizeEstimate struct {
-	bytes int64
-	scope string
-	known bool
+	bytes        int64
+	scope        string
+	known        bool
+	archiveSizes bool
+}
+
+// Classic VM and ZFS artifacts are staged before transport compression. Classic
+// container, folder and plugin backups can record engine-compressed archives.
+// Per-item manifests distinguish direct dedup restores in mixed restore points.
+func preflightStagingNeeds(rp db.RestorePoint, opts PreflightRestoreOptions) (staged, archiveSizes bool) {
+	var meta struct {
+		Manifests map[string]string `json:"item_manifests"`
+	}
+	if rp.Metadata != "" {
+		_ = json.Unmarshal([]byte(rp.Metadata), &meta)
+	}
+	if len(opts.Items) == 0 {
+		return len(meta.Manifests) == 0 && len(rp.ManifestID) == 0, false
+	}
+	for _, item := range opts.Items {
+		if meta.Manifests[item] != "" || (meta.Manifests == nil && len(rp.ManifestID) != 0) {
+			continue
+		}
+		staged = true
+		switch opts.ItemTypes[item] {
+		case "container", "folder", "plugin":
+			return true, true
+		}
+	}
+	return staged, false
 }
 
 func estimateRestoreSize(rp db.RestorePoint, items []string) restoreSizeEstimate {
@@ -231,6 +257,38 @@ func probeRestoreDestination(path string) (string, int64, error) {
 	}
 }
 
+func checkDestinationSpace(destination, stagePath string, stageFree int64, includeStaging bool, estimate restoreSizeEstimate) PreflightCheck {
+	path, free, err := probeRestoreDestination(destination)
+	var shared bool
+	var deviceErr error
+	if err == nil && includeStaging {
+		shared, deviceErr = fsstat.SameFilesystem(stagePath, path)
+	}
+	if shared {
+		free = min(free, stageFree)
+		// A staged archive and its restored copy can coexist.
+		if estimate.bytes > math.MaxInt64/2 {
+			estimate.known = false
+		} else {
+			estimate.bytes *= 2
+		}
+	}
+	check := capacityCheck("destination_space", "Restore destination space", path, "destination", free, err, estimate)
+	if path != destination {
+		check.Detail += fmt.Sprintf(" Probed the nearest existing ancestor for %s.", destination)
+	}
+	if shared {
+		check.Detail += " Staging and the destination share this filesystem. The estimate includes both copies."
+	}
+	if deviceErr != nil {
+		if check.Status == "ok" {
+			check.Status = "skip"
+		}
+		check.Detail += " Could not determine whether staging shares this filesystem."
+	}
+	return check
+}
+
 func capacityCheck(id, label, path, source string, free int64, err error, estimate restoreSizeEstimate) PreflightCheck {
 	c := PreflightCheck{ID: id, Label: label}
 	requirement := "unknown"
@@ -238,6 +296,9 @@ func capacityCheck(id, label, path, source string, free int64, err error, estima
 		requirement = humanBytes(estimate.bytes)
 	}
 	detail := fmt.Sprintf("Estimated space for the %s is %s.", estimate.scope, requirement)
+	if estimate.archiveSizes {
+		detail += " Expanded archive sizes are unavailable. Recorded sizes may understate required space."
+	}
 	if err != nil {
 		c.Status, c.Detail = "skip", fmt.Sprintf("Could not determine free space at %s (%s). %s", path, source, detail)
 		return c
@@ -248,6 +309,8 @@ func capacityCheck(id, label, path, source string, free int64, err error, estima
 		c.Status = "skip"
 	case free < estimate.bytes:
 		c.Status = "warn"
+	case estimate.archiveSizes:
+		c.Status = "skip"
 	default:
 		c.Status = "ok"
 	}

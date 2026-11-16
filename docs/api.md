@@ -99,9 +99,12 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 
 Preflight accepts optional `items`, `passphrase` and `destination` fields.
 Pass Backup Item names in `items`. Omitting it or passing an empty array
-uses the whole Restore Point size. The `space` check reports the staging
-filesystem. When a custom destination is supplied, `destination_space`
+uses the whole Restore Point size. A malformed request body returns HTTP 400.
+The `space` check reports the staging filesystem. For a custom destination, `destination_space`
 reports that filesystem separately or is skipped for a ZFS dataset target.
+A classic restore to a destination on the staging filesystem estimates space
+for both copies. For selected classic archive items, recorded sizes may omit
+expansion, so sufficient recorded space alone leaves the capacity check skipped.
 A space warning is advisory and leaves `ok` true when the other checks pass.
 
 A Restore Request run uses the [exact-run stop action](#restore-requests).

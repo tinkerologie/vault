@@ -318,6 +318,10 @@ test.describe('Restore Wizard Multi-Job Flow (#438)', () => {
     expect(restoreRequests[0].url).toContain('/jobs/1/restore');
     expect(restoreRequests.some(r => r.url.endsWith('/jobs/2/restore'))).toBe(false);
 
+    // A destination edited during the first request was never checked or submitted.
+    await page.getByRole('radio', { name: 'Custom destination' }).nth(1).check();
+    await page.getByLabel('Custom restore destination').fill('/mnt/cache/unchecked');
+
     // Release Job 1 response
     releaseJob1Restore();
 
@@ -335,6 +339,7 @@ test.describe('Restore Wizard Multi-Job Flow (#438)', () => {
       restore_point_id: 2001,
       items: ['home-assistant'],
     });
+    expect(job2Req?.postData).not.toHaveProperty('destination');
   });
 
   test('supports custom destination path configuration on a restore unit', async ({ page }) => {

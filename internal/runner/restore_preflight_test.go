@@ -294,3 +294,41 @@ func TestPreflightRestore_SeparatesDestinationAndStaging(t *testing.T) {
 		}
 	}
 }
+
+func TestPreflightRestore_ArchiveExpansionAndSharedSpace(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close() //nolint:errcheck
+	_, job := newLocalDest(t, d, t.TempDir(), false)
+	stage, destination := t.TempDir(), t.TempDir()
+	if err := d.SetSetting("staging_dir_override", stage); err != nil {
+		t.Fatal(err)
+	}
+	stubFreeSpace(t, 30<<30)
+	r := &Runner{db: d}
+	point := db.RestorePoint{BackupType: "full", SizeBytes: 20 << 30, Metadata: `{"item_sizes":{"data":21474836480}}`}
+	for _, tc := range []struct {
+		name, dest, check, status, detail string
+	}{
+		{"unknown expanded size", "", "space", "skip", "Expanded archive sizes are unavailable"},
+		{"two copies share free space", destination, "destination_space", "warn", "Estimated space for the selected items is 40.0 GiB"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The test Job supplies a folder item type just as the HTTP handler does.
+			result := r.PreflightRestore(job, point, PreflightRestoreOptions{Items: []string{"data"}, Destination: tc.dest, ItemTypes: map[string]string{"data": "folder"}})
+			check := checkByID(result, tc.check)
+			if !result.OK || check.Status != tc.status || !strings.Contains(check.Detail, tc.detail) {
+				t.Errorf("check = %+v, overall ok = %v", check, result.OK)
+			}
+		})
+	}
+
+	point.Metadata = `{"item_sizes":{"data":21474836480},"item_manifests":{"data":"0000000000000000000000000000000000000000000000000000000000000001"}}`
+	result := r.PreflightRestore(job, point, PreflightRestoreOptions{Items: []string{"data"}, Destination: destination, ItemTypes: map[string]string{"data": "folder"}})
+	if check := checkByID(result, "destination_space"); check.Status != "ok" ||
+		!strings.Contains(check.Detail, "Estimated space for the selected items is 20.0 GiB") {
+		t.Errorf("direct dedup restore should check one copy of the data: %+v", check)
+	}
+}

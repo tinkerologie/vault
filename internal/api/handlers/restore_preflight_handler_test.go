@@ -128,6 +128,9 @@ func TestRestorePointPreflight_Handler(t *testing.T) {
 		{"scoped ZFS", `{"items":["pool/dataset"],"destination":"other/dataset"}`, http.StatusOK, "ZFS dataset target"},
 		{"dataset on VM", `{"items":["test-vm"],"destination":"other/dataset"}`, http.StatusBadRequest, "invalid destination"},
 		{"legacy body", "", http.StatusOK, "Estimated space for the whole backup is 4 B"},
+		{"invalid selection", `{"items":42}`, http.StatusBadRequest, "invalid JSON"},
+		{"truncated selection", `{"items":[`, http.StatusBadRequest, "invalid JSON"},
+		{"trailing selection", `{} {"items":["test-vm"]}`, http.StatusBadRequest, "invalid JSON"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := withURLParams(newReq(http.MethodPost, "/preflight", []byte(tc.body)),
