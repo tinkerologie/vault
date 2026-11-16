@@ -27,7 +27,7 @@ func registerLegacyRestoreItem(server *mcp.Server, service *restorerequest.Servi
 		Description: "Prepare a pending Restore Request for one whole folder, Docker container, or VM. Open the returned review link in Unraid for operator approval. This call does not start a restore.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input restoreItemInput) (*mcp.CallToolResult, restorerequest.View, error) {
 		if service == nil {
-			return nil, restorerequest.View{}, errors.New("Restore Requests are unavailable")
+			return nil, restorerequest.View{}, errors.New("restore requests are unavailable")
 		}
 		switch input.ItemType {
 		case "folder", "container", "vm":
