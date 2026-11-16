@@ -6,48 +6,60 @@ import (
 )
 
 // unraidShareKey returns the share-relative identity ("<share>/<rest>") of a
-// file under an Unraid array or pool mount, or "" for any other path. The
-// same file can be named as /mnt/user/<share>/p, /mnt/user0/<share>/p,
-// /mnt/cache/<share>/p, /mnt/<pool>/<share>/p or /mnt/diskN/<share>/p, so
-// those spellings must compare equal. Unassigned devices, remote mounts and
-// the root share do not belong to the user shares.
-func unraidShareKey(path string) string {
+// file under an Unraid array or pool mount, or "" for any other path, and
+// reports whether the path is a user-share view (/mnt/user or /mnt/user0).
+// Unassigned devices, remote mounts and the root share do not belong to the
+// user shares.
+func unraidShareKey(path string) (string, bool) {
 	clean := filepath.Clean(path)
 	if !filepath.IsAbs(clean) {
-		return ""
+		return "", false
 	}
 	parts := strings.SplitN(strings.TrimPrefix(clean, "/"), "/", 4)
 	if len(parts) < 4 || parts[0] != "mnt" {
-		return ""
+		return "", false
 	}
 	switch parts[1] {
 	case "remotes", "disks", "addons", "rootshare":
-		return ""
+		return "", false
 	}
-	return parts[2] + "/" + parts[3]
+	return parts[2] + "/" + parts[3], parts[1] == "user" || parts[1] == "user0"
 }
 
-// vmTargetKeys lists the identities a host path is known by. Share keys carry
-// a prefix that no absolute path can start with.
-func vmTargetKeys(path string) []string {
-	keys := []string{filepath.Clean(path)}
-	if share := unraidShareKey(path); share != "" {
-		keys = append(keys, "unraid-share:"+share)
-	}
-	return keys
-}
+// Share keys carry prefixes that no absolute path can start with.
+const (
+	vmUserShareKey     = "unraid-user:"
+	vmPhysicalShareKey = "unraid-disk:"
+)
 
+// addVMTarget records path under its own name and its share identity. A user
+// share view (/mnt/user/<share>/p, /mnt/user0/<share>/p) and a disk or pool
+// path (/mnt/cache/<share>/p, /mnt/diskN/<share>/p) can name the same file,
+// but two different disks or pools never do.
 func addVMTarget(targets map[string]bool, path string) {
-	for _, key := range vmTargetKeys(path) {
-		targets[key] = true
-	}
-}
-
-func vmTargetInSet(targets map[string]bool, path string) bool {
-	for _, key := range vmTargetKeys(path) {
-		if targets[key] {
-			return true
+	targets[filepath.Clean(path)] = true
+	if share, user := unraidShareKey(path); share != "" {
+		if user {
+			targets[vmUserShareKey+share] = true
+		} else {
+			targets[vmPhysicalShareKey+share] = true
 		}
 	}
-	return false
+}
+
+// vmTargetInSet reports whether path names a file recorded by addVMTarget:
+// the same path, or a user-share view and another spelling of the same share
+// file where at least one side is the user-share view.
+func vmTargetInSet(targets map[string]bool, path string) bool {
+	if targets[filepath.Clean(path)] {
+		return true
+	}
+	share, user := unraidShareKey(path)
+	if share == "" {
+		return false
+	}
+	if targets[vmUserShareKey+share] {
+		return true
+	}
+	return user && targets[vmPhysicalShareKey+share]
 }
