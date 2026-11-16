@@ -20,6 +20,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - The MCP `restore_item` tool now prepares a pending Restore Request and returns a review link. A signed-in Unraid operator must approve it before Vault restores the selected folder, Docker container, or VM (#646).
 
+### Fixed
+
+- Stopping an approved Docker Restore Run now also interrupts a single-file bind mount mid-file instead of finishing it (#638).
+- Docker Restore Requests for older backups that never recorded the item type now reach saved-configuration review, which confirms the type. If it can't, the request stays ineligible and says why (#638).
+
 ## [v2026.11.02] - 2026-11-12
 
 ### Fixed

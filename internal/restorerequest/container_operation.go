@@ -20,7 +20,12 @@ func (op *Operation) captureContainer(ctx context.Context, r *runner.Runner, pas
 		}
 		op.TargetChoice = "alternate"
 	}
-	if len(op.Reasons) != 0 {
+	// Unknown-type reasons on an older backup defer to the configuration
+	// review below, which can establish the type. Every other reason, and a
+	// type reason the review cannot settle, still blocks it.
+	if slices.ContainsFunc(op.Reasons, func(reason string) bool {
+		return !op.typeReviewPending || !containerTypeReason(reason)
+	}) {
 		return nil
 	}
 	work, err := r.ReviewContainerRestore(ctx, op.plan, op.Input.Destination, passphrase, op.WriteMode == "replace")
@@ -40,7 +45,19 @@ func (op *Operation) captureContainer(ctx context.Context, r *runner.Runner, pas
 		step := &op.Chain.Steps[i]
 		if step.ContainerVolumesUnresolved(op.Item.ItemType) {
 			step.Artifacts = runner.Confirmed
+			// The review read this step's saved container configuration
+			// and image archive, which is what a container backup holds.
+			if op.typeReviewPending && step.ItemTypeEvidence == runner.Unknown {
+				step.ItemTypeEvidence = runner.Confirmed
+			}
 		}
+	}
+	if op.typeReviewPending {
+		if op.ItemTypeEvidence == runner.Unknown {
+			op.ItemTypeEvidence = runner.Confirmed
+		}
+		op.Reasons = slices.DeleteFunc(op.Reasons, containerTypeReason)
+		op.Warnings = slices.DeleteFunc(op.Warnings, func(warning string) bool { return warning == "item_type_evidence_unavailable" })
 	}
 	op.Warnings = slices.DeleteFunc(op.Warnings, func(warning string) bool { return warning == "artifact_evidence_unavailable" })
 	op.Container = &effects
@@ -71,6 +88,10 @@ func (op *Operation) captureContainer(ctx context.Context, r *runner.Runner, pas
 		op.Effects = append(op.Effects, "preserve_container_database_dump_if_not_replayed")
 	}
 	return nil
+}
+
+func containerTypeReason(reason string) bool {
+	return reason == "item_type_unconfirmed" || reason == "required_item_type_unconfirmed"
 }
 
 func containerWriteMode(volumes []engine.ContainerVolumeEffect) string {
