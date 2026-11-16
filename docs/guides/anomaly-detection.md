@@ -118,6 +118,7 @@ Notifications show the same sentence plus a short line of context (e.g. _Based o
 By default, only **critical** anomalies notify (to avoid noise). Configure under **Settings → General → Anomaly Detection → Notify minimum severity** (`Info`, `Warning`, or `Critical`).
 
 - Vault suppresses repeat notifications for the same open anomaly.
+- If you dismiss a low-space anomaly and the destination is still low on space, a later check can raise a new anomaly and send another notification.
 - Per-job overrides: add `anomaly:critical`, `anomaly:warning`, or `anomaly:any` to a job's notify settings to force anomaly alerts for that job regardless of the global threshold.
 
 ---

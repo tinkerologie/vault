@@ -1,9 +1,12 @@
 package notify
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
+
+const lowFreeDetails = `{"free_bytes":1000,"total_bytes":50000,"pct_free":2}`
 
 // TestBuildAnomalyEmbed_ColourMapping verifies the Discord colour constants
 // are assigned correctly by BuildAnomalyEmbed for each severity.
@@ -144,6 +147,16 @@ func TestBuildAnomalyEmbed_ContextRendering(t *testing.T) {
 	}
 }
 
+func TestBuildAnomalyEmbed_LowFreeSpaceContext(t *testing.T) {
+	t.Parallel()
+
+	embed := BuildAnomalyEmbed(AnomalyEmbedParams{Severity: "critical", Details: lowFreeDetails})
+	want := DiscordField{Name: "Context", Value: "Free space: 1000 B of 48.8 KB"}
+	if !slices.Contains(embed.Fields, want) {
+		t.Errorf("embed fields = %+v, want %+v", embed.Fields, want)
+	}
+}
+
 // TestTruncate verifies the field-length guard that keeps notification embed
 // fields within Discord's 256-rune limit (regression guard for long values).
 func TestTruncate(t *testing.T) {
@@ -201,7 +214,14 @@ func TestRenderAnomalyDetails(t *testing.T) {
 		{"verify regression", `{"newest_status":"failed","previous_status":"passed"}`, "Latest verification failed (previous run passed)"},
 		{"fractional window rejected", `{"window_size":10.9}`, ""},
 		{"negative window rejected", `{"window_size":-4}`, ""},
-		{"low-free has no context", `{"free_bytes":1000,"total_bytes":50000,"pct_free":2}`, ""},
+		{"low free space", lowFreeDetails, "Free space: 1000 B of 48.8 KB"},
+		{"no free space", `{"free_bytes":0,"total_bytes":50000}`, "Free space: 0 B of 48.8 KB"},
+		{"missing free space", `{"total_bytes":50000}`, ""},
+		{"missing total space", `{"free_bytes":1000}`, ""},
+		{"zero total space", `{"free_bytes":1000,"total_bytes":0}`, ""},
+		{"negative free space", `{"free_bytes":-1,"total_bytes":50000}`, ""},
+		{"fractional free space", `{"free_bytes":1.5,"total_bytes":50000}`, ""},
+		{"fractional total space", `{"free_bytes":1,"total_bytes":50.5}`, ""},
 		{"empty", "", ""},
 		{"not json", "not json", ""},
 	}

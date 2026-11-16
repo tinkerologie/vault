@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/tinkerologie/vault/internal/format"
@@ -41,19 +42,38 @@ func runNotifyCommand(ctx context.Context, path string, args []string) error {
 	return cmd.Run()
 }
 
+type unraidSender struct {
+	goos string
+	stat func(string) (fs.FileInfo, error)
+	run  func(context.Context, string, []string) error
+}
+
+func newUnraidSender() unraidSender {
+	return unraidSender{goos: runtime.GOOS, stat: os.Stat, run: runNotifyCommand}
+}
+
 func Send(event, subject, description string, importance Importance) error {
-	if runtime.GOOS != "linux" {
+	return newUnraidSender().send(event, subject, description, importance)
+}
+
+func (s unraidSender) send(event, subject, description string, importance Importance) error {
+	if s.goos != "linux" {
 		log.Printf("[NOTIFY] %s: %s - %s (%s)", event, subject, description, importance)
 		return nil
 	}
 
-	if _, err := os.Stat(notifyScriptPath); err != nil {
+	if _, err := s.stat(notifyScriptPath); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			// Non-Unraid Linux environments won't have the notify helper.
 			log.Printf("[NOTIFY] helper not found, skipping: %s", notifyScriptPath)
 			return nil
 		}
 		return fmt.Errorf("checking notify helper: %w", err)
+	}
+
+	// Unraid's notification API rejects an empty description.
+	if strings.TrimSpace(description) == "" {
+		description = "No additional details."
 	}
 
 	// notifyScriptPath is a compile-time constant pointing to the Unraid notify
@@ -70,7 +90,7 @@ func Send(event, subject, description string, importance Importance) error {
 	ctx, cancel := context.WithTimeout(context.Background(), notifyExecTimeout)
 	defer cancel()
 
-	if err := runNotifyCommand(ctx, notifyScriptPath, args); err != nil {
+	if err := s.run(ctx, notifyScriptPath, args); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("notify helper timed out after %s: %w", notifyExecTimeout, err)
 		}

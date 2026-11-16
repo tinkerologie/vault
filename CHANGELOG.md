@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Include free and total space in low-space anomaly notifications and supply a description for Unraid notifications that would otherwise be blank (#653).
+
 ### Added
 
 - Create and revoke named Assistant Keys in Settings. Each key grants read-only access to the recovery catalog over REST and MCP (#639).
