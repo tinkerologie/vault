@@ -16,6 +16,10 @@ import (
 
 var errBoundedMetadataUnavailable = errors.New("bounded storage metadata unavailable")
 
+// metadataAdapter bounds review-time listings and sidecar reads. The Adapter
+// interface has no per-call context, so the probe's context is held here
+// (an exception to the no-context-in-structs rule); the adapter lives only
+// for one probe and is closed when that probe ends.
 type metadataAdapter struct {
 	Adapter
 	ctx   context.Context

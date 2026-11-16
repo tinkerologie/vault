@@ -4107,10 +4107,21 @@ func (r *Runner) runAdmittedRestore(restorePoint db.RestorePoint, targets []Rest
 		return
 	}
 	run.ID = runID
-	r.runTrackedRestore(run, restorePoint, targets, destination, passphrase, jobName, nil)
+	r.runTrackedRestore(run, restorePoint, targets, destination, passphrase, jobName)
 }
 
-func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, targets []RestoreTarget, destination, passphrase, jobName string, approved *ApprovedRestore) {
+func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, targets []RestoreTarget, destination, passphrase, jobName string) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	r.publishRestoreCancellation(&RunStatus{
+		Active: true, JobID: restorePoint.JobID, RunID: run.ID, JobName: jobName,
+		RunType: "restore", ItemsTotal: len(targets), StartedAt: time.Now().Format(time.RFC3339),
+	}, cancel)
+	r.runPublishedRestore(ctx, cancel, run, restorePoint, targets, destination, passphrase, jobName, nil)
+}
+
+// runPublishedRestore runs a restore whose cancellation is already published.
+// It owns cancel and releases the run context when the restore ends.
+func (r *Runner) runPublishedRestore(ctx context.Context, cancel context.CancelCauseFunc, run db.JobRun, restorePoint db.RestorePoint, targets []RestoreTarget, destination, passphrase, jobName string, approved *ApprovedRestore) {
 	runID := run.ID
 	requestID := ""
 	if approved != nil {
@@ -4118,17 +4129,6 @@ func (r *Runner) runTrackedRestore(run db.JobRun, restorePoint db.RestorePoint, 
 	}
 
 	restoreStart := time.Now()
-	var ctx context.Context
-	var cancel context.CancelCauseFunc
-	if approved != nil {
-		ctx, cancel = approved.runContext, approved.cancelRun
-	} else {
-		ctx, cancel = context.WithCancelCause(context.Background())
-		r.publishRestoreCancellation(&RunStatus{
-			Active: true, JobID: restorePoint.JobID, RunID: runID, JobName: jobName,
-			RunType: "restore", ItemsTotal: len(targets), StartedAt: restoreStart.Format(time.RFC3339),
-		}, cancel)
-	}
 	defer cancel(nil)
 	// Recover from panics so the run is marked failed.
 	defer func() {

@@ -31,8 +31,6 @@ type ApprovedRestore struct {
 	Revalidate func(context.Context) error
 	Flush      func() error
 	checks     []string
-	runContext context.Context
-	cancelRun  context.CancelCauseFunc
 }
 
 // AdmitApprovedRestore reserves the idle Runner without adding a queue entry.
@@ -63,16 +61,16 @@ func (r *Runner) AdmitApprovedRestore(prepare func() (ApprovedRestore, error)) e
 
 	// Publish the reservation before releasing the request/maintenance
 	// boundary so DB replacement and Job deletion see this tracked restore.
-	approved.runContext, approved.cancelRun = context.WithCancelCause(context.Background())
+	runCtx, cancelRun := context.WithCancelCause(context.Background())
 	r.publishRestoreCancellation(&RunStatus{
 		Active: true, JobID: approved.Run.JobID, RunID: approved.Run.ID, JobName: approved.Plan.Job.Name,
 		RunType: "restore", RestoreRequestID: approved.RequestID, ItemsTotal: 1, StartedAt: time.Now().Format(time.RFC3339),
-	}, approved.cancelRun)
+	}, cancelRun)
 	transferred = true
 	r.backgroundWork.Go(func() {
 		defer release()
 		plan := approved.Plan
-		r.runTrackedRestore(approved.Run, plan.Point, []RestoreTarget{{Name: plan.Item.ItemName, Type: plan.Item.ItemType}},
+		r.runPublishedRestore(runCtx, cancelRun, approved.Run, plan.Point, []RestoreTarget{{Name: plan.Item.ItemName, Type: plan.Item.ItemType}},
 			"", approved.Passphrase, plan.Job.Name, &approved)
 	})
 	return nil
