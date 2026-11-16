@@ -74,6 +74,39 @@ test.describe('Settings Configuration & Management', () => {
     await expect(page.getByText(/Test notification sent to Discord!/i)).toBeVisible();
   });
 
+  test('enables a migrated Discord webhook with Unraid notifications off (#656)', async ({ page }) => {
+    const webhook = 'https://discord.com/api/webhooks/123456/fixture-token';
+    const settings = { notifications_enabled: 'false', discord_notify_on: 'never', discord_webhook_url: webhook };
+    await page.route('**/api/v1/settings', route => {
+      if (route.request().method() === 'PUT') Object.assign(settings, route.request().postDataJSON());
+      return route.fulfill({ json: settings });
+    });
+
+    await page.goto('/#/settings');
+    const notificationsTab = page.getByRole('tab', { name: 'Notifications', exact: true });
+    await notificationsTab.click();
+    const unraid = page.getByRole('switch', { name: 'Toggle notifications' });
+    const discord = page.getByRole('combobox', { name: 'Notify On', exact: true });
+    await expect(unraid).toHaveAttribute('aria-checked', 'false');
+    await expect(discord).toHaveValue('never');
+    await expect(page.getByLabel('Webhook URL', { exact: true })).toHaveValue(webhook);
+    await expect(page.getByText(/Upgrades preserve existing mutes/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Test', exact: true })).toBeEnabled();
+
+    const save = page.waitForRequest(req => req.method() === 'PUT' && req.url().endsWith('/api/v1/settings'));
+    await discord.selectOption('always');
+    await page.getByRole('button', { name: 'Save Discord Settings', exact: true }).click();
+    const saved = (await save).postDataJSON();
+    expect(saved).toMatchObject({ discord_notify_on: 'always', discord_webhook_url: webhook });
+    expect(saved).not.toHaveProperty('notifications_enabled');
+    await expect(page.getByText('Discord settings saved')).toBeVisible();
+
+    await page.reload();
+    await notificationsTab.click();
+    await expect(unraid).toHaveAttribute('aria-checked', 'false');
+    await expect(discord).toHaveValue('always');
+  });
+
   test('triggers diagnostics bundle export download', async ({ page }) => {
     await page.goto('/#/settings');
 

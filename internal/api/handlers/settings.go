@@ -287,6 +287,7 @@ func (h *SettingsHandler) List(w http.ResponseWriter, r *http.Request) {
 	for _, key := range sensitiveSettingKeys {
 		delete(settings, key)
 	}
+	delete(settings, db.DiscordBackupMuteMigrationKey)
 
 	respondJSON(w, http.StatusOK, settings)
 }
@@ -303,11 +304,12 @@ var sensitiveSettingKeys = []string{
 // protectedSettingKeys are keys that cannot be modified via the generic Update
 // endpoint. They must be managed through their dedicated handlers.
 var protectedSettingKeys = map[string]bool{
-	"api_key_hash":                 true,
-	"api_key_sealed":               true,
-	"encryption_passphrase":        true,
-	"encryption_passphrase_hash":   true,
-	"encryption_passphrase_sealed": true,
+	"api_key_hash":                   true,
+	"api_key_sealed":                 true,
+	"encryption_passphrase":          true,
+	"encryption_passphrase_hash":     true,
+	"encryption_passphrase_sealed":   true,
+	db.DiscordBackupMuteMigrationKey: true,
 	// Path settings are validated by PUT /settings/database, /settings/staging
 	// and /settings/appdata. Later code treats them as authorized locations.
 	"snapshot_path_override": true,

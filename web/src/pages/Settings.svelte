@@ -1657,13 +1657,11 @@
               </div>
             </button>
           </div>
-          {#if notificationsOn}
-            <div class="px-5 py-3">
-              <p class="text-xs text-text-dim">
-                Each job has its own "Notify On" preference (Always, On Failure, Never) – configure it in the job's advanced settings. This global toggle enables or disables all Vault notifications.
-              </p>
-            </div>
-          {/if}
+          <div class="px-5 py-3">
+            <p class="text-xs text-text-dim">
+              Discord backup alerts have their own Notify On control. A job set to Never mutes its backup alerts on both channels.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -1702,7 +1700,7 @@
           <div class="px-5 py-4">
             <div class="block text-sm font-medium text-text mb-1.5">
               <label for="discord-notify">Notify On</label>
-              <Tooltip label="Notify On" text="Controls which Discord alerts this webhook sends. This is independent of each job's own notification preference." />
+              <Tooltip label="Notify On" text="Choose which backup outcomes this webhook receives. Failures only includes partial backups. A job set to Never stays muted." />
             </div>
             <select
               id="discord-notify"
@@ -1714,6 +1712,11 @@
               <option value="failure">Failures only</option>
               <option value="never">Disabled</option>
             </select>
+            {#if !notificationsOn && discordNotifyOn === 'never' && discordWebhookUrl}
+              <p class="mt-2 text-xs text-text-dim">
+                Upgrades preserve existing mutes by keeping the webhook and setting Discord to Disabled. Choose another Notify On setting and save to enable Discord backup alerts.
+              </p>
+            {/if}
           </div>
           <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>

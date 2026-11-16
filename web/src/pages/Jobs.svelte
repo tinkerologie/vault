@@ -1903,7 +1903,7 @@
 
         <!-- Advanced: Notifications -->
         <div class="relative">
-          {@render summaryTip("Notifications", "Controls when this job sends Unraid system notifications. The global notifications toggle in Settings must be enabled for any to be sent. Discord notifications are configured separately in Settings.")}
+          {@render summaryTip("Notifications", "Always and On Failure set the job’s Unraid backup alerts. Never mutes the job on both Unraid and Discord. Discord backup alerts have their own Notify On control in Settings.")}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
               <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>

@@ -1,5 +1,10 @@
 package db
 
+import (
+	"database/sql"
+	"fmt"
+)
+
 const schema = `
 CREATE TABLE IF NOT EXISTS storage_destinations (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -405,6 +410,45 @@ var alterMigrations = []string{
 // settingZFSImportMarkerDone records that the one-time ZFS import marker
 // migration has run.
 const settingZFSImportMarkerDone = "zfs_import_marker_done"
+
+// DiscordBackupMuteMigrationKey records completion of the one-time #656 upgrade.
+const DiscordBackupMuteMigrationKey = "discord_backup_mute_migrated"
+
+// migrateDiscordBackupMute preserves the legacy shared mute. The marker and
+// Discord preference commit together so a failed rewrite can be retried and a
+// later operator choice survives subsequent opens.
+func migrateDiscordBackupMute(database *sql.DB) error {
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	marker, err := tx.Exec(`INSERT INTO settings (key, value) VALUES (?, '1')
+		ON CONFLICT(key) DO NOTHING`, DiscordBackupMuteMigrationKey)
+	if err != nil {
+		return fmt.Errorf("recording migration: %w", err)
+	}
+	inserted, err := marker.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking migration marker: %w", err)
+	}
+	if inserted == 0 {
+		return nil
+	}
+
+	// A missing notifications_enabled setting used to default to true.
+	// Any stored value other than "true" previously muted both channels.
+	if _, err := tx.Exec(`INSERT INTO settings (key, value)
+		SELECT 'discord_notify_on', 'never'
+		WHERE EXISTS (SELECT 1 FROM settings WHERE key = 'notifications_enabled' AND value <> 'true')
+		  AND EXISTS (SELECT 1 FROM settings WHERE key = 'discord_webhook_url' AND value <> '')
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+		WHERE settings.value <> excluded.value`); err != nil {
+		return fmt.Errorf("preserving Discord backup mute: %w", err)
+	}
+	return tx.Commit()
+}
 
 // dataMigrations are idempotent row rewrites, applied after alterMigrations.
 // Unlike the ALTER statements these are not expected to fail, so errors are

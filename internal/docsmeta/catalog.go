@@ -80,9 +80,9 @@ var AppSettings = []SettingDoc{
 	{"anomaly_notify_min_severity", "string", "critical", "Minimum anomaly severity for a notification. The values are info, warning, and critical.", GroupAnomaly},
 
 	// Notifications
-	{"notifications_enabled", "bool", "true", "Set to true to enable notifications.", GroupNotifications},
+	{"notifications_enabled", "bool", "true", "Enables native Unraid notifications. Discord backup alerts use discord_notify_on.", GroupNotifications},
 	{"discord_webhook_url", "string", "", "Discord webhook URL for notifications. An empty value disables Discord notifications.", GroupNotifications},
-	{"discord_notify_on", "string", "always", "When Vault sends Discord notifications. The values are always and failure.", GroupNotifications},
+	{"discord_notify_on", "string", "always", "Sets Discord backup delivery independently. Use always for all backups, failure for failed and partial backups, or never to disable backup alerts. A job set to Never mutes both backup channels. Upgrades with Unraid notifications off keep the existing webhook and set Discord to Disabled. Selecting another value enables Discord backup alerts again.", GroupNotifications},
 	{"discord_bot_username", "string", "", "Optional user name for Discord webhook messages.", GroupNotifications},
 	{"discord_bot_avatar_url", "string", "", "Optional URL for the image in Discord webhook messages.", GroupNotifications},
 	{"discord_mention_role_id", "string", "", "ID of the Discord role to mention in notifications. An empty value disables role mentions.", GroupNotifications},
@@ -162,7 +162,7 @@ var FieldDocs = map[string]string{ // #nosec G101 -- values are human-readable d
 	"Job.VMMode":                "Virtual machine backup mode (snapshot or cold).",
 	"Job.PreScript":             "Shell script that Vault runs before the backup starts.",
 	"Job.PostScript":            "Shell script that Vault runs after the backup ends.",
-	"Job.NotifyOn":              "When Vault sends notifications for this job. The values are always, failure, and never.",
+	"Job.NotifyOn":              "Sets when this job sends native Unraid backup alerts. The values are always, failure, and never. The never value mutes both Unraid and Discord backup alerts from this job.",
 	"Job.VerifyBackup":          "If true, Vault does an integrity check after it writes the backup.",
 	"Job.StorageDestID":         "Foreign key to the storage destination this job writes to.",
 	"Job.SourceID":              "Foreign key to the replication source, when applicable.",

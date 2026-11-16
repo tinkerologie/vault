@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Configure native Unraid and direct Discord backup alerts independently. Upgrading with Unraid notifications off preserves the Discord mute by selecting Disabled and keeping the saved webhook. A job set to Never stays muted on both channels (#656).
+
 - Include free and total space in low-space anomaly notifications and supply a description for Unraid notifications that would otherwise be blank (#653).
 - Show the recorded Restore Run result in the wizard and Restore page when Vault detects completion by polling or after reconnecting, including when the result is briefly unavailable (#654).
 - Restore preflight estimates space for the selected Backup Items and reports which staging and custom destination filesystems it checked (#655).

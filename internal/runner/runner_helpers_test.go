@@ -462,8 +462,7 @@ func TestCleanupStorageDestinationBadAdapter(t *testing.T) {
 	}
 }
 
-// TestSendNotificationDisabled covers the global-off branch (no Unraid
-// notify, no Discord webhook lookup attempted).
+// TestSendNotificationDisabled covers Unraid off with no Discord webhook.
 func TestSendNotificationDisabled(t *testing.T) {
 	t.Parallel()
 	r, database, _ := setupTestRunner(t)

@@ -129,6 +129,11 @@ func Open(path string) (*DB, error) {
 		}
 	}
 
+	if err := migrateDiscordBackupMute(sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("migrate Discord backup mute: %w", err)
+	}
+
 	d := &DB{path: path}
 	d.handle.Store(sqlDB)
 	if err := d.insertDefaultSettings(); err != nil {
