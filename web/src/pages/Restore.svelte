@@ -5,7 +5,7 @@
   import { getRawHash } from '../lib/router.svelte.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
-  import { outcomeFromCompletion, outcomeFromRun } from '../lib/restore-sync.js'
+  import { outcomeFromCompletion, waitForRestoreOutcome } from '../lib/restore-sync.js'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -48,7 +48,7 @@
     // A delayed event for an older run must not displace the latest run for this job.
     if (tracked && Number(runId) < Number(tracked.runId)) return
     if (tracked?.runId !== String(runId)) {
-      tracked = { jobId, runId: String(runId), pending: false, resolving: false, reported: false }
+      tracked = { jobId, runId: String(runId), resolving: false, reported: false }
       restoreRuns.set(jobKey, tracked)
     }
     return tracked
@@ -69,7 +69,6 @@
   }
 
   function reportRestoreOutcome(tracked, outcome) {
-    tracked.pending = false
     tracked.reported = true
     showRestoreOutcome(outcome, tracked.jobId)
   }
@@ -77,13 +76,11 @@
   async function resolveRestoreOutcome(tracked) {
     if (tracked.resolving) return
     tracked.resolving = true
+    const jobKey = String(tracked.jobId)
+    const isCurrent = () => !destroyed && !tracked.reported && restoreRuns.get(jobKey) === tracked
     try {
-      const outcome = outcomeFromRun(await api.getRun(tracked.runId), tracked)
-      if (!destroyed && outcome && !tracked.reported && restoreRuns.get(String(tracked.jobId)) === tracked) {
-        reportRestoreOutcome(tracked, outcome)
-      }
-    } catch {
-      // A later runner snapshot can retry the lookup.
+      const outcome = await waitForRestoreOutcome(api.getRun, tracked, isCurrent)
+      if (outcome && isCurrent()) reportRestoreOutcome(tracked, outcome)
     } finally {
       tracked.resolving = false
     }
@@ -100,8 +97,7 @@
     if (!tracked || tracked.reported) return
     if (outcome) {
       reportRestoreOutcome(tracked, outcome)
-    } else if (!tracked.pending) {
-      tracked.pending = true
+    } else {
       void resolveRestoreOutcome(tracked)
     }
   }
@@ -121,9 +117,6 @@
         rememberRestoreRun(msg)
       } else if (msg.type === 'runner_status_snapshot') {
         if (msg.status?.active) rememberRestoreRun(msg.status)
-        for (const tracked of restoreRuns.values()) {
-          if (tracked.pending) void resolveRestoreOutcome(tracked)
-        }
       } else if (msg.type === 'import_completed') {
         loadJobs()
       }

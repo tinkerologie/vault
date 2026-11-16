@@ -5,7 +5,7 @@
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getProgress, restoreFromStatus } from '../lib/progress.svelte.js'
-  import { matchesJobId, outcomeFromCompletion, outcomeFromRun, shouldClearOnSnapshot } from '../lib/restore-sync.js'
+  import { matchesJobId, outcomeFromCompletion, outcomeFromRun, shouldClearOnSnapshot, waitForRestoreOutcome } from '../lib/restore-sync.js'
   import { getPointCoverage, assignItemsToChosenPoints } from '../lib/restore-plan.js'
   import { formatDate, formatBytes, itemDisplayLabel, itemTypeIcon, itemTypeColor, itemTypeLabel, effectiveItemType, commonItemType, buildFileTree } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
@@ -186,20 +186,21 @@
     const key = `${generation}:run:${runId}`
     if (outcomeLookups.has(key)) return
     outcomeLookups.add(key)
-    try {
-      const outcome = outcomeFromRun(await api.getRun(runId), expected)
-      if (destroyed || generation !== restoreGeneration || !outcome) return
-      if (adopted) {
-        if (pendingAdoptedRun === expected && unitRuns.size === 0) {
-          pendingAdoptedRun = null
-          restoreOutcome = { ...outcome, sizeBytes: outcome.bytes }
-        }
-        return
-      }
+    const isCurrent = () => {
+      if (destroyed || generation !== restoreGeneration) return false
+      if (adopted) return pendingAdoptedRun === expected && unitRuns.size === 0
       const current = unitRuns.get(jobId)
-      if (unitIsPending(current) && matchesJobId(current.runId, runId)) setUnitOutcome(current, runId, outcome)
-    } catch {
-      // Leave the outcome pending for the next runner snapshot.
+      return unitIsPending(current) && matchesJobId(current.runId, runId)
+    }
+    try {
+      const outcome = await waitForRestoreOutcome(api.getRun, expected, isCurrent)
+      if (!outcome || !isCurrent()) return
+      if (adopted) {
+        pendingAdoptedRun = null
+        restoreOutcome = { ...outcome, sizeBytes: outcome.bytes }
+      } else {
+        setUnitOutcome(unitRuns.get(jobId), runId, outcome)
+      }
     } finally {
       outcomeLookups.delete(key)
     }
@@ -612,7 +613,6 @@
         if (shouldClearOnSnapshot(msg.status, submittedJobIds.size > 0 ? submittedJobIds : restoringJobId)) {
           if (unitRuns.size === 0) {
             restoring = false
-            if (pendingAdoptedRun) void resolveRunOutcome(pendingAdoptedRun, true)
           } else {
             for (const unit of unitRuns.values()) {
               if (unitIsPending(unit)) void reconcileUnitOutcome(unit)

@@ -51,6 +51,25 @@ export function outcomeFromRun(run, { jobId, runId }) {
   return outcomeFromCompletion(run)
 }
 
+// A reconnect can produce just one snapshot, so retry without waiting for another event.
+export async function waitForRestoreOutcome(getRun, expected, isCurrent) {
+  let delay = 1000
+  while (isCurrent()) {
+    let run
+    try {
+      run = await getRun(expected.runId)
+    } catch {
+      // The API can be briefly unavailable as the connection recovers.
+    }
+    if (!isCurrent()) return null
+    const outcome = outcomeFromRun(run, expected)
+    if (outcome) return outcome
+    await new Promise(resolve => setTimeout(resolve, delay))
+    delay = Math.min(delay * 2, 8000)
+  }
+  return null
+}
+
 /**
  * Checks whether a runner status snapshot represents an active restore for the given job or set of jobs.
  *

@@ -1,7 +1,7 @@
 import { test, expect, type Page, type WebSocketRoute } from '@playwright/test';
 import { setupVaultMockApi, type VaultMockOptions } from './mocks/vault-api';
 
-test.describe('Polling restore outcomes (#654)', () => {
+test.describe('Restore Run outcomes (#654)', () => {
   const idle = { active: false };
   const active = { active: true, job_id: 1, run_id: 7, run_type: 'restore', items_total: 1 };
   const run = { id: 7, job_id: 1, run_type: 'restore', status: 'completed', items_done: 1, items_failed: 0, items_total: 1 };
@@ -91,6 +91,33 @@ test.describe('Polling restore outcomes (#654)', () => {
     await expect(page.getByText('Restore completed successfully', { exact: true })).toBeVisible();
     await expect(page.getByRole('alert').filter({ hasText: /1\/1 items restored/ })).toBeVisible();
     expect(lookups).toBe(0);
+  });
+
+  test('retries the outcome after reconnect without another snapshot', async ({ page }) => {
+    const sockets: WebSocketRoute[] = [];
+    let available = false;
+    let attempts = 0;
+    await setupVaultMockApi(page, { runResult: () => {
+      attempts += 1;
+      return available ? run : 503;
+    } });
+    await page.routeWebSocket('**/api/v1/ws', ws => { sockets.push(ws); });
+    await submitRestore(page);
+    await expect.poll(() => sockets.length).toBe(1);
+    sockets[0].send(JSON.stringify({ ...active, type: 'job_run_started' }));
+    await expect(page.getByText('Restore Log', { exact: true })).toBeVisible();
+
+    const unavailable = page.waitForResponse(res => res.url().endsWith('/runs/7') && res.status() === 503);
+    await sockets[0].close();
+    await expect.poll(() => sockets.length).toBe(2);
+    await unavailable;
+    await expect.poll(() => attempts).toBe(2);
+    await expect(page.getByRole('button', { name: 'Restoring...' })).toBeVisible();
+
+    available = true;
+    await expect(page.getByText('Restore completed successfully', { exact: true })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: /1\/1 items restored/ })).toBeVisible();
+    expect(sockets).toHaveLength(2);
   });
 });
 
