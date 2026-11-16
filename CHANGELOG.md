@@ -30,8 +30,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Restore Docker bind mounts saved with structured mount options. Keep alternate volume paths and the Unraid template in sync (#666).
 - Stopping an approved Docker Restore Run now also interrupts a single-file bind mount mid-file instead of finishing it (#638).
 - Docker Restore Requests for older backups that never recorded the item type now reach saved-configuration review, which confirms the type. If it can't, the request stays ineligible and says why (#638).
+
+### Security
+
+- Build Vault with Go 1.27.4 to include the standard-library HTTP server security fix (GO-2026-6859).
 
 ## [v2026.11.02] - 2026-11-12
 

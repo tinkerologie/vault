@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/types/container"
+	mounttypes "github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
@@ -987,6 +988,10 @@ func checkVolumeTargetCollisions(restoreDest string, mounts []mountInfo) error {
 		if err != nil {
 			return err
 		}
+		target, err = safepath.ResolveExistingPrefix(target)
+		if err != nil {
+			return fmt.Errorf("resolving container volume target: %w", err)
+		}
 		if prev, dup := seen[target]; dup {
 			return fmt.Errorf("cannot restore to %s: mounts %q and %q both resolve to %q; "+
 				"restore to their original locations instead, or restore one at a time",
@@ -1751,6 +1756,14 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	if err := enforceRestorePrivileges(ctx, item, inspect); err != nil {
 		return err
 	}
+	destination, _ := item.Settings["restore_destination"].(string)
+	restoreDest, err := normalizeContainerRestoreDestination(destination)
+	if err != nil {
+		return err
+	}
+	if _, _, err := inspect.structuredRestoreBinds(restoreDest); err != nil {
+		return err
+	}
 	if reviewed, ok := reviewedContainerFrom(ctx); ok {
 		if err := validateReviewedContainerArchives(ctx, sourceDir, inspect, reviewed.review); err != nil {
 			return err
@@ -1792,18 +1805,6 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		_ = resp.Close()
 	}
 
-	// Check for alternate restore destination.
-	restoreDest, _ := item.Settings["restore_destination"].(string)
-	if restoreDest != "" {
-		normalizedRestoreDest, err := normalizeRestorePath(restoreDest)
-		if err != nil {
-			return err
-		}
-		if _, err := safepath.CheckCustomRestoreDestination(restoreDest); err != nil {
-			return err
-		}
-		restoreDest = normalizedRestoreDest
-	}
 	if err := checkVolumeTargetCollisions(restoreDest, inspect.mountInfos()); err != nil {
 		return err
 	}
@@ -1987,8 +1988,9 @@ type restoreInspect struct {
 		MacAddress   string            `json:"MacAddress"` // legacy Docker inspect field
 	} `json:"Config"`
 	HostConfig struct {
-		Binds        []string `json:"Binds"`
-		NetworkMode  string   `json:"NetworkMode"`
+		Binds        []string           `json:"Binds"`
+		Mounts       []mounttypes.Mount `json:"Mounts"`
+		NetworkMode  string             `json:"NetworkMode"`
 		PortBindings map[string][]struct {
 			HostIP   string `json:"HostIp"`
 			HostPort string `json:"HostPort"`
@@ -2119,15 +2121,21 @@ func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item
 		}
 	}
 
-	// Remove existing container with the same name if present.
-	if reviewed, ok := reviewedContainerFrom(ctx); ok {
-		if err := checkReviewedContainerPaths(ctx, inspect, restoreDest); err != nil {
+	reviewed, operatorReviewed := reviewedContainerFrom(ctx)
+	if operatorReviewed && inspect.pinnedImage == "" {
+		if err := h.checkReviewedClassicImage(ctx, inspect); err != nil {
 			return "", err
 		}
-		if inspect.pinnedImage == "" {
-			if err := h.checkReviewedClassicImage(ctx, inspect); err != nil {
-				return "", err
-			}
+	}
+	mounts, mountRewrites, err := inspect.structuredRestoreBinds(restoreDest)
+	if err != nil {
+		return "", err
+	}
+
+	// Remove existing container with the same name if present.
+	if operatorReviewed {
+		if err := checkReviewedContainerPathPlan(ctx, inspect, restoreDest, mounts); err != nil {
+			return "", err
 		}
 		if err := h.removeReviewedContainer(ctx, reviewed); err != nil {
 			return "", err
@@ -2174,6 +2182,7 @@ func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item
 	if err != nil {
 		return "", err
 	}
+	templateRewrites = append(templateRewrites, mountRewrites...)
 
 	// Convert the inspected PortBindings (raw `"<port>/<proto>": [{HostIp, HostPort}]`
 	// JSON from the original container) into the typed network.PortMap the
@@ -2206,6 +2215,7 @@ func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item
 
 	hostConfig := &container.HostConfig{
 		Binds:        binds,
+		Mounts:       mounts,
 		NetworkMode:  container.NetworkMode(inspect.HostConfig.NetworkMode),
 		PortBindings: portBindings,
 		RestartPolicy: container.RestartPolicy{
@@ -2976,6 +2986,17 @@ func (h *ContainerHandler) RestorePreparedChunked(ctx context.Context, item Back
 	if err := enforceRestorePrivileges(ctx, item, inspect); err != nil {
 		return err
 	}
+	destination := destPath
+	if destination == "" {
+		destination, _ = item.Settings["restore_destination"].(string)
+	}
+	restoreDest, err := normalizeContainerRestoreDestination(destination)
+	if err != nil {
+		return err
+	}
+	if _, _, err := inspect.structuredRestoreBinds(restoreDest); err != nil {
+		return err
+	}
 
 	// 2. Get the image. Chunked scope saved no image.tar, so the backup-time
 	//    digest is the only link to the code that was backed up; the tag may
@@ -3025,23 +3046,10 @@ func (h *ContainerHandler) RestorePreparedChunked(ctx context.Context, item Back
 		}()
 	}
 
-	// Resolve custom restore destination: explicit destPath parameter wins,
-	// fall back to item.Settings["restore_destination"].
-	restoreDest := destPath
 	if restoreDest == "" {
-		restoreDest, _ = item.Settings["restore_destination"].(string)
-	}
-	if restoreDest != "" {
-		normalized, err := normalizeRestorePath(restoreDest)
-		if err != nil {
+		if err := authorizeVolumeSources(chunkedVolumeSources(m, inspect, extractRestoreFilePaths(item.Settings)), h.liveMountSources(ctx, item.Name)); err != nil {
 			return err
 		}
-		if _, err := safepath.CheckCustomRestoreDestination(restoreDest); err != nil {
-			return err
-		}
-		restoreDest = normalized
-	} else if err := authorizeVolumeSources(chunkedVolumeSources(m, inspect, extractRestoreFilePaths(item.Settings)), h.liveMountSources(ctx, item.Name)); err != nil {
-		return err
 	}
 
 	if err := checkReviewedContainerPaths(ctx, inspect, restoreDest); err != nil {

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	mounttypes "github.com/moby/moby/api/types/mount"
+
 	"github.com/tinkerologie/vault/internal/safepath"
 )
 
@@ -75,16 +77,32 @@ func hostPrivileges(ri restoreInspect) []string {
 		if !strings.HasPrefix(source, "/") {
 			continue // a named volume
 		}
-		// Docker follows symlinks, so a link under /mnt can point anywhere,
-		// including through a directory Docker would create. Resolve the deepest
-		// existing ancestor; anything that cannot be resolved needs approval.
-		clean := filepath.Clean(source)
-		resolved, err := safepath.ResolveExistingPrefix(clean)
-		if err != nil || !strings.HasPrefix(clean, hostDataRoot) || !strings.HasPrefix(resolved, hostDataRoot) {
-			out = append(out, fmt.Sprintf("host path %q", clean))
+		out = appendHostBindPrivilege(out, source)
+	}
+	for _, mount := range hc.Mounts {
+		if mount.Type != mounttypes.TypeBind {
+			continue
+		}
+		out = appendHostBindPrivilege(out, mount.Source)
+		if mount.BindOptions != nil {
+			switch mount.BindOptions.Propagation {
+			case mounttypes.PropagationShared, mounttypes.PropagationRShared:
+				out = append(out, fmt.Sprintf("shared mount propagation for %q", mount.Target))
+			}
 		}
 	}
 	return out
+}
+
+func appendHostBindPrivilege(privileges []string, source string) []string {
+	// Docker follows symlinks, including through a directory it may create.
+	// Resolve the deepest existing ancestor before classifying the source.
+	clean := filepath.Clean(source)
+	resolved, err := safepath.ResolveExistingPrefix(clean)
+	if err != nil || !strings.HasPrefix(clean, hostDataRoot) || !strings.HasPrefix(resolved, hostDataRoot) {
+		return append(privileges, fmt.Sprintf("host path %q", clean))
+	}
+	return privileges
 }
 
 // enforceRestorePrivileges stops an untrusted artifact granting itself host

@@ -74,6 +74,16 @@ func normalizeRestorePath(path string) (string, error) {
 	return resolvedPath, nil
 }
 
+func normalizeContainerRestoreDestination(destination string) (string, error) {
+	if destination == "" {
+		return "", nil
+	}
+	if _, err := safepath.CheckCustomRestoreDestination(destination); err != nil {
+		return "", err
+	}
+	return normalizeRestorePath(destination)
+}
+
 func normalizeRestoreComponent(name string) (string, error) {
 	normalizedName, err := safepath.NormalizeComponent(name)
 	if err != nil {

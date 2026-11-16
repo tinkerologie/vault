@@ -15,6 +15,7 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/distribution/reference"
+	mounttypes "github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
 
 	"github.com/tinkerologie/vault/internal/bounded"
@@ -224,6 +225,10 @@ func (h *ContainerHandler) reviewContainerRestore(ctx context.Context, item Back
 		return ContainerRestoreReview{}, err
 	}
 	result.Effects.Binds = binds
+	structuredBinds, _, err := inspect.structuredRestoreBinds(destination)
+	if err != nil {
+		return ContainerRestoreReview{}, err
+	}
 	mounts := inspect.mountInfos()
 	if err := checkVolumeTargetCollisions(destination, mounts); err != nil {
 		return ContainerRestoreReview{}, err
@@ -250,7 +255,9 @@ func (h *ContainerHandler) reviewContainerRestore(ctx context.Context, item Back
 		// A mount with no saved data is still applied in the recreated
 		// configuration. Preserve its path for review even when it would
 		// not pass Vault's independent rules for extracting backup files.
-		if mode != "configuration_only" || destination != "" {
+		if source := structuredBindSource(structuredBinds, mount.Destination); source != "" {
+			target = source
+		} else if mode != "configuration_only" || destination != "" {
 			target, err = normalizeRestorePath(target)
 			if err != nil {
 				return ContainerRestoreReview{}, err
@@ -521,6 +528,14 @@ func validateReviewedContainerArchives(ctx context.Context, dir string, inspect 
 }
 
 func checkReviewedContainerPaths(ctx context.Context, inspect restoreInspect, restoreDest string) error {
+	structuredBinds, _, err := inspect.structuredRestoreBinds(restoreDest)
+	if err != nil {
+		return err
+	}
+	return checkReviewedContainerPathPlan(ctx, inspect, restoreDest, structuredBinds)
+}
+
+func checkReviewedContainerPathPlan(ctx context.Context, inspect restoreInspect, restoreDest string, structuredBinds []mounttypes.Mount) error {
 	reviewed, ok := reviewedContainerFrom(ctx)
 	if !ok {
 		return nil
@@ -531,6 +546,13 @@ func checkReviewedContainerPaths(ctx context.Context, inspect restoreInspect, re
 	if restoreDest != "" {
 		resolved, err := normalizeRestorePath(restoreDest)
 		if err != nil || resolved != restoreDest {
+			return ErrContainerReviewChanged
+		}
+	}
+	for _, bind := range structuredBinds {
+		if !slices.ContainsFunc(reviewed.review.Effects.Volumes, func(volume ContainerVolumeEffect) bool {
+			return volume.Mount == bind.Target && volume.Target == bind.Source
+		}) {
 			return ErrContainerReviewChanged
 		}
 	}
