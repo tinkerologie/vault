@@ -71,7 +71,7 @@ func TestSendNotificationBranchesB458(t *testing.T) {
 	r, d, _ := setupTestRunner(t)
 	job := db.Job{Name: "notify-job", NotifyOn: "always"}
 
-	// Global switch off: early return.
+	// Turning off Unraid leaves both channels silent without a webhook.
 	_ = d.SetSetting("notifications_enabled", "false")
 	r.sendNotification(job, "failed", 0, 1, 0, 1, []string{"a"})
 

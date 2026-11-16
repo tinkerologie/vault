@@ -5,6 +5,7 @@ package runner
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"testing"
 
@@ -53,11 +54,26 @@ func d458RunGated(t *testing.T, r *Runner, jobID int64, started, release string,
 	<-done
 }
 
+func recordFailureOnlyBackupRecipients(t *testing.T, r *Runner, d *db.DB) *[]string {
+	t.Helper()
+	for key, value := range map[string]string{
+		"notifications_enabled": "true",
+		"discord_notify_on":     "failure",
+		"discord_webhook_url":   backupNotificationFixtureWebhook,
+	} {
+		if err := d.SetSetting(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return recordBackupRecipients(t, r, backupNotificationFixtureWebhook)
+}
+
 // TestRunJob458UserCancelDuringPreScript covers the operator-cancel outcome:
 // the item loop sees the cancelled context, the run ends "cancelled" with the
 // user message, and no retry is scheduled.
 func TestRunJob458UserCancelDuringPreScript(t *testing.T) {
 	r, d := newTestRunner(t)
+	recipients := recordFailureOnlyBackupRecipients(t, r, d)
 	script, started, release := d458GatedPreScript(t)
 	jobID := d458Seed(t, d, "", d458Job{
 		job:   db.Job{PreScript: script, RetryMaxOverride: new(int64(3))},
@@ -80,6 +96,9 @@ func TestRunJob458UserCancelDuringPreScript(t *testing.T) {
 	if run.ItemsDone != 0 {
 		t.Errorf("items done = %d, want 0", run.ItemsDone)
 	}
+	if len(*recipients) != 0 {
+		t.Errorf("operator cancellation notified %v, want no recipients", *recipients)
+	}
 }
 
 // TestRunJob458WatchdogStyleCancelSchedulesRetry covers the non-operator
@@ -87,6 +106,7 @@ func TestRunJob458UserCancelDuringPreScript(t *testing.T) {
 // without the Cancelling flag, so the run is "cancelled" and a retry is due.
 func TestRunJob458WatchdogStyleCancelSchedulesRetry(t *testing.T) {
 	r, d := newTestRunner(t)
+	recipients := recordFailureOnlyBackupRecipients(t, r, d)
 	script, started, release := d458GatedPreScript(t)
 	jobID := d458Seed(t, d, "", d458Job{
 		job:   db.Job{PreScript: script, RetryMaxOverride: new(int64(3))},
@@ -109,5 +129,8 @@ func TestRunJob458WatchdogStyleCancelSchedulesRetry(t *testing.T) {
 	}
 	if run.RetryNextAt == nil {
 		t.Error("a watchdog cancel should schedule a retry")
+	}
+	if !slices.Equal(*recipients, []string{"discord"}) {
+		t.Errorf("watchdog cancellation notified %v, want only Discord", *recipients)
 	}
 }

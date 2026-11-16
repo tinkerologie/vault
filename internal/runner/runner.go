@@ -195,6 +195,10 @@ type Runner struct {
 	// When nil, engine.NewContainerHandler().ListItems() is used.
 	containerLister func() ([]engine.BackupItem, error)
 
+	// Backup notification senders can be replaced per runner in tests.
+	sendBackupUnraid  func(jobName, status string, done, failed int, sizeBytes int64) error
+	sendBackupDiscord func(string, notify.DiscordEmbed, notify.DiscordOptions)
+
 	// autoPruneGracePeriod optionally overrides defaultAutoPruneGracePeriod for tests.
 	autoPruneGracePeriod time.Duration
 
@@ -2349,7 +2353,12 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 	// runFinalizationStep so any other delay (Discord HTTP, DB lookup) is also
 	// bounded. Captures all needed locals in stable copies.
 	localJob := job
-	localStatus := status
+	notificationStatus := status
+	if status == "cancelled" && !userCancelled {
+		// A watchdog stop counts as a Discord backup failure while the run
+		// itself keeps its cancelled status.
+		notificationStatus = "stalled"
+	}
 	localDone := itemsDone
 	localFailed := itemsFailed
 	localSize := totalSize
@@ -2358,7 +2367,7 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 	// notify.Send is already bounded internally (30s exec timeout), so the
 	// step context is unused here.
 	r.runFinalizationStep("notify", jobID, runID, finalizeNotifyTimeout, func(context.Context) {
-		r.sendNotification(localJob, localStatus, localDone, localFailed, localSize, localDuration, localFailedNames)
+		r.sendNotification(localJob, notificationStatus, localDone, localFailed, localSize, localDuration, localFailedNames)
 	})
 }
 
@@ -6231,57 +6240,67 @@ func (r *Runner) logActivity(level, category, message, details string) {
 	})
 }
 
-// sendNotification dispatches Unraid notifications based on job outcome and the
-// job's notify_on preference ("always", "failure", "never").
-// It also respects the global notifications_enabled setting.
+// sendNotification dispatches backup outcomes independently to Unraid and Discord.
+// A per-job mute applies to both destinations.
 func (r *Runner) sendNotification(job db.Job, status string, done, failed int, sizeBytes int64, duration time.Duration, failedNames []string) {
-	// Check global notification switch first.
-	globalEnabled, _ := r.db.GetSetting("notifications_enabled", docsmeta.DefaultFor("notifications_enabled"))
-	if globalEnabled != "true" {
+	if job.NotifyOn == "never" {
 		return
 	}
 
-	pref := job.NotifyOn
-	if pref == "" {
-		pref = "failure"
-	}
-	if pref == "never" {
-		return
+	unraidEnabled, unraidErr := r.db.GetSetting("notifications_enabled", docsmeta.DefaultFor("notifications_enabled"))
+	webhookURL, webhookErr := r.db.GetSetting("discord_webhook_url", docsmeta.DefaultFor("discord_webhook_url"))
+	discordPref, discordErr := r.db.GetSetting("discord_notify_on", docsmeta.DefaultFor("discord_notify_on"))
+	unraid, discord := backupNotificationRecipients(job.NotifyOn, status, discordPref,
+		unraidErr == nil && unraidEnabled == "true",
+		webhookErr == nil && discordErr == nil && webhookURL != "")
+	if unraid {
+		send := r.sendBackupUnraid
+		if send == nil {
+			send = sendUnraidBackupOutcome
+		}
+		if err := send(job.Name, status, done, failed, sizeBytes); err != nil {
+			log.Printf("runner: notification error: %v", err)
+		}
 	}
 
-	// Unraid notifications.
+	if discord {
+		embed := r.buildDiscordEmbed(job.Name, status, done, failed, sizeBytes, duration, failedNames)
+		opts := r.discordOptions(status)
+		send := r.sendBackupDiscord
+		if send == nil {
+			send = sendDiscordBackupOutcome
+		}
+		send(webhookURL, embed, opts)
+	}
+}
+
+func backupNotificationRecipients(jobPref, status, discordPref string, unraidEnabled, discordConfigured bool) (unraid, discord bool) {
+	failed := status == "failed" || status == "partial"
+	unraid = unraidEnabled && (failed || (status == "completed" && jobPref == "always"))
+	discordFailure := failed || status == "stalled"
+	discord = discordConfigured && (discordPref == "always" || (discordPref == "failure" && discordFailure))
+	return unraid, discord
+}
+
+func sendUnraidBackupOutcome(jobName, status string, done, failed int, sizeBytes int64) error {
 	switch status {
 	case "completed":
-		if pref == "always" {
-			if err := notify.JobSuccess(job.Name, done, sizeBytes); err != nil {
-				log.Printf("runner: notification error: %v", err)
-			}
-		}
+		return notify.JobSuccess(jobName, done, sizeBytes)
 	case "failed":
-		if err := notify.JobFailed(job.Name, fmt.Sprintf("all %d items failed", done+failed)); err != nil {
-			log.Printf("runner: notification error: %v", err)
-		}
+		return notify.JobFailed(jobName, fmt.Sprintf("all %d items failed", done+failed))
 	case "partial":
-		if err := notify.JobPartial(job.Name, done, failed); err != nil {
-			log.Printf("runner: notification error: %v", err)
-		}
+		return notify.JobPartial(jobName, done, failed)
+	default:
+		return nil
 	}
+}
 
-	// Discord notifications.
-	webhookURL, _ := r.db.GetSetting("discord_webhook_url", docsmeta.DefaultFor("discord_webhook_url"))
-	discordPref, _ := r.db.GetSetting("discord_notify_on", docsmeta.DefaultFor("discord_notify_on"))
-	if webhookURL != "" && discordPref != "never" {
-		shouldSend := discordPref == "always" || (discordPref == "failure" && status != "completed")
-		if shouldSend {
-			embed := r.buildDiscordEmbed(job.Name, status, done, failed, sizeBytes, duration, failedNames)
-			opts := r.discordOptions(status)
-			go func() {
-				if err := notify.SendDiscord(webhookURL, embed, opts); err != nil {
-					log.Printf("runner: discord notification error: %v", err)
-				}
-			}()
+func sendDiscordBackupOutcome(webhookURL string, embed notify.DiscordEmbed, opts notify.DiscordOptions) {
+	go func() {
+		if err := notify.SendDiscord(webhookURL, embed, opts); err != nil {
+			log.Printf("runner: discord notification error: %v", err)
 		}
-	}
+	}()
 }
 
 // discordOptions reads the Discord personalization settings (bot name/avatar and

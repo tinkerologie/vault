@@ -1102,6 +1102,58 @@ func TestRevokeAPIKey_DisablesAuth(t *testing.T) {
 // TestDiscordWebhook
 // ---------------------------------------------------------------------------
 
+type discordTestTransport func(*http.Request) (*http.Response, error)
+
+func (f discordTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestTestDiscordWebhook_SendsConnectionTestWhileMuted(t *testing.T) {
+	h := newTestSettingsHandler(t)
+	for key, value := range map[string]string{
+		"notifications_enabled": "false",
+		"discord_notify_on":     "never",
+	} {
+		if err := h.db.SetSetting(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	requests := 0
+	http.DefaultTransport = discordTestTransport(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if r.Method != http.MethodPost || r.URL.Host != "discord.com" {
+			t.Error("connection test did not post to Discord")
+		}
+		return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/discord/test",
+		strings.NewReader(`{"webhook_url":"https://discord.com/api/webhooks/123/fixture-token"}`))
+	w := httptest.NewRecorder()
+	h.TestDiscordWebhook(w, req)
+	if w.Code != http.StatusOK || requests != 1 {
+		t.Errorf("connection test got HTTP %d and sent %d requests, want HTTP 200 and one request", w.Code, requests)
+	}
+}
+
+func TestDiscordBackupMuteMigrationMarkerIsPrivate(t *testing.T) {
+	h := newTestSettingsHandler(t)
+	w := httptest.NewRecorder()
+	h.List(w, httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil))
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), db.DiscordBackupMuteMigrationKey) {
+		t.Fatal("settings list did not hide the migration marker")
+	}
+	w = httptest.NewRecorder()
+	body := strings.NewReader(`{"` + db.DiscordBackupMuteMigrationKey + `":"0"}`)
+	h.Update(w, httptest.NewRequest(http.MethodPut, "/api/v1/settings", body))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("settings update returned HTTP %d, want 400 for a protected marker", w.Code)
+	}
+}
+
 func TestTestDiscordWebhook_MissingURL(t *testing.T) {
 	t.Parallel()
 	h := newTestSettingsHandler(t)
