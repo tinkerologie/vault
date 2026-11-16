@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -261,7 +262,7 @@ func TestRestoreChunkedVolumeFileRefusesSymlinkTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = restoreChunkedVolumeFile(repo, entry, target)
+	err = restoreChunkedVolumeFile(t.Context(), repo, entry, target)
 	if err == nil {
 		t.Fatal("restoring through a symlink should be refused")
 	}
@@ -427,7 +428,7 @@ func TestRestoreChunkedVolumeFileFailures(t *testing.T) {
 	}
 
 	t.Run("a target outside the approved roots is rejected", func(t *testing.T) {
-		err := restoreChunkedVolumeFile(repo, entry, "/nope/escape/hook.sh")
+		err := restoreChunkedVolumeFile(t.Context(), repo, entry, "/nope/escape/hook.sh")
 		if err == nil {
 			t.Fatal("a path outside the restore roots must be refused")
 		}
@@ -441,7 +442,7 @@ func TestRestoreChunkedVolumeFileFailures(t *testing.T) {
 		if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		err := restoreChunkedVolumeFile(repo, entry, filepath.Join(blocker, "sub", "hook.sh"))
+		err := restoreChunkedVolumeFile(t.Context(), repo, entry, filepath.Join(blocker, "sub", "hook.sh"))
 		if err == nil {
 			t.Fatal("restoring under a file must fail")
 		}
@@ -458,7 +459,7 @@ func TestRestoreChunkedVolumeFileFailures(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = os.Chmod(readOnly, 0o700) })
 
-		err := restoreChunkedVolumeFile(repo, entry, filepath.Join(readOnly, "sub", "hook.sh"))
+		err := restoreChunkedVolumeFile(t.Context(), repo, entry, filepath.Join(readOnly, "sub", "hook.sh"))
 		if err == nil || !strings.Contains(err.Error(), "mkdir") {
 			t.Fatalf("error = %v, want it to report the directory it could not create", err)
 		}
@@ -471,7 +472,7 @@ func TestRestoreChunkedVolumeFileFailures(t *testing.T) {
 		broken.Chunks = []dedup.ID{missing}
 		target := filepath.Join(t.TempDir(), "hook.sh")
 
-		err := restoreChunkedVolumeFile(repo, broken, target)
+		err := restoreChunkedVolumeFile(t.Context(), repo, broken, target)
 		if err == nil || !strings.Contains(err.Error(), "reading chunk") {
 			t.Fatalf("error = %v, want it to mention reading a chunk", err)
 		}
@@ -482,7 +483,7 @@ func TestRestoreChunkedVolumeFileFailures(t *testing.T) {
 		bare.Mode = 0
 		bare.ModTime = ""
 		target := filepath.Join(t.TempDir(), "hook.sh")
-		if err := restoreChunkedVolumeFile(repo, bare, target); err != nil {
+		if err := restoreChunkedVolumeFile(t.Context(), repo, bare, target); err != nil {
 			t.Fatalf("restoreChunkedVolumeFile: %v", err)
 		}
 		info, err := os.Lstat(target)
@@ -536,5 +537,49 @@ func TestRestoreChunkedVolumes_EmptySingleFileMount(t *testing.T) {
 	}
 	if info.Size() != 0 {
 		t.Fatalf("restored file size = %d, want 0", info.Size())
+	}
+}
+
+// cancellingChunkRepo serves fixed one-byte chunks and cancels the restore's
+// context when the second chunk is read, so a test can tell whether the
+// restore stops writing a large file mount as soon as a stop is accepted.
+type cancellingChunkRepo struct {
+	t             *testing.T
+	cancel        context.CancelFunc
+	second, third dedup.ID
+}
+
+func (r cancellingChunkRepo) Get(id dedup.ID) ([]byte, error) {
+	if id == r.third {
+		r.t.Error("read another chunk after cancellation")
+	}
+	if id == r.second {
+		r.cancel()
+	}
+	return []byte{'a' + id[0] - 1}, nil
+}
+
+func (r cancellingChunkRepo) GetManifest(dedup.ID) (dedup.Manifest, error) {
+	return dedup.Manifest{}, nil
+}
+
+// An accepted operator stop must interrupt a single-file bind mount mid-file:
+// the chunks come from a staged local cache, so cancelling storage alone does
+// not stop the loop.
+func TestRestoreChunkedVolumeFileStopsWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	first, second, third := dedup.ID{1}, dedup.ID{2}, dedup.ID{3}
+	repo := cancellingChunkRepo{t: t, cancel: cancel, second: second, third: third}
+	entry := dedup.ManifestEntry{Size: 3, Mode: 0o600, Chunks: []dedup.ID{first, second, third}}
+	target := filepath.Join(t.TempDir(), "big.img")
+
+	err := restoreChunkedVolumeFile(ctx, repo, entry, target)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("restore error = %v, want cancellation", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "a" {
+		t.Fatalf("restore wrote beyond the first chunk: %q %v", data, err)
 	}
 }

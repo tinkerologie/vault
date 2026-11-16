@@ -235,7 +235,7 @@ func TestRestoreSecurity_DatabaseDumpAndVolumeFile(t *testing.T) {
 
 	// 3. restoreChunkedVolumeFile success
 	mountTarget := filepath.Join(dir, "mount_dir", "mount.txt")
-	if err := restoreChunkedVolumeFile(nil, dedup.ManifestEntry{Mode: 0o644}, mountTarget); err != nil {
+	if err := restoreChunkedVolumeFile(t.Context(), nil, dedup.ManifestEntry{Mode: 0o644}, mountTarget); err != nil {
 		t.Fatalf("restoreChunkedVolumeFile failed: %v", err)
 	}
 	if _, err := os.Stat(mountTarget); err != nil {
@@ -243,7 +243,7 @@ func TestRestoreSecurity_DatabaseDumpAndVolumeFile(t *testing.T) {
 	}
 
 	// 4. restoreChunkedVolumeFile suspicious target
-	if err := restoreChunkedVolumeFile(nil, dedup.ManifestEntry{Mode: 0o644}, "../escape/mount.txt"); err == nil {
+	if err := restoreChunkedVolumeFile(t.Context(), nil, dedup.ManifestEntry{Mode: 0o644}, "../escape/mount.txt"); err == nil {
 		t.Fatal("restoreChunkedVolumeFile accepted suspicious target")
 	}
 }

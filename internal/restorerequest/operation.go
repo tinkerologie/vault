@@ -38,6 +38,10 @@ type Operation struct {
 	ConfiguredPath string `json:"configured_path,omitempty"`
 	ResolvedPath   string `json:"resolved_path,omitempty"`
 	plan           runner.ApprovedRestorePlan
+	// typeReviewPending marks a classic container request whose only
+	// item-type reasons come from Unknown evidence that the saved
+	// configuration review can settle (backups made before item_types).
+	typeReviewPending bool
 }
 
 type Review struct {
@@ -137,6 +141,7 @@ func (s *Service) captureClassic(ctx context.Context, op *Operation, passphrase 
 	if evidence.Chain.Status != runner.Confirmed {
 		op.Reasons = append(op.Reasons, "chain_unconfirmed")
 	}
+	op.typeReviewPending = itemType == "container" && containerTypeReviewable(evidence)
 	for _, step := range evidence.Chain.Steps {
 		// A classic Docker listing can give us the exact storage objects
 		// without knowing which mounts they cover. Resolve that here from
@@ -165,6 +170,26 @@ func (s *Service) captureClassic(ctx context.Context, op *Operation, passphrase 
 		return Invalid("unsupported Restore Request item type")
 	}
 	return err
+}
+
+// containerTypeReviewable reports whether every unconfirmed item type on a
+// classic container request is Unknown rather than contradicted, on a step
+// whose storage objects the saved configuration review will read. Only then
+// can that review establish the type; a recorded conflicting type cannot be
+// overridden by it.
+func containerTypeReviewable(evidence runner.RecoveryEvidence) bool {
+	if evidence.ItemTypeEvidence == runner.Missing {
+		return false
+	}
+	for _, step := range evidence.Chain.Steps {
+		if !step.DataRequired || step.ItemTypeEvidence == runner.Confirmed {
+			continue
+		}
+		if step.ItemTypeEvidence != runner.Unknown || !step.ContainerVolumesUnresolved("container") {
+			return false
+		}
+	}
+	return true
 }
 
 func appendOnce(values []string, value string) []string {
