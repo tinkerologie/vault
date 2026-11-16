@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -398,3 +399,43 @@ func escapeVMXML(s string) string {
 }
 
 var _ = buildApprovedVMPlan
+
+// confineVMReviewTarget lexically confines a VM disk or NVRAM path to roots
+// before anything touches the filesystem. It returns the cleaned path and
+// the root that contains it. Surrounding whitespace and ".." components are
+// refused rather than cleaned away, so the path checked is the path libvirt
+// would open.
+func confineVMReviewTarget(p string, roots []string) (target, root string, err error) {
+	if p != strings.TrimSpace(p) || slices.Contains(strings.Split(p, string(filepath.Separator)), "..") {
+		return "", "", ErrVMRestoreTargetDisallowed
+	}
+	target, err = safepath.NormalizeAbsoluteUnderRoots(p, roots)
+	if err != nil {
+		return "", "", ErrVMRestoreTargetDisallowed
+	}
+	for _, r := range roots {
+		r = filepath.Clean(r)
+		if target == r || strings.HasPrefix(target, r+string(filepath.Separator)) {
+			return target, r, nil
+		}
+	}
+	return "", "", ErrVMRestoreTargetDisallowed
+}
+
+// nearestVMReviewParent returns the deepest existing ancestor of target that
+// is root or lies below it. The walk never inspects a directory above root;
+// when nothing within root exists it reports the host as unavailable.
+func nearestVMReviewParent(target, root string) (string, os.FileInfo, error) {
+	for parent := filepath.Dir(target); ; parent = filepath.Dir(parent) {
+		if parent != root && !strings.HasPrefix(parent, root+string(filepath.Separator)) {
+			return "", nil, ErrVMRestoreHostUnavailable
+		}
+		info, err := os.Lstat(parent)
+		if err == nil {
+			return parent, info, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) || parent == root {
+			return "", nil, ErrVMRestoreHostUnavailable
+		}
+	}
+}

@@ -2,8 +2,12 @@ package engine
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 func TestInspectApprovedVMBackupRequiresRecordedDiskAndFirmware(t *testing.T) {
@@ -27,5 +31,45 @@ func TestInspectApprovedVMBackupRequiresRecordedDiskAndFirmware(t *testing.T) {
 	unsafe := []byte(strings.ReplaceAll(string(metadata), "vdisk0.img", "../vdisk0.img"))
 	if _, err := InspectVMBackup(xml, unsafe, files); !errors.Is(err, ErrVMBackupEvidenceUnknown) {
 		t.Fatalf("unsafe metadata = %v", err)
+	}
+}
+
+func TestConfineVMReviewTargetRefusesPathsOutsideRestoreRoots(t *testing.T) {
+	for _, p := range []string{
+		"/root/disk.img",
+		"/mnt/../root/disk.img",
+		"/mnt/user/domains/../../../root/disk.img",
+		"mnt/user/domains/disk.img",
+		" /mnt/user/domains/disk.img",
+		"",
+	} {
+		if _, _, err := confineVMReviewTarget(p, safepath.RestoreAllowedRoots()); !errors.Is(err, ErrVMRestoreTargetDisallowed) {
+			t.Errorf("confineVMReviewTarget(%q) error = %v, want %v", p, err, ErrVMRestoreTargetDisallowed)
+		}
+	}
+	got, root, err := confineVMReviewTarget("/mnt/user//domains/fixture/disk.img", safepath.RestoreAllowedRoots())
+	if err != nil || got != "/mnt/user/domains/fixture/disk.img" || root != "/mnt" {
+		t.Fatalf("confineVMReviewTarget = %q, %q, %v", got, root, err)
+	}
+}
+
+func TestNearestVMReviewParentNeverLeavesRoot(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	target := filepath.Join(root, "a", "b", "disk.img")
+	// The root does not exist, but its parent does: the walk must stop at
+	// the root instead of reporting the directory above it.
+	if parent, _, err := nearestVMReviewParent(target, root); !errors.Is(err, ErrVMRestoreHostUnavailable) {
+		t.Fatalf("nearestVMReviewParent = %q, %v; want %v", parent, err, ErrVMRestoreHostUnavailable)
+	}
+	if parent, _, err := nearestVMReviewParent(root, root); !errors.Is(err, ErrVMRestoreHostUnavailable) {
+		t.Fatalf("nearestVMReviewParent(root) = %q, %v; want %v", parent, err, ErrVMRestoreHostUnavailable)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "a"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	parent, info, err := nearestVMReviewParent(target, root)
+	if err != nil || parent != filepath.Join(root, "a") || !info.IsDir() {
+		t.Fatalf("nearestVMReviewParent = %q, %v, %v", parent, info, err)
 	}
 }

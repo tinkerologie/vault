@@ -21,6 +21,7 @@ import (
 	libvirt "github.com/digitalocean/go-libvirt"
 
 	"github.com/tinkerologie/vault/internal/bounded"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 // ReviewVMRestore captures the live effects of restoring the selected
@@ -263,32 +264,37 @@ func checkVMSharedPath(path string, targets map[string]bool) error {
 
 func reviewVMTarget(configured, resolved string) (vmReviewedTarget, error) {
 	var result vmReviewedTarget
-	info, err := os.Lstat(configured)
+	roots := safepath.RestoreAllowedRoots()
+	target, _, err := confineVMReviewTarget(configured, roots)
+	if err != nil {
+		return result, err
+	}
+	resolvedTarget, resolvedRoot, err := confineVMReviewTarget(resolved, roots)
+	if err != nil {
+		return result, err
+	}
+	info, err := os.Lstat(target)
 	if err == nil {
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		if !ok || !info.Mode().IsRegular() || stat.Nlink != 1 {
 			return result, ErrVMRestoreTargetDisallowed
 		}
-		result.File = vmFileIdentity{Path: resolved, Device: stat.Dev, Inode: stat.Ino, Mode: stat.Mode}
+		result.File = vmFileIdentity{Path: resolvedTarget, Device: stat.Dev, Inode: stat.Ino, Mode: stat.Mode}
 		// A running guest can continue writing its own disk between
 		// review and approval. Bind the file identity, not its contents.
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return result, ErrVMRestoreHostUnavailable
 	}
-	for parent := filepath.Dir(resolved); ; parent = filepath.Dir(parent) {
-		info, err := os.Lstat(parent)
-		if err == nil {
-			stat, ok := info.Sys().(*syscall.Stat_t)
-			if !ok || !info.IsDir() {
-				return result, ErrVMRestoreTargetDisallowed
-			}
-			result.Parent = vmFileIdentity{Path: parent, Device: stat.Dev, Inode: stat.Ino, Mode: stat.Mode}
-			return result, nil
-		}
-		if !errors.Is(err, os.ErrNotExist) || filepath.Dir(parent) == parent {
-			return result, ErrVMRestoreHostUnavailable
-		}
+	parent, info, err := nearestVMReviewParent(resolvedTarget, resolvedRoot)
+	if err != nil {
+		return result, err
 	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() {
+		return result, ErrVMRestoreTargetDisallowed
+	}
+	result.Parent = vmFileIdentity{Path: parent, Device: stat.Dev, Inode: stat.Ino, Mode: stat.Mode}
+	return result, nil
 }
 
 func readApprovedVMSource(dir string) (xmlData, metadata []byte, artifacts []string, err error) {

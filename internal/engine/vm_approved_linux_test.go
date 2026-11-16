@@ -145,3 +145,16 @@ func TestApprovedVMReviewChecksTargetOwnershipAndIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestReviewVMTargetRefusesTargetsOutsideRestoreRoots(t *testing.T) {
+	inside := filepath.Join(t.TempDir(), "disk.img")
+	for _, tt := range []struct{ configured, resolved string }{
+		{"/root/disk.img", inside},
+		{inside, "/root/disk.img"},
+		{"/mnt/../root/disk.img", inside},
+	} {
+		if _, err := reviewVMTarget(tt.configured, tt.resolved); !errors.Is(err, ErrVMRestoreTargetDisallowed) {
+			t.Errorf("reviewVMTarget(%q, %q) error = %v, want %v", tt.configured, tt.resolved, err, ErrVMRestoreTargetDisallowed)
+		}
+	}
+}
