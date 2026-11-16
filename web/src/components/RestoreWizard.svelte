@@ -5,7 +5,7 @@
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getProgress, restoreFromStatus } from '../lib/progress.svelte.js'
-  import { shouldClearOnSnapshot } from '../lib/restore-sync.js'
+  import { matchesJobId, outcomeFromCompletion, outcomeFromRun, shouldClearOnSnapshot } from '../lib/restore-sync.js'
   import { getPointCoverage, assignItemsToChosenPoints } from '../lib/restore-plan.js'
   import { formatDate, formatBytes, itemDisplayLabel, itemTypeIcon, itemTypeColor, itemTypeLabel, effectiveItemType, commonItemType, buildFileTree } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
@@ -76,10 +76,19 @@
 
   // Track unit runs: jobId -> { jobId, jobName, state, runId, done, total, failed, error, sizeBytes }
   let unitRuns = $state(new SvelteMap())
+  let restoreGeneration = 0
+  let destroyed = false
+  let adoptedRunId = null
+  let pendingAdoptedRun = null
+  const outcomeLookups = new SvelteSet()
+
+  function unitIsPending(unit) {
+    return unit?.state === 'queued' || unit?.state === 'running'
+  }
 
   let isRestoreRunning = $derived(
     restoring ||
-    Array.from(unitRuns.values()).some(u => u.state === 'queued' || u.state === 'running') ||
+    Array.from(unitRuns.values()).some(unitIsPending) ||
     (progress.running && progress.activeRun?.run_type === 'restore' &&
       (!restoringJobId || progress.activeRun.job_id === restoringJobId ||
        Array.from(unitRuns.values()).some(u => u.jobId === progress.activeRun.job_id || (u.runId && u.runId === progress.activeRun.run_id))))
@@ -102,6 +111,10 @@
   }
 
   function resetWizard() {
+    restoreGeneration += 1
+    adoptedRunId = null
+    pendingAdoptedRun = null
+    restoringJobId = null
     step = 1
     selectedItems.clear()
     chosenPoints.clear()
@@ -120,7 +133,7 @@
   function checkAllUnitsFinished() {
     const entries = Array.from(unitRuns.values())
     if (entries.length === 0) return
-    const anyActive = entries.some(u => u.state === 'queued' || u.state === 'running')
+    const anyActive = entries.some(unitIsPending)
     if (anyActive) return
 
     restoring = false
@@ -132,10 +145,7 @@
     const totalItems = entries.reduce((s, u) => s + (u.total || 0), 0)
     const totalFailed = entries.reduce((s, u) => {
       if (u.state === 'completed') return s
-      if (u.state === 'cancelled') return s + (u.failed || 0)
-      if (u.failed) return s + u.failed
-      if (u.state === 'partial') return s + Math.max(0, (u.total || 0) - (u.done || 0))
-      return s + (u.total || 0)
+      return s + (u.failed ?? u.total ?? 0)
     }, 0)
     const totalSize = entries.reduce((s, u) => s + (u.sizeBytes || 0), 0)
 
@@ -157,9 +167,102 @@
     }
   }
 
+  function setUnitOutcome(unit, runId, outcome) {
+    unitRuns.set(unit.jobId, {
+      ...unit,
+      runId: runId ?? unit.runId,
+      state: outcome.status,
+      done: outcome.done,
+      failed: outcome.failed,
+      total: outcome.total,
+      sizeBytes: outcome.bytes,
+    })
+    checkAllUnitsFinished()
+  }
+
+  async function resolveRunOutcome(expected, adopted = false) {
+    const { jobId, runId } = expected
+    const generation = restoreGeneration
+    const key = `${generation}:run:${runId}`
+    if (outcomeLookups.has(key)) return
+    outcomeLookups.add(key)
+    try {
+      const outcome = outcomeFromRun(await api.getRun(runId), expected)
+      if (destroyed || generation !== restoreGeneration || !outcome) return
+      if (adopted) {
+        if (pendingAdoptedRun === expected && unitRuns.size === 0) {
+          pendingAdoptedRun = null
+          restoreOutcome = { ...outcome, sizeBytes: outcome.bytes }
+        }
+        return
+      }
+      const current = unitRuns.get(jobId)
+      if (unitIsPending(current) && matchesJobId(current.runId, runId)) setUnitOutcome(current, runId, outcome)
+    } catch {
+      // Leave the outcome pending for the next runner snapshot.
+    } finally {
+      outcomeLookups.delete(key)
+    }
+  }
+
+  async function reconcileUnitOutcome(unit) {
+    if (unit.runId != null) {
+      await resolveRunOutcome(unit)
+      return
+    }
+    const generation = restoreGeneration
+    const key = `${generation}:job:${unit.jobId}`
+    if (outcomeLookups.has(key)) return
+    outcomeLookups.add(key)
+    try {
+      const runs = await api.getJobHistory(unit.jobId, 5)
+      if (destroyed || generation !== restoreGeneration || !Array.isArray(runs)) return
+      const current = unitRuns.get(unit.jobId)
+      if (!unitIsPending(current) || current.runId != null) return
+      const matching = runs.find(r => r.run_type === 'restore' && (!unit.submittedAt || new Date(r.started_at).getTime() >= unit.submittedAt - 10000))
+      const outcome = outcomeFromRun(matching, { jobId: unit.jobId, runId: matching?.id })
+      if (outcome) setUnitOutcome(current, matching.id, outcome)
+    } catch {
+      // A later poll can find the run by its exact ID once one is known.
+    } finally {
+      outcomeLookups.delete(key)
+    }
+  }
+
+  function completeRestoreRun(msg) {
+    const { job_id: jobId, run_id: runId } = msg
+    const units = Array.from(unitRuns.values())
+    const unit = units.find(u => runId != null && matchesJobId(u.runId, runId) && matchesJobId(u.jobId, jobId)) ??
+      units.find(u => jobId != null && u.runId == null && matchesJobId(u.jobId, jobId))
+    if (unit) {
+      if (!unitIsPending(unit)) return
+      const outcome = outcomeFromCompletion(msg, unit.total)
+      if (outcome) {
+        setUnitOutcome(unit, runId, outcome)
+      } else if (runId != null) {
+        if (unit.runId == null) unitRuns.set(unit.jobId, { ...unit, runId, state: 'running' })
+        void resolveRunOutcome({ jobId: unit.jobId, runId })
+      }
+    } else if (unitRuns.size === 0 && matchesJobId(jobId, restoringJobId) &&
+      (adoptedRunId == null || (runId != null && matchesJobId(runId, adoptedRunId)))) {
+      restoring = false
+      const outcome = outcomeFromCompletion(msg)
+      if (outcome) {
+        pendingAdoptedRun = null
+        restoreOutcome = { ...outcome, sizeBytes: outcome.bytes }
+      } else if (runId != null && jobId != null && !pendingAdoptedRun) {
+        adoptedRunId = runId
+        pendingAdoptedRun = { jobId, runId }
+        void resolveRunOutcome(pendingAdoptedRun, true)
+      }
+    }
+  }
+
   async function reconcileRestoring() {
+    const generation = restoreGeneration
     try {
       const status = await api.getRunnerStatus()
+      if (destroyed || generation !== restoreGeneration || adoptedRunId != null) return
       restoreFromStatus(status)
       const submittedJobIds = new Set(Array.from(unitRuns.keys()))
       if (status?.active && status.run_type === 'restore') {
@@ -173,6 +276,8 @@
               state: 'running',
               runId: status.run_id || runEntry.runId,
             })
+          } else {
+            adoptedRunId = status.run_id ?? null
           }
           if (status.run_id && status.run_id !== restoreLogsRunId) {
             restoreLogsRunId = status.run_id
@@ -449,10 +554,12 @@
     const unsub = onWsMessage((msg) => {
       if (msg.type === 'job_run_started') {
         if (msg.run_type === 'restore') {
-          let runEntry = unitRuns.get(msg.job_id)
-          if (!runEntry && unitRuns.size === 0 && (!restoringJobId || msg.job_id === restoringJobId)) {
+          const runEntry = unitRuns.get(msg.job_id)
+          if (!runEntry && unitRuns.size === 0 && (!restoring || matchesJobId(msg.job_id, restoringJobId))) {
             restoring = true
             restoringJobId = msg.job_id
+            adoptedRunId = msg.run_id ?? null
+            pendingAdoptedRun = null
             restoreOutcome = null
             if (msg.run_id) {
               restoreLogsRunId = msg.run_id
@@ -460,10 +567,15 @@
             }
           } else if (runEntry) {
             restoring = true
+            restoreOutcome = null
             unitRuns.set(msg.job_id, {
               ...runEntry,
               state: 'running',
-              runId: msg.run_id || runEntry.runId,
+              runId: msg.run_id ?? runEntry.runId,
+              done: 0,
+              failed: null,
+              sizeBytes: 0,
+              total: msg.items_total ?? runEntry.total,
             })
             const curSelected = selectedLogUnitJobId ? unitRuns.get(selectedLogUnitJobId) : null
             const curSelectedActive = curSelected && (curSelected.state === 'queued' || curSelected.state === 'running')
@@ -484,34 +596,7 @@
         }
       } else if (msg.type === 'job_run_completed') {
         if (msg.run_type === 'restore') {
-          let runEntry = null
-          if (msg.run_id) {
-            runEntry = Array.from(unitRuns.values()).find(u => u.runId === msg.run_id)
-          }
-          if (!runEntry && msg.job_id) {
-            runEntry = unitRuns.get(msg.job_id)
-          }
-
-          if (runEntry) {
-            unitRuns.set(runEntry.jobId, {
-              ...runEntry,
-              state: msg.status,
-              done: msg.items_done || 0,
-              total: msg.items_total || runEntry.total,
-              failed: msg.items_failed || 0,
-              sizeBytes: msg.size_bytes || 0,
-            })
-            checkAllUnitsFinished()
-          } else if (unitRuns.size === 0 && (!restoringJobId || msg.job_id === restoringJobId)) {
-            restoring = false
-            restoreOutcome = {
-              status: msg.status,
-              done: msg.items_done || 0,
-              total: msg.items_total || 0,
-              failed: msg.items_failed || 0,
-              sizeBytes: msg.size_bytes || 0,
-            }
-          }
+          completeRestoreRun(msg)
 
           if (restoreLogsRunId) {
             api.getRunLogs(restoreLogsRunId, { limit: 500, tail: true }).then(res => {
@@ -523,39 +608,14 @@
           }
         }
       } else if (msg.type === 'runner_status_snapshot') {
-        const submittedJobIds = new Set(Array.from(unitRuns.keys()))
+        const submittedJobIds = new Set(unitRuns.keys())
         if (shouldClearOnSnapshot(msg.status, submittedJobIds.size > 0 ? submittedJobIds : restoringJobId)) {
           if (unitRuns.size === 0) {
             restoring = false
+            if (pendingAdoptedRun) void resolveRunOutcome(pendingAdoptedRun, true)
           } else {
-            const activeUnits = Array.from(unitRuns.values()).filter(u => u.state === 'queued' || u.state === 'running')
-            if (activeUnits.length === 0) {
-              checkAllUnitsFinished()
-            } else {
-              Promise.all(activeUnits.map(async (u) => {
-                try {
-                  const res = await api.getJobHistory(u.jobId, 5)
-                  const runs = Array.isArray(res) ? res : []
-                  const matching = u.runId
-                    ? runs.find(r => r.id === u.runId)
-                    : runs.find(r => r.run_type === 'restore' && (!u.submittedAt || new Date(r.started_at).getTime() >= u.submittedAt - 10000))
-                  if (matching && matching.status !== 'running') {
-                    unitRuns.set(u.jobId, {
-                      ...u,
-                      state: matching.status,
-                      runId: matching.id || u.runId,
-                      done: matching.items_done || 0,
-                      total: matching.items_total || u.total,
-                      failed: matching.items_failed || 0,
-                      sizeBytes: matching.size_bytes || 0,
-                    })
-                  }
-                } catch {
-                  // Keep existing state if API fetch fails
-                }
-              })).then(() => {
-                checkAllUnitsFinished()
-              })
+            for (const unit of unitRuns.values()) {
+              if (unitIsPending(unit)) void reconcileUnitOutcome(unit)
             }
           }
         }
@@ -568,7 +628,10 @@
         }
       }
     })
-    return unsub
+    return () => {
+      destroyed = true
+      unsub()
+    }
   })
 
   $effect(() => {
@@ -1021,6 +1084,10 @@
   async function doRestore() {
     if (anyUnitBlocked) return
 
+    restoreGeneration += 1
+    adoptedRunId = null
+    pendingAdoptedRun = null
+    restoringJobId = null
     restoring = true
     restoreOutcome = null
     restoreLogs = []
@@ -1038,7 +1105,7 @@
         submittedAt: submissionTime,
         done: 0,
         total: unit.items.length,
-        failed: 0,
+        failed: null,
         error: null,
         sizeBytes: 0,
       })

@@ -208,6 +208,7 @@ export const api = {
 
   // Runner
   getRunnerStatus: () => request('GET', '/runner/status'),
+  getRun: (runId) => request('GET', `/runs/${encodeURIComponent(runId)}`),
 
   // Mounts (#312)
   listMounts: (activeOnly = true) => request('GET', `/mounts?active=${activeOnly}`),

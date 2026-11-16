@@ -7,12 +7,12 @@ describe('reconcileRunnerStatus', () => {
   it('synthesises job_run_completed when a known-active run has finished', () => {
     // The case that matters after a hub eviction: the terminal event was the
     // message the hub discarded, and the progress UI only clears on it.
-    const previous = { active: true, job_id: 15, run_id: 37, run_type: 'backup' }
+    const previous = { active: true, job_id: 15, run_id: 37, run_type: 'restore' }
     const msgs = reconcileRunnerStatus(previous, { active: false })
 
     expect(types(msgs)).toContain('job_run_completed')
     const done = msgs.find((m) => m.type === 'job_run_completed')
-    expect(done).toMatchObject({ job_id: 15, run_id: 37, run_type: 'backup' })
+    expect(done).toEqual({ type: 'job_run_completed', job_id: 15, run_id: 37, run_type: 'restore', synthetic: true })
   })
 
   it('synthesises job_run_started when a run appeared while disconnected', () => {

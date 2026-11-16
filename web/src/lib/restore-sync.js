@@ -28,6 +28,29 @@ export function matchesJobId(targetJobId, filter) {
   return false
 }
 
+const terminalStatuses = new Set(['completed', 'partial', 'failed', 'cancelled'])
+
+export function hasTerminalOutcome(run) {
+  return terminalStatuses.has(run?.status)
+}
+
+export function outcomeFromCompletion(msg, fallbackTotal) {
+  if (msg?.run_type !== 'restore' || !hasTerminalOutcome(msg)) return null
+  const done = msg.items_done ?? 0
+  const total = msg.items_total ?? fallbackTotal ?? done
+  let failed = msg.items_failed ?? 0
+  if (msg.items_failed == null && fallbackTotal != null) {
+    if (msg.status === 'failed') failed = total
+    if (msg.status === 'partial') failed = Math.max(0, total - done)
+  }
+  return { status: msg.status, done, failed, total, bytes: msg.size_bytes ?? 0 }
+}
+
+export function outcomeFromRun(run, { jobId, runId }) {
+  if (jobId == null || runId == null || !matchesJobId(run?.job_id, jobId) || !matchesJobId(run?.id, runId)) return null
+  return outcomeFromCompletion(run)
+}
+
 /**
  * Checks whether a runner status snapshot represents an active restore for the given job or set of jobs.
  *

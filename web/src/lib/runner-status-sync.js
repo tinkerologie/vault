@@ -47,6 +47,7 @@ export function reconcileRunnerStatus(previous, snapshot) {
       job_id: previous.job_id,
       run_id: previous.run_id,
       run_type: previous.run_type,
+      synthetic: true,
     })
   }
 

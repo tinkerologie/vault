@@ -1,5 +1,34 @@
 import { describe, it, expect } from 'vitest'
-import { isRestoreActive, shouldClearOnCompleted, shouldClearOnSnapshot, matchesJobId } from './restore-sync.js'
+import { hasTerminalOutcome, isRestoreActive, matchesJobId, outcomeFromCompletion, outcomeFromRun, shouldClearOnCompleted, shouldClearOnSnapshot } from './restore-sync.js'
+
+describe('restore outcomes', () => {
+  const run = { id: 7, job_id: 3, run_type: 'restore', items_done: 1, items_total: 2, items_failed: 1, size_bytes: 35 }
+  const expected = { runId: '7', jobId: 3 }
+
+  it.each(['completed', 'partial', 'failed', 'cancelled'])('accepts the terminal %s status', (status) => {
+    expect(hasTerminalOutcome({ status })).toBe(true)
+    expect(outcomeFromRun({ ...run, status }, expected)).toEqual({ status, done: 1, total: 2, failed: 1, bytes: 35 })
+  })
+
+  it.each([undefined, null, 'unknown', 'running', 'queued'])('waits on %s', (status) => {
+    expect(hasTerminalOutcome({ status })).toBe(false)
+    expect(outcomeFromRun({ ...run, status }, expected)).toBeNull()
+  })
+
+  it.each([{ id: 8 }, { job_id: 4 }, { run_type: 'backup' }])('discard a different run %j', (changes) => {
+    expect(outcomeFromRun({ ...run, ...changes, status: 'completed' }, expected)).toBeNull()
+  })
+
+  it('accepts a terminal WebSocket message with no counters', () => {
+    expect(outcomeFromCompletion({ run_type: 'restore', status: 'failed' }, 2))
+      .toEqual({ status: 'failed', done: 0, total: 2, failed: 2, bytes: 0 })
+  })
+
+  it('preserves explicit zero counts in a terminal result', () => {
+    const result = { ...run, status: 'failed', items_total: 0, items_done: 0, items_failed: 0 }
+    expect(outcomeFromCompletion(result, 2)).toEqual({ status: 'failed', done: 0, total: 0, failed: 0, bytes: 35 })
+  })
+})
 
 describe('matchesJobId', () => {
   it('returns true when filter is null or undefined', () => {
