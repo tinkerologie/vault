@@ -189,6 +189,11 @@ func TestVMCovCheckVMSharedPathResolvesLinks(t *testing.T) {
 	if err := checkVMSharedPath(link, targets); !errors.Is(err, ErrVMRestoreTargetInUse) {
 		t.Fatalf("link to target = %v, want %v", err, ErrVMRestoreTargetInUse)
 	}
+	shares := map[string]bool{}
+	addVMTarget(shares, "/mnt/user/domains/win/vdisk1.img")
+	if err := checkVMSharedPath("/mnt/cache/domains/win/vdisk1.img", shares); !errors.Is(err, ErrVMRestoreTargetInUse) {
+		t.Fatalf("disk named through another Unraid mount = %v, want %v", err, ErrVMRestoreTargetInUse)
+	}
 	if err := checkVMSharedPath("relative.img", targets); err != nil {
 		t.Fatalf("relative path = %v", err)
 	}

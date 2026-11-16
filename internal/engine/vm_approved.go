@@ -286,17 +286,17 @@ func buildApprovedVMPlan(name, destination string, xmlData, metadata []byte, fil
 	paths := make(map[string]bool, len(plan.Disks)+1)
 	replacements := make(map[string]string, len(plan.Disks)+1)
 	for i, disk := range plan.Disks {
-		if paths[disk.TargetPath] {
+		if vmTargetInSet(paths, disk.TargetPath) {
 			return vmApprovedPlan{}, ErrVMRestoreTargetCollision
 		}
-		paths[disk.TargetPath] = true
+		addVMTarget(paths, disk.TargetPath)
 		replacements[inventory.Disks[i].Path] = disk.TargetPath
 		effects.Disks = append(effects.Disks, VMRestoreDiskEffect{
 			Target: evidence.Disks[i].Target, Format: evidence.Disks[i].Format, Destination: disk.TargetPath,
 		})
 	}
 	if plan.NVRAMTargetPath != "" {
-		if paths[plan.NVRAMTargetPath] {
+		if vmTargetInSet(paths, plan.NVRAMTargetPath) {
 			return vmApprovedPlan{}, ErrVMRestoreTargetCollision
 		}
 		replacements[inventory.NVRAMPath] = plan.NVRAMTargetPath

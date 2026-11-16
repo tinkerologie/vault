@@ -111,7 +111,8 @@ func (h *VMHandler) reviewVMRestore(ctx context.Context, name, destination strin
 				return vmApprovedPlan{}, "", err
 			}
 			identities = append(identities, identity)
-			paths[resolved] = true
+			addVMTarget(paths, nvram)
+			addVMTarget(paths, resolved)
 		}
 	}
 
@@ -122,7 +123,8 @@ func (h *VMHandler) reviewVMRestore(ctx context.Context, name, destination strin
 			return vmApprovedPlan{}, "", err
 		}
 		identities = append(identities, identity)
-		paths[disk.Destination] = true
+		addVMTarget(paths, reviewed.UnresolvedTargets[i])
+		addVMTarget(paths, disk.Destination)
 		disk.Replace = identity.File.Inode != 0
 	}
 	if effects.NVRAM != nil {
@@ -131,7 +133,8 @@ func (h *VMHandler) reviewVMRestore(ctx context.Context, name, destination strin
 			return vmApprovedPlan{}, "", err
 		}
 		identities = append(identities, identity)
-		paths[effects.NVRAM.Destination] = true
+		addVMTarget(paths, reviewed.UnresolvedTargets[len(effects.Disks)])
+		addVMTarget(paths, effects.NVRAM.Destination)
 		effects.NVRAM.Replace = identity.File.Inode != 0
 	}
 
@@ -249,14 +252,14 @@ func checkVMSharedPath(path string, targets map[string]bool) error {
 	if !filepath.IsAbs(path) {
 		return nil
 	}
-	if targets[filepath.Clean(path)] {
+	if vmTargetInSet(targets, path) {
 		return ErrVMRestoreTargetInUse
 	}
 	resolved, err := resolveRestorePath(path)
 	if err != nil {
 		return ErrVMRestoreHostUnavailable
 	}
-	if targets[resolved] {
+	if vmTargetInSet(targets, resolved) {
 		return ErrVMRestoreTargetInUse
 	}
 	return nil
