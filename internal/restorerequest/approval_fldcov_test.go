@@ -76,7 +76,10 @@ func TestApproveRefusesBeforeClaimingRun(t *testing.T) {
 		{"undecodable operation", fldcovID("1"), `{"eligible_for_approval":"yes"}`, "",
 			func(err error) bool { return err != nil && strings.Contains(err.Error(), "decoding reviewed") }},
 		{"metadata review pending", fldcovID("2"), `{"eligible_for_approval":false,"requires_metadata_review":true}`, "",
-			func(err error) bool { var invalid Invalid; return errors.As(err, &invalid) && strings.Contains(err.Error(), "unlock") }},
+			func(err error) bool {
+				var invalid Invalid
+				return errors.As(err, &invalid) && strings.Contains(err.Error(), "unlock")
+			}},
 		{"manual container", fldcovID("3"), `{"eligible_for_approval":false,"manual_restore_required":true}`, "",
 			func(err error) bool { return errors.Is(err, manualContainerRestore) }},
 		{"ineligible", fldcovID("4"), `{"eligible_for_approval":false}`, "",
