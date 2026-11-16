@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/tinkerologie/vault/internal/format"
 )
 
 // Anomaly Discord embed colour constants (hex values stored as int).
@@ -92,8 +94,12 @@ func BuildAnomalyEmbed(p AnomalyEmbedParams) DiscordEmbed {
 // On non-Linux platforms (and Unraid hosts without the notify helper)
 // the call is a no-op that logs and returns nil — same behaviour as Send.
 func SendAnomalyUnraid(summary, details, severity string) error {
+	return newUnraidSender().sendAnomaly(summary, details, severity)
+}
+
+func (s unraidSender) sendAnomaly(summary, details, severity string) error {
 	imp := importanceForSeverity(severity)
-	return Send("Vault", fmt.Sprintf("Anomaly detected: %s", summary), renderAnomalyDetails(details), imp)
+	return s.send("Vault", fmt.Sprintf("Anomaly detected: %s", summary), renderAnomalyDetails(details), imp)
 }
 
 // renderAnomalyDetails converts an anomaly's structured Details JSON into
@@ -129,6 +135,11 @@ func renderAnomalyDetails(details string) string {
 		if prev, ok2 := m["previous_status"].(string); ok2 {
 			lines = append(lines, fmt.Sprintf("Latest verification %s (previous run %s)", newest, prev))
 		}
+	}
+	free, hasFree := intField(m, "free_bytes")
+	total, hasTotal := intField(m, "total_bytes")
+	if hasFree && hasTotal && free >= 0 && total > 0 {
+		lines = append(lines, fmt.Sprintf("Free space: %s of %s", format.Bytes(float64(free)), format.Bytes(float64(total))))
 	}
 	return strings.Join(lines, "\n")
 }
