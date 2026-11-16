@@ -146,7 +146,7 @@ func (r *Runner) inspectVMRestore(ctx context.Context, result *VMRestoreReview, 
 	}
 	plan.Destination = dest
 	adapter, err := storage.NewAdapterWithOptions(dest.Type, dest.Config, storage.Options{
-		MetadataProbeContext: ctx, MetadataProbeLimit: maxVMReviewObjects,
+		MetadataProbeContext: ctx, MetadataProbeLimit: maxVMReviewObjects, MetadataProbeSplitSizes: true,
 	})
 	if err != nil {
 		return ErrApprovedStorageUnavailable
@@ -401,17 +401,22 @@ func listVMReviewStep(adapter storage.Adapter, point db.RestorePoint, name strin
 	if clean, err := safepath.NormalizeRelative(prefix, false); err != nil || clean != prefix {
 		return nil, engine.ErrVMBackupEvidenceUnknown
 	}
+	checksums := parseItemChecksums(point.Metadata, name)
 	files, err := adapter.List(prefix)
 	switch {
 	case storage.IsNotExist(err):
 		return nil, engine.ErrVMBackupArtifactMissing
 	case err != nil:
-		return nil, ErrApprovedStorageUnavailable
+		// Some providers (WebDAV) have no bounded listing. As the folder
+		// probe does, check the objects the Restore Point recorded instead.
+		if files, err = statRecordedVMObjects(adapter, prefix, checksums); err != nil {
+			return nil, err
+		}
 	case len(files) > maxVMReviewObjects:
 		return nil, engine.ErrVMBackupEvidenceUnknown
 	}
 
-	files, _, err = selectRestoreObjects(files, parseItemChecksums(point.Metadata, name))
+	files, _, err = selectRestoreObjects(files, checksums)
 	if err != nil {
 		return nil, engine.ErrVMBackupEvidenceUnknown
 	}
@@ -424,6 +429,32 @@ func listVMReviewStep(adapter storage.Adapter, point db.RestorePoint, name strin
 		if clean, err := safepath.NormalizeComponent(local); err != nil || clean != local {
 			return nil, engine.ErrVMBackupEvidenceUnknown
 		}
+	}
+	return files, nil
+}
+
+// statRecordedVMObjects stats each object a Restore Point recorded for the
+// item, one bounded metadata request per object.
+func statRecordedVMObjects(adapter storage.Adapter, prefix string, recorded map[string]string) ([]storage.FileInfo, error) {
+	if len(recorded) == 0 || len(recorded) > maxVMReviewObjects {
+		return nil, ErrApprovedStorageUnavailable
+	}
+	files := make([]storage.FileInfo, 0, len(recorded))
+	for object := range recorded {
+		if clean, err := safepath.NormalizeComponent(object); err != nil || clean != object {
+			return nil, engine.ErrVMBackupEvidenceUnknown
+		}
+		info, err := adapter.Stat(filepath.Join(prefix, object))
+		switch {
+		case storage.IsNotExist(err):
+			return nil, engine.ErrVMBackupArtifactMissing
+		case err != nil:
+			return nil, ErrApprovedStorageUnavailable
+		case info.IsDir:
+			return nil, engine.ErrVMBackupEvidenceUnknown
+		}
+		info.Path = filepath.Join(prefix, object)
+		files = append(files, info)
 	}
 	return files, nil
 }

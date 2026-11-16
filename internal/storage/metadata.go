@@ -22,8 +22,9 @@ var errBoundedMetadataUnavailable = errors.New("bounded storage metadata unavail
 // for one probe and is closed when that probe ends.
 type metadataAdapter struct {
 	Adapter
-	ctx   context.Context
-	limit int
+	ctx        context.Context
+	limit      int
+	splitSizes bool
 }
 
 func newMetadataAdapter(provider Adapter, opts Options) *metadataAdapter {
@@ -38,7 +39,7 @@ func newMetadataAdapter(provider Adapter, opts Options) *metadataAdapter {
 		// The metadata probe must not mount the export with write access.
 		p.config.Options = strings.Trim(strings.Join([]string{p.config.Options, "ro"}, ","), ",")
 	}
-	return &metadataAdapter{Adapter: provider, ctx: ctx, limit: opts.MetadataProbeLimit}
+	return &metadataAdapter{Adapter: provider, ctx: ctx, limit: opts.MetadataProbeLimit, splitSizes: opts.MetadataProbeSplitSizes}
 }
 
 func (a *metadataAdapter) Close() error {
@@ -60,7 +61,13 @@ func (a *metadataAdapter) List(prefix string) ([]FileInfo, error) {
 		return provider.local.listBounded(a.ctx, prefix, a.limit)
 	case *S3Adapter:
 		return provider.listBounded(a.ctx, prefix, a.limit)
+	case *SFTPAdapter:
+		return provider.listBounded(a.ctx, prefix, a.limit)
+	case *SMBAdapter:
+		return provider.listBounded(a.ctx, prefix, a.limit)
 	default:
+		// WebDAV listings read split-file sidecars; callers fall back to
+		// recorded names and single-object Stat.
 		return nil, errBoundedMetadataUnavailable
 	}
 }
@@ -73,7 +80,7 @@ func (a *metadataAdapter) Stat(p string) (FileInfo, error) {
 	case *S3Adapter:
 		return provider.statBounded(a.ctx, p)
 	case *WebDAVAdapter:
-		return provider.statBounded(p)
+		return provider.statBounded(p, a.splitSizes)
 	default:
 		return a.Adapter.Stat(p)
 	}
@@ -120,6 +127,85 @@ func (l *LocalAdapter) listBounded(ctx context.Context, prefix string, limit int
 	return out, nil
 }
 
+// boundedEntries converts one directory read into a complete listing, or
+// fails closed when it is over the limit or holds anything other than
+// regular files and directories (links are not artifact listings).
+func boundedEntries(ctx context.Context, prefix string, limit int, entries []os.FileInfo, join func(string, string) string) ([]FileInfo, error) {
+	if len(entries) > limit {
+		return nil, errBoundedMetadataUnavailable
+	}
+	out := make([]FileInfo, 0, len(entries))
+	for _, info := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() && !info.IsDir() {
+			return nil, errBoundedMetadataUnavailable
+		}
+		out = append(out, FileInfo{Path: join(prefix, info.Name()), Size: info.Size(), ModTime: info.ModTime(), IsDir: info.IsDir()})
+	}
+	return out, nil
+}
+
+func (s *SFTPAdapter) listBounded(ctx context.Context, prefix string, limit int) (_ []FileInfo, retErr error) {
+	conn, err := s.pool.get()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { s.pool.put(conn, retErr) }()
+	client := conn.(*sftpConnection).sftp
+	fullPath, err := s.fullPath(prefix, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, fullPath); err != nil {
+		return nil, err
+	}
+	entries, err := client.ReadDirContext(ctx, fullPath)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if err != nil {
+		return nil, wrapSFTPListError(err, fullPath)
+	}
+	return boundedEntries(ctx, prefix, limit, entries, remoteJoin)
+}
+
+// smbContextShare is implemented by the live go-smb2 share so a probe's
+// directory read stops when the probe context ends.
+type smbContextShare interface {
+	withContext(context.Context) smbShare
+}
+
+func (s smb2Share) withContext(ctx context.Context) smbShare {
+	return smb2Share{s.Share.WithContext(ctx)}
+}
+
+func (s *SMBAdapter) listBounded(ctx context.Context, prefix string, limit int) ([]FileInfo, error) {
+	fullPath, err := s.fullPath(prefix, false)
+	if err != nil {
+		return nil, err
+	}
+	share, session, err := s.connect()
+	if err != nil {
+		return nil, err
+	}
+	defer session.Logoff()
+	defer share.Umount()
+	reader := share
+	if scoped, ok := share.(smbContextShare); ok {
+		reader = scoped.withContext(ctx)
+	}
+	entries, err := reader.ReadDir(fullPath)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if err != nil {
+		return nil, wrapSMBListError(err, fullPath)
+	}
+	return boundedEntries(ctx, prefix, limit, entries, func(dir, name string) string { return filepath.Join(dir, name) })
+}
+
 func (a *S3Adapter) listBounded(ctx context.Context, prefix string, limit int) ([]FileInfo, error) {
 	key, err := a.keyFor(prefix, false)
 	if err != nil {
@@ -164,8 +250,9 @@ func (a *S3Adapter) statBounded(ctx context.Context, p string) (FileInfo, error)
 }
 
 // WebDAV's normal Stat opens a split-file sidecar. Probes inspect metadata
-// only, so the logical size of a split file remains unknown.
-func (w *WebDAVAdapter) statBounded(p string) (FileInfo, error) {
+// only, so the logical size of a split file remains unknown unless the probe
+// allows one bounded manifest read.
+func (w *WebDAVAdapter) statBounded(p string, splitSizes bool) (FileInfo, error) {
 	full, err := w.fullPath(p, false)
 	if err != nil {
 		return FileInfo{}, err
@@ -173,10 +260,18 @@ func (w *WebDAVAdapter) statBounded(p string) (FileInfo, error) {
 	c := w.client()
 	info, err := c.Stat(full)
 	if isWebDAVNotFound(err) {
-		if _, sidecarErr := c.Stat(webDAVManifestPath(full)); isWebDAVNotFound(sidecarErr) {
+		_, sidecarErr := c.Stat(webDAVManifestPath(full))
+		if isWebDAVNotFound(sidecarErr) {
 			return FileInfo{}, fs.ErrNotExist
 		}
-		return FileInfo{}, errBoundedMetadataUnavailable
+		if sidecarErr != nil || !splitSizes {
+			return FileInfo{}, errBoundedMetadataUnavailable
+		}
+		manifest, found, err := w.readManifest(c, full)
+		if err != nil || !found {
+			return FileInfo{}, errBoundedMetadataUnavailable
+		}
+		return FileInfo{Path: p, Size: manifest.Size}, nil
 	}
 	if err != nil {
 		return FileInfo{}, err

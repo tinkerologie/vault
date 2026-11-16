@@ -15,8 +15,12 @@ type Options struct {
 	// middleware retries and never falls back to a provider's unbounded List.
 	MetadataProbeLimit   int
 	MetadataProbeContext context.Context
-	VerboseLogging       bool
-	DestLabel            string // human destination name for logs/metrics
+	// MetadataProbeSplitSizes lets a bounded probe read a split file's small
+	// manifest (WebDAV) to learn its logical size. Without it the size of a
+	// split file is reported as unavailable.
+	MetadataProbeSplitSizes bool
+	VerboseLogging          bool
+	DestLabel               string // human destination name for logs/metrics
 	// WebDAVContext binds the operation context to WebDAV client requests.
 	// Nil leaves requests subject to the usual transport timeouts.
 	WebDAVContext context.Context
