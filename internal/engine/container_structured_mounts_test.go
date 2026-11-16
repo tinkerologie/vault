@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -12,21 +14,27 @@ import (
 
 	mounttypes "github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
+
+	"github.com/tinkerologie/vault/internal/dedup"
 )
 
 func TestClassicRestoreRecreatesStructuredBindMount(t *testing.T) {
-	for _, alternate := range []bool{false, true} {
-		name := "original"
-		if alternate {
-			name = "alternate"
-		}
-		t.Run(name, func(t *testing.T) {
-			checkClassicStructuredBindRestore(t, alternate)
+	for _, tc := range []struct {
+		name      string
+		alternate bool
+		retarget  bool
+	}{
+		{name: "original"},
+		{name: "alternate", alternate: true},
+		{name: "alternate changed before Docker create", alternate: true, retarget: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checkClassicStructuredBindRestore(t, tc.alternate, tc.retarget)
 		})
 	}
 }
 
-func checkClassicStructuredBindRestore(t *testing.T, alternate bool) {
+func checkClassicStructuredBindRestore(t *testing.T, alternate, retarget bool) {
 	t.Helper()
 	fixture := newRestoreFixture458(t, true)
 	templates := withTestTemplatesDir(t)
@@ -42,6 +50,8 @@ func checkClassicStructuredBindRestore(t *testing.T, alternate bool) {
 	host["Mounts"] = []map[string]any{{
 		"Type": "bind", "Source": fixture.volDir, "Target": "/config", "ReadOnly": true,
 		"BindOptions": map[string]bool{"NonRecursive": true},
+	}, {
+		"Type": "tmpfs", "Target": "/tmp",
 	}}
 	data, err := json.Marshal(saved)
 	if err != nil {
@@ -70,7 +80,29 @@ func checkClassicStructuredBindRestore(t *testing.T, alternate bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := handler.Restore(reviewedCtrcovContext(t, review, nil), item, fixture.sourceDir, noopProgress); err != nil {
+	progress := noopProgress
+	if retarget {
+		progress = func(_ string, _ int, message string) {
+			if message != "recreating container" {
+				return
+			}
+			newLocation := filepath.Join(destination, "moved-volume")
+			if err := os.Rename(source, newLocation); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(newLocation, source); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	err = handler.Restore(reviewedCtrcovContext(t, review, nil), item, fixture.sourceDir, progress)
+	if retarget {
+		if !errors.Is(err, ErrContainerReviewChanged) || len(recorded.created) != 0 || len(recorded.removed) != 0 {
+			t.Fatalf("retargeted restore created or removed a container: %v", err)
+		}
+		return
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	if len(recorded.created) != 1 {
@@ -158,6 +190,37 @@ func TestStructuredBindReviewRejectsInconsistentMetadata(t *testing.T) {
 	}
 }
 
+func TestStructuredBindReviewRejectsDuplicateEffectiveTarget(t *testing.T) {
+	const saved = `{
+		"Name": "/fixture",
+		"Config": {"Image": "example.invalid/fixture:1"},
+		"HostConfig": {"Mounts": [{"Type": "bind", "Source": "/mnt/cache/fixture", "Target": "/config"}]},
+		"Mounts": [
+			{"Type": "bind", "Source": "/mnt/cache/fixture", "Destination": "/config"},
+			{"Type": "bind", "Source": "/mnt/cache/fixture", "Destination": "/config"}
+		]
+	}`
+	_, err := (&ContainerHandler{}).ReviewClassicRestore(sameServerRestore(t), BackupItem{Name: "fixture"},
+		[]ContainerBackupMetadata{{Inspect: []byte(saved), Files: []string{"image.tar"}}}, "", true)
+	if err == nil || !strings.Contains(err.Error(), "does not match the saved container mounts") {
+		t.Fatalf("expected duplicate-effective-mount refusal, got %v", err)
+	}
+}
+
+func TestStructuredBindReviewRefusesSourceOutsideRestoreLocations(t *testing.T) {
+	const saved = `{
+		"Name": "/fixture",
+		"Config": {"Image": "example.invalid/fixture:1"},
+		"HostConfig": {"Mounts": [{"Type": "bind", "Source": "/etc", "Target": "/config"}]},
+		"Mounts": [{"Type": "bind", "Source": "/etc", "Destination": "/config"}]
+	}`
+	_, err := (&ContainerHandler{}).ReviewClassicRestore(sameServerRestore(t), BackupItem{Name: "fixture"},
+		[]ContainerBackupMetadata{{Inspect: []byte(saved), Files: []string{"image.tar"}}}, "", true)
+	if err == nil || !strings.Contains(err.Error(), "structured bind source") {
+		t.Fatalf("expected structured-bind path-policy refusal, got %v", err)
+	}
+}
+
 func TestStructuredBindReviewRetainsHostAccessPolicy(t *testing.T) {
 	const saved = `{
 		"Name": "/fixture",
@@ -169,5 +232,67 @@ func TestStructuredBindReviewRetainsHostAccessPolicy(t *testing.T) {
 	_, err := handler.ReviewClassicRestore(t.Context(), BackupItem{Name: "fixture"}, []ContainerBackupMetadata{{Inspect: []byte(saved), Files: []string{"image.tar", "volume_0.tar"}}}, "", true)
 	if !errors.Is(err, ErrRestoreNeedsApproval) {
 		t.Fatalf("expected shared propagation to require host approval, got %v", err)
+	}
+}
+
+func TestStructuredBindRestoreRefusesInconsistentMountBeforeDocker(t *testing.T) {
+	const saved = `{
+		"Name": "/fixture",
+		"Config": {"Image": "example.invalid/fixture:1"},
+		"HostConfig": {"Mounts": [{"Type": "bind", "Source": "/mnt/cache/fixture-a", "Target": "/config"}]},
+		"Mounts": [{"Type": "bind", "Source": "/mnt/cache/fixture-b", "Destination": "/config"}]
+	}`
+	item := BackupItem{Name: "fixture"}
+	for _, format := range []string{"classic", "chunked"} {
+		t.Run(format, func(t *testing.T) {
+			docker := &fakeDocker458{
+				imageLoad: func(context.Context, io.Reader) (client.ImageLoadResult, error) {
+					t.Error("loaded an image for an inconsistent configuration")
+					return nil, errFake458
+				},
+				imagePull: func(context.Context, string) (client.ImagePullResponse, error) {
+					t.Error("pulled an image for an inconsistent configuration")
+					return nil, errFake458
+				},
+			}
+			handler := &ContainerHandler{cli: docker}
+			ctx := sameServerRestore(t)
+			var err error
+			if format == "classic" {
+				stage := t.TempDir()
+				writeFile458(t, filepath.Join(stage, "config.json"), saved)
+				writeFile458(t, filepath.Join(stage, "image.tar"), "image fixture")
+				err = handler.Restore(ctx, item, stage, noopProgress)
+			} else {
+				repo := newCtrcovRepo()
+				id := dedup.ID{40}
+				repo.manifests[id] = dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+					containerInspectKey: repo.blob(1, []byte(saved)),
+				}}
+				err = handler.RestorePreparedChunked(ctx, item, repo, id, "", noopProgress)
+			}
+			if err == nil || !strings.Contains(err.Error(), "does not match the saved container mounts") {
+				t.Fatalf("expected inconsistent-bind refusal, got %v", err)
+			}
+		})
+	}
+}
+
+func TestStructuredBindReviewRefusesAlternateAliasOutsideDestination(t *testing.T) {
+	const saved = `{
+		"Name": "/fixture",
+		"Config": {"Image": "example.invalid/fixture:1"},
+		"HostConfig": {"Mounts": [{"Type": "bind", "Source": "/mnt/cache/data", "Target": "/config"}]},
+		"Mounts": [{"Type": "bind", "Source": "/mnt/cache/data", "Destination": "/config"}]
+	}`
+	destination, sibling := t.TempDir(), t.TempDir()
+	if err := os.Symlink(sibling, filepath.Join(destination, "data")); err != nil {
+		t.Fatal(err)
+	}
+	handler := &ContainerHandler{}
+	_, err := handler.ReviewClassicRestore(sameServerRestore(t), BackupItem{Name: "fixture"},
+		[]ContainerBackupMetadata{{Inspect: []byte(saved), Files: []string{"image.tar", "volume_0.tar"}}}, destination, false)
+	if err == nil || !strings.Contains(err.Error(), "structured bind source resolves outside the alternate destination") {
+		t.Fatalf("expected refusal for the alternate alias, got %v", err)
 	}
 }

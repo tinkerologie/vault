@@ -78,10 +78,14 @@ func normalizeContainerRestoreDestination(destination string) (string, error) {
 	if destination == "" {
 		return "", nil
 	}
+	resolved, err := normalizeRestorePath(destination)
+	if err != nil {
+		return "", err
+	}
 	if _, err := safepath.CheckCustomRestoreDestination(destination); err != nil {
 		return "", err
 	}
-	return normalizeRestorePath(destination)
+	return resolved, nil
 }
 
 func normalizeRestoreComponent(name string) (string, error) {
