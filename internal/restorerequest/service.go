@@ -28,6 +28,11 @@ const (
 	persistenceWarning      = "the request state is saved in the working database but could not be saved to flash"
 )
 
+// HistoryStatuses are the non-pending Restore Request states the operator
+// history lists. web/src/components/RestoreRequestList.svelte requests the
+// same list; a test keeps the two in step.
+var HistoryStatuses = []string{"withdrawn", "expired", "invalidated", "running", "completed", "failed", "partial", "interrupted", "cancelled"}
+
 var (
 	ErrPermission = errors.New("operator access or a permitted Assistant Key is required")
 	ErrBusy       = errors.New("database maintenance is in progress")
@@ -383,9 +388,7 @@ func (s *Service) List(ctx context.Context, principal Principal, statuses []stri
 		statuses = []string{"pending"}
 	}
 	for _, status := range statuses {
-		switch status {
-		case "pending", "withdrawn", "expired", "invalidated", "running", "completed", "failed", "partial", "interrupted", "cancelled":
-		default:
+		if status != "pending" && !slices.Contains(HistoryStatuses, status) {
 			return Page{}, Invalid("invalid Restore Request status")
 		}
 	}
