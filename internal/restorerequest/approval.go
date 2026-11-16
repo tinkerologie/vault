@@ -139,7 +139,7 @@ func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase 
 				run.Log = ErrApprovalPersistence.Error()
 				// The local transaction may have reached flash despite an
 				// error. Never revert this claim to pending.
-				if finishErr := s.db.FinishApprovedRestore(context.Background(), id, run, "failed", "approval_persistence_failed"); finishErr != nil {
+				if finishErr := s.db.FinishApprovedRestore(context.WithoutCancel(ctx), id, run, "failed", "approval_persistence_failed"); finishErr != nil {
 					log.Printf("restore requests: could not mark Restore Run %d failed after the persistence barrier", run.ID)
 				}
 				s.flushChange(true)
