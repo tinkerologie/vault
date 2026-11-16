@@ -53,6 +53,7 @@ Use an extra disposable request for this last check. Withdraw it after the check
    ```
 
    Add `-destination "$RESTORE_TARGET"` for an approved alternate location. Check `eligible_for_approval` and record any warnings.
+
 3. Open the Review Link in signed-in Unraid. Confirm the Restore Point, Backup Item, exact target, and write effects. Select **Approve and run** only after the operator authorizes the exact restore. Enter any Backup Passphrase in the Vault review.
 4. Follow the request with the requesting Assistant Key until it records the terminal outcome. Confirm that Unraid History shows the same Restore Run ID. Record the verified approval time from the operator view. Capture redacted item outcomes and readiness checks from the History logs.
 
@@ -83,12 +84,12 @@ Use an extra disposable request for this last check. Withdraw it after the check
 
 Post one redacted comment for the boundary checks and one for each workload on [issue #647](https://github.com/tinkerologie/vault/issues/647). Include the candidate commit, checksum, and Unraid version in each comment. Record the Backup Run, Restore Point, target label, and write mode for each workload. Include the approval time, Restore Request, linked Restore Run, and redacted History log outcome. Remove host addresses, keys, credentials, cookies, Backup Passphrases, and internal paths from public evidence.
 
-| Comment | Independent observations to record |
-| --- | --- |
+| Comment  | Independent observations to record                                                                                                                                    |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Boundary | Direct and tunneled inspection results, MCP refusal and REST status for each transport, signed-out browser result, pending Run ID and target check, withdrawal result |
-| Folder | Manifest match, file and directory totals, seeded extra file absent, permission and timestamp observations |
-| Docker | Container state and mount match, restored `before-backup` value, new row write and read, template check, skipped volumes |
-| VM | Running domain, hostname or test-service result, recorded startup and guest readiness, disks and NVRAM verified |
+| Folder   | Manifest match, file and directory totals, seeded extra file absent, permission and timestamp observations                                                            |
+| Docker   | Container state and mount match, restored `before-backup` value, new row write and read, template check, skipped volumes                                              |
+| VM       | Running domain, hostname or test-service result, recorded startup and guest readiness, disks and NVRAM verified                                                       |
 
 If a check fails, record the reason and link the defect to #647. Close the release gate only after the boundary checks and all three independent workload checks pass on the same candidate.
 
