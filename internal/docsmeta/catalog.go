@@ -82,7 +82,7 @@ var AppSettings = []SettingDoc{
 	// Notifications
 	{"notifications_enabled", "bool", "true", "Enables native Unraid notifications. Discord backup alerts use discord_notify_on.", GroupNotifications},
 	{"discord_webhook_url", "string", "", "Discord webhook URL for notifications. An empty value disables Discord notifications.", GroupNotifications},
-	{"discord_notify_on", "string", "always", "Sets Discord backup delivery independently. Use always for all backups, failure for failed and partial backups, or never to disable backup alerts. A job set to Never mutes both backup channels. Upgrades with Unraid notifications off keep the existing webhook and set Discord to Disabled. Selecting another value enables Discord backup alerts again.", GroupNotifications},
+	{"discord_notify_on", "string", "always", "Sets Discord backup delivery independently. Use always for all backups, failure for failed, partial, and watchdog-stalled backups, or never to disable backup alerts. A job set to Never mutes both backup channels. Upgrades with Unraid notifications off keep the existing webhook and set Discord to Disabled. Selecting another value enables Discord backup alerts again.", GroupNotifications},
 	{"discord_bot_username", "string", "", "Optional user name for Discord webhook messages.", GroupNotifications},
 	{"discord_bot_avatar_url", "string", "", "Optional URL for the image in Discord webhook messages.", GroupNotifications},
 	{"discord_mention_role_id", "string", "", "ID of the Discord role to mention in notifications. An empty value disables role mentions.", GroupNotifications},

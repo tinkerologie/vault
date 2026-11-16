@@ -1700,7 +1700,7 @@
           <div class="px-5 py-4">
             <div class="block text-sm font-medium text-text mb-1.5">
               <label for="discord-notify">Notify On</label>
-              <Tooltip label="Notify On" text="Choose which backup outcomes this webhook receives. Failures only includes partial backups. A job set to Never stays muted." />
+              <Tooltip label="Notify On" text="Choose which backup outcomes this webhook receives. Failures only includes partial backups and backups stopped by the stall watchdog. A job set to Never stays muted." />
             </div>
             <select
               id="discord-notify"

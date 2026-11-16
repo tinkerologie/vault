@@ -2353,7 +2353,12 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 	// runFinalizationStep so any other delay (Discord HTTP, DB lookup) is also
 	// bounded. Captures all needed locals in stable copies.
 	localJob := job
-	localStatus := status
+	notificationStatus := status
+	if status == "cancelled" && !userCancelled {
+		// A watchdog stop counts as a Discord backup failure while the run
+		// itself keeps its cancelled status.
+		notificationStatus = "stalled"
+	}
 	localDone := itemsDone
 	localFailed := itemsFailed
 	localSize := totalSize
@@ -2362,7 +2367,7 @@ func (r *Runner) runAdmittedJob(jobID int64, opts runOptions) {
 	// notify.Send is already bounded internally (30s exec timeout), so the
 	// step context is unused here.
 	r.runFinalizationStep("notify", jobID, runID, finalizeNotifyTimeout, func(context.Context) {
-		r.sendNotification(localJob, localStatus, localDone, localFailed, localSize, localDuration, localFailedNames)
+		r.sendNotification(localJob, notificationStatus, localDone, localFailed, localSize, localDuration, localFailedNames)
 	})
 }
 
@@ -6272,7 +6277,8 @@ func (r *Runner) sendNotification(job db.Job, status string, done, failed int, s
 func backupNotificationRecipients(jobPref, status, discordPref string, unraidEnabled, discordConfigured bool) (unraid, discord bool) {
 	failed := status == "failed" || status == "partial"
 	unraid = unraidEnabled && (failed || (status == "completed" && jobPref == "always"))
-	discord = discordConfigured && (discordPref == "always" || (discordPref == "failure" && failed))
+	discordFailure := failed || status == "stalled"
+	discord = discordConfigured && (discordPref == "always" || (discordPref == "failure" && discordFailure))
 	return unraid, discord
 }
 
