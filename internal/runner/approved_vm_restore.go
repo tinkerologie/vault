@@ -154,6 +154,7 @@ func (r *Runner) inspectVMRestore(ctx context.Context, result *VMRestoreReview, 
 	defer storage.CloseAdapter(adapter)
 	stop := context.AfterFunc(ctx, func() { storage.CloseAdapter(adapter) })
 	defer stop()
+	reviewed := vmReviewAdapter(dest.Type, adapter)
 
 	work := vmRestoreWork{destination: destination}
 	mac := hmac.New(sha256.New, r.serverKey)
@@ -161,7 +162,7 @@ func (r *Runner) inspectVMRestore(ctx context.Context, result *VMRestoreReview, 
 	if err := encoder.Encode([]any{"vault-reviewed-vm-source-v1", dest.ID, dest.Type, dest.Config, plan.Job.Compression}); err != nil {
 		return fmt.Errorf("digesting VM restore source: %w", err)
 	}
-	xmlData, metadata, files, err := r.captureVMRestoreChain(ctx, result, &work, adapter, passphrase, encoder)
+	xmlData, metadata, files, err := r.captureVMRestoreChain(ctx, result, &work, reviewed, passphrase, encoder)
 	if err != nil || result.Chain.Status != Confirmed {
 		return err
 	}
@@ -431,6 +432,24 @@ func listVMReviewStep(adapter storage.Adapter, point db.RestorePoint, name strin
 		}
 	}
 	return files, nil
+}
+
+// recordedNamesOnly refuses listings, so VM review falls back to statting
+// the objects the Restore Point recorded.
+type recordedNamesOnly struct{ storage.Adapter }
+
+func (recordedNamesOnly) List(string) ([]storage.FileInfo, error) {
+	return nil, ErrApprovedStorageUnavailable
+}
+
+// vmReviewAdapter keeps VM review on SFTP to the recorded names: pkg/sftp
+// reads a whole directory per listing, which folder and Docker review accept
+// within the probe deadline but VM review does not need.
+func vmReviewAdapter(destType string, adapter storage.Adapter) storage.Adapter {
+	if destType == "sftp" {
+		return recordedNamesOnly{adapter}
+	}
+	return adapter
 }
 
 // statRecordedVMObjects stats each object a Restore Point recorded for the

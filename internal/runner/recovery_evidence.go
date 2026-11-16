@@ -321,7 +321,11 @@ func probeRecoveryArtifacts(ctx context.Context, database *db.DB, jobID int64, p
 			return
 		}
 		defer storage.CloseAdapter(adapter)
-		probe := evidenceProbe{adapter: wrap(adapter), remaining: maxEvidenceRequests}
+		reviewed := adapter
+		if item.ItemType == "vm" {
+			reviewed = vmReviewAdapter(dest.Type, adapter)
+		}
+		probe := evidenceProbe{adapter: wrap(reviewed), remaining: maxEvidenceRequests}
 		for i, step := range steps {
 			if ctx.Err() != nil {
 				return

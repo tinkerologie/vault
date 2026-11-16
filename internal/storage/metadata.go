@@ -61,12 +61,13 @@ func (a *metadataAdapter) List(prefix string) ([]FileInfo, error) {
 		return provider.local.listBounded(a.ctx, prefix, a.limit)
 	case *S3Adapter:
 		return provider.listBounded(a.ctx, prefix, a.limit)
+	case *SFTPAdapter:
+		return provider.listBounded(a.ctx, prefix, a.limit)
 	case *SMBAdapter:
 		return provider.listBounded(a.ctx, prefix, a.limit)
 	default:
-		// WebDAV listings read split-file sidecars, and pkg/sftp v1.13.12
-		// can only read a whole directory (ReadDirContext has no limit).
-		// Callers fall back to recorded names and single-object Stat.
+		// WebDAV listings read split-file sidecars; callers fall back to
+		// recorded names and single-object Stat.
 		return nil, errBoundedMetadataUnavailable
 	}
 }
@@ -144,6 +145,35 @@ func boundedEntries(ctx context.Context, prefix string, limit int, entries []os.
 		out = append(out, FileInfo{Path: join(prefix, info.Name()), Size: info.Size(), ModTime: info.ModTime(), IsDir: info.IsDir()})
 	}
 	return out, nil
+}
+
+func (s *SFTPAdapter) listBounded(ctx context.Context, prefix string, limit int) (_ []FileInfo, retErr error) {
+	conn, err := s.pool.get()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { s.pool.put(conn, retErr) }()
+	client := conn.(*sftpConnection).sftp
+	fullPath, err := s.fullPath(prefix, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, fullPath); err != nil {
+		return nil, err
+	}
+	// pkg/sftp v1.13.12 has no count-bounded directory read: ReadDirContext
+	// is the only public READDIR path and reads the whole directory. It
+	// checks ctx between READDIR packets and, when cancelled, returns the
+	// entries read so far, so the bound here is time (the probe deadline)
+	// plus the limit applied after the read.
+	entries, err := client.ReadDirContext(ctx, fullPath)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if err != nil {
+		return nil, wrapSFTPListError(err, fullPath)
+	}
+	return boundedEntries(ctx, prefix, limit, entries, remoteJoin)
 }
 
 // smbContextShare is implemented by the live go-smb2 share so a probe's

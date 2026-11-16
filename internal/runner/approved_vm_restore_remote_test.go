@@ -132,3 +132,43 @@ func TestVMCovSFTPReviewStatsOnlyRecordedObjects(t *testing.T) {
 		t.Fatalf("over-limit recorded names: err = %v, stats = %d", err, len(adapter.stats))
 	}
 }
+
+// listingAdapter can list: it stands in for the SFTP metadata probe, which
+// lists classic folder and Docker backups.
+type listingAdapter struct {
+	statOnlyAdapter
+	lists int
+}
+
+func (a *listingAdapter) List(p string) ([]storage.FileInfo, error) {
+	a.lists++
+	return []storage.FileInfo{{Path: p + "/domain.xml", Size: 1}}, nil
+}
+
+// SFTP can list for folder and Docker review, but VM review and VM recovery
+// evidence there still stat only the objects the Restore Point recorded.
+func TestVMCovSFTPReviewNeverLists(t *testing.T) {
+	t.Parallel()
+	encoded, err := json.Marshal(map[string]any{"checksums": map[string]any{"test-vm": map[string]any{"domain.xml": "a", "vm_meta.json": "b"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	point := db.RestorePoint{StoragePath: "vm-backup/full", Metadata: string(encoded)}
+
+	adapter := &listingAdapter{}
+	files, err := listVMReviewStep(vmReviewAdapter("sftp", adapter), point, "test-vm")
+	if err != nil || len(files) != 2 || adapter.lists != 0 || len(adapter.stats) != 2 {
+		t.Fatalf("SFTP: files = %+v, err = %v, lists = %d, stats = %v", files, err, adapter.lists, adapter.stats)
+	}
+	evidence := &listingAdapter{}
+	probe := evidenceProbe{adapter: vmReviewAdapter("sftp", evidence), remaining: maxEvidenceRequests}
+	probe.classic(point, ItemSelection{ItemType: "vm", ItemName: "test-vm"})
+	if evidence.lists != 0 || len(evidence.stats) == 0 {
+		t.Fatalf("SFTP VM evidence: lists = %d, stats = %v", evidence.lists, evidence.stats)
+	}
+
+	other := &listingAdapter{}
+	if _, err := listVMReviewStep(vmReviewAdapter("smb", other), point, "test-vm"); err != nil || other.lists != 1 {
+		t.Fatalf("SMB: err = %v, lists = %d", err, other.lists)
+	}
+}
