@@ -632,7 +632,7 @@ func TestCtrcovReviewedPathAndTargetChecks(t *testing.T) {
 		t.Fatalf("an unusable volume name = %v", err)
 	}
 	// A destination that is not in its resolved form is not the reviewed one.
-	unresolved := filepath.Join(dest, "x", "..")
+	unresolved := dest + "/x/.."
 	unresolvedCtx := reviewedCtrcovContext(t, ContainerRestoreReview{Effects: ContainerRestoreEffects{Destination: unresolved}}, nil)
 	if err := checkReviewedContainerPaths(unresolvedCtx, restoreInspect{}, unresolved); !errors.Is(err, ErrContainerReviewChanged) {
 		t.Fatalf("an unresolved destination = %v", err)
