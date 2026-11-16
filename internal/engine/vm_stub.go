@@ -42,6 +42,6 @@ func (h *VMHandler) ProbeActivity(_ context.Context, _ string) ActivitySample {
 }
 
 // ReviewVMRestore is unavailable without libvirt.
-func (h *VMHandler) ReviewVMRestore(_ context.Context, _, _ string, _, _ []byte, _ []string, _ []byte) (VMRestoreEffects, string, error) {
+func (h *VMHandler) ReviewVMRestore(_ context.Context, _ VMRestoreReviewInput) (VMRestoreEffects, string, error) {
 	return VMRestoreEffects{}, "", ErrVMRestoreHostUnavailable
 }

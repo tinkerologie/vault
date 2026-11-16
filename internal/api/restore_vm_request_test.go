@@ -109,8 +109,9 @@ type vmRestoreHostFixture struct {
 	target string
 }
 
-func (fixture vmRestoreHostFixture) ReviewVMRestore(_ context.Context, name, _ string, xmlData, metadata []byte, files []string, _ []byte) (engine.VMRestoreEffects, string, error) {
-	backup, err := engine.InspectVMBackup(xmlData, metadata, files)
+func (fixture vmRestoreHostFixture) ReviewVMRestore(_ context.Context, in engine.VMRestoreReviewInput) (engine.VMRestoreEffects, string, error) {
+	name := in.Name
+	backup, err := engine.InspectVMBackup(in.XML, in.Metadata, in.Artifacts)
 	if err != nil {
 		return engine.VMRestoreEffects{}, "", err
 	}

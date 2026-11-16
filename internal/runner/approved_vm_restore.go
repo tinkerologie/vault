@@ -30,7 +30,7 @@ const maxVMReviewObjects = 128
 
 // VMRestoreHost is the local hypervisor boundary used by approved VM restores.
 type VMRestoreHost interface {
-	ReviewVMRestore(ctx context.Context, name, destination string, xmlData, metadata []byte, artifacts []string, key []byte) (engine.VMRestoreEffects, string, error)
+	ReviewVMRestore(ctx context.Context, in engine.VMRestoreReviewInput) (engine.VMRestoreEffects, string, error)
 	Restore(context.Context, engine.BackupItem, string, engine.ProgressFunc) error
 	Close() error
 }
@@ -171,7 +171,9 @@ func (r *Runner) inspectVMRestore(ctx context.Context, result *VMRestoreReview, 
 		return nil
 	}
 	defer handler.Close()
-	effects, expectation, err := handler.ReviewVMRestore(ctx, plan.Item.ItemName, destination, xmlData, metadata, files, r.serverKey)
+	effects, expectation, err := handler.ReviewVMRestore(ctx, engine.VMRestoreReviewInput{
+		Name: plan.Item.ItemName, Destination: destination, XML: xmlData, Metadata: metadata, Artifacts: files, Key: r.serverKey,
+	})
 	if err != nil {
 		result.Reasons = append(result.Reasons, vmReviewReason(err))
 		return nil
@@ -242,12 +244,12 @@ func (r *Runner) captureVMRestoreChain(ctx context.Context, result *VMRestoreRev
 				break
 			}
 			if point.ID == plan.Point.ID {
-				mac := hmac.New(sha256.New, r.serverKey)
 				dest := plan.Destination
-				if err := json.NewEncoder(mac).Encode([]any{"vault-reviewed-vm-source-anchor-v1", dest.ID, dest.Type, dest.Config, plan.Job.Compression, point, files}); err != nil {
+				anchor, err := keyedDigest(r.serverKey, "vault-reviewed-vm-source-anchor-v1", dest.ID, dest.Type, dest.Config, plan.Job.Compression, point, files)
+				if err != nil {
 					return nil, nil, nil, fmt.Errorf("anchoring VM restore source: %w", err)
 				}
-				result.SourceAnchor = hex.EncodeToString(mac.Sum(nil))
+				result.SourceAnchor = anchor
 			}
 			xmlData, metadata, err := readVMReviewSidecars(adapter, point, plan.Item.ItemName, passphrase, files)
 			if errors.Is(err, ErrRestorePassphrase) || errors.Is(err, ErrApprovedStorageUnavailable) {
@@ -499,9 +501,15 @@ func vmObjectNames(files []storage.FileInfo) []string {
 }
 
 func vmSidecarDigest(key, xmlData, metadata []byte) (string, error) {
+	return keyedDigest(key, "vault-reviewed-vm-sidecars-v1", xmlData, metadata)
+}
+
+// keyedDigest is the server-keyed HMAC-SHA256 of the JSON encoding of a
+// domain tag and values, used to bind reviewed restore evidence.
+func keyedDigest(key []byte, tag string, values ...any) (string, error) {
 	mac := hmac.New(sha256.New, key)
-	if err := json.NewEncoder(mac).Encode([]any{"vault-reviewed-vm-sidecars-v1", xmlData, metadata}); err != nil {
-		return "", fmt.Errorf("digesting VM sidecars: %w", err)
+	if err := json.NewEncoder(mac).Encode(append([]any{tag}, values...)); err != nil {
+		return "", fmt.Errorf("digesting %s: %w", tag, err)
 	}
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }

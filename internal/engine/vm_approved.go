@@ -17,6 +17,17 @@ import (
 
 const VMRestoreSidecarLimit = 4 << 20
 
+// VMRestoreReviewInput is the saved VM configuration a restore review checks
+// against the live host. Key binds the returned expectation to this server.
+type VMRestoreReviewInput struct {
+	Name        string
+	Destination string
+	XML         []byte
+	Metadata    []byte
+	Artifacts   []string
+	Key         []byte
+}
+
 var (
 	ErrVMBackupEvidenceUnknown   = errors.New("saved VM configuration or disk inventory cannot be confirmed")
 	ErrVMBackupArtifactMissing   = errors.New("a recorded VM disk or NVRAM artifact is missing")

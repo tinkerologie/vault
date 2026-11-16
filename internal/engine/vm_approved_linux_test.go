@@ -56,7 +56,7 @@ func TestApprovedVMRestoreRechecksEffectsBeforeMutation(t *testing.T) {
 			}
 			handler := &VMHandler{conn: fake}
 			key := []byte("fixture review key")
-			effects, expected, err := handler.ReviewVMRestore(t.Context(), "fixture", "", []byte(doc), []byte(meta), []string{"recorded.img"}, key)
+			effects, expected, err := handler.ReviewVMRestore(t.Context(), VMRestoreReviewInput{Name: "fixture", XML: []byte(doc), Metadata: []byte(meta), Artifacts: []string{"recorded.img"}, Key: key})
 			if err != nil || len(effects.Disks) != 1 || effects.Disks[0].Destination != target || effects.Disks[0].Replace {
 				t.Fatalf("review = %+v, err = %v", effects, err)
 			}
@@ -132,7 +132,7 @@ func TestApprovedVMReviewChecksTargetOwnershipAndIdentity(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			effects, _, err := (&VMHandler{conn: tt.fake}).ReviewVMRestore(t.Context(), tt.vmName, "", doc, meta, []string{"disk.img"}, key)
+			effects, _, err := (&VMHandler{conn: tt.fake}).ReviewVMRestore(t.Context(), VMRestoreReviewInput{Name: tt.vmName, XML: doc, Metadata: meta, Artifacts: []string{"disk.img"}, Key: key})
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("review error = %v, want %v", err, tt.want)
 			}

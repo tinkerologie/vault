@@ -25,12 +25,12 @@ import (
 
 // ReviewVMRestore captures the live effects of restoring the selected
 // configuration and returns a keyed expectation for the mutation boundary.
-func (h *VMHandler) ReviewVMRestore(ctx context.Context, name, destination string, xmlData, metadata []byte, artifacts []string, key []byte) (VMRestoreEffects, string, error) {
+func (h *VMHandler) ReviewVMRestore(ctx context.Context, in VMRestoreReviewInput) (VMRestoreEffects, string, error) {
 	stopAbort := h.abortLibvirtOnCancel(ctx, 0)
 	defer stopAbort()
-	reviewed, digest, err := h.reviewVMRestore(ctx, name, destination, xmlData, metadata, artifacts, key)
+	reviewed, digest, err := h.reviewVMRestore(ctx, in.Name, in.Destination, in.XML, in.Metadata, in.Artifacts, in.Key)
 	if err != nil {
-		return VMRestoreEffects{}, "", fmt.Errorf("reviewing VM %s restore: %w", name, err)
+		return VMRestoreEffects{}, "", fmt.Errorf("reviewing VM %s restore: %w", in.Name, err)
 	}
 	return reviewed.Effects, digest, nil
 }
