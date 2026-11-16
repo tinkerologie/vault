@@ -229,7 +229,9 @@ export interface VaultMockOptions {
   restoreRequestFixtures?: boolean;
   restoreRequestRun?: () => Record<string, unknown>;
   /** Body served for GET /runner/status; defaults to an idle runner. */
-  runnerStatus?: Record<string, unknown>;
+  runnerStatus?: Record<string, unknown> | (() => Record<string, unknown>);
+  /** Serve a persisted run or an HTTP error from GET /runs/:id. */
+  runResult?: (id: number) => Record<string, unknown> | number | Promise<Record<string, unknown> | number>;
   /** Report replica mode from GET /health, so the UI runs read-only. */
   replica?: boolean;
   /** Body served for GET /replication; defaults to no targets. */
@@ -415,8 +417,18 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(options.runnerStatus ?? { active: false, queue: [] }),
+        body: JSON.stringify(typeof options.runnerStatus === 'function'
+          ? options.runnerStatus()
+          : options.runnerStatus ?? { active: false, queue: [] }),
       });
+    }
+
+    const runResultMatch = /\/runs\/(\d+)$/.exec(path);
+    if (runResultMatch && method === 'GET' && options.runResult) {
+      const result = await options.runResult(Number(runResultMatch[1]));
+      return typeof result === 'number'
+        ? route.fulfill({ status: result, json: { error: 'Run not available' } })
+        : route.fulfill({ json: result });
     }
 
     // Dedup key rewrap after a recovery (#451): nothing locked by default.

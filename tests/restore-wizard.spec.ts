@@ -1,5 +1,125 @@
-import { test, expect } from '@playwright/test';
-import { setupVaultMockApi } from './mocks/vault-api';
+import { test, expect, type Page, type WebSocketRoute } from '@playwright/test';
+import { setupVaultMockApi, type VaultMockOptions } from './mocks/vault-api';
+
+test.describe('Restore Run outcomes (#654)', () => {
+  const idle = { active: false };
+  const active = { active: true, job_id: 1, run_id: 7, run_type: 'restore', items_total: 1 };
+  const run = { id: 7, job_id: 1, run_type: 'restore', status: 'completed', items_done: 1, items_failed: 0, items_total: 1 };
+
+  async function submitRestore(page: Page) {
+    await page.goto('/#/restore');
+    await page.getByRole('button', { name: /plex/i }).click();
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByRole('button', { name: /Docker & Appdata/i }).first().click();
+    await page.getByRole('button', { name: 'Run checks', exact: true }).click();
+    await page.getByRole('button', { name: 'Start Restore', exact: true }).click();
+  }
+
+  async function startRestore(page: Page, runResult: NonNullable<VaultMockOptions['runResult']>) {
+    let status: Record<string, unknown> = idle;
+    await setupVaultMockApi(page, { runnerStatus: () => status, runResult });
+    await page.addInitScript(() => {
+      Object.assign(window, { __VAULT_RUNTIME_CONFIG__: { mode: 'direct', liveMode: 'poll' } });
+    });
+    await submitRestore(page);
+    status = active;
+    await expect(page.getByText('Restore Log', { exact: true })).toBeVisible();
+    return (next: Record<string, unknown>) => { status = next; };
+  }
+
+  for (const outcome of [
+    { status: 'completed', done: 1, failed: 0, total: 1, banner: 'Restore completed successfully', toast: /1\/1 items restored/ },
+    { status: 'failed', done: 0, failed: 1, total: 1, banner: 'Restore failed', toast: /1 items failed/ },
+    { status: 'partial', done: 1, failed: 1, total: 2, banner: 'Restore completed with errors', toast: /1\/2 restored, 1 failed/ },
+  ]) {
+    test(`uses the recorded ${outcome.status} outcome in the wizard and toast`, async ({ page }) => {
+      const setStatus = await startRestore(page, () => ({
+        ...run, status: outcome.status, items_done: outcome.done, items_failed: outcome.failed, items_total: outcome.total,
+      }));
+      setStatus(idle);
+      await expect(page.getByText(outcome.banner, { exact: true })).toBeVisible();
+      await expect(page.getByRole('alert').filter({ hasText: outcome.toast })).toBeVisible();
+    });
+  }
+
+  test('waits for a temporarily unavailable outcome and retries', async ({ page }) => {
+    let available = false;
+    const setStatus = await startRestore(page, () => available ? run : 404);
+    const unavailable = page.waitForResponse(response => response.url().endsWith('/runs/7') && response.status() === 404);
+    setStatus(idle);
+    await unavailable;
+    await expect(page.getByRole('button', { name: 'Restoring...' })).toBeVisible();
+    await expect(page.getByText(/Restore (failed|completed successfully)/)).toHaveCount(0);
+    available = true;
+    await expect(page.getByText('Restore completed successfully', { exact: true })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: /1\/1 items restored/ })).toBeVisible();
+  });
+
+  test('ignores a late outcome after a newer run starts for the same job', async ({ page }) => {
+    let releasePrevious: () => void = () => {};
+    const held = new Promise<void>(resolve => { releasePrevious = resolve; });
+    const setStatus = await startRestore(page, async id => {
+      if (id === 7) {
+        await held;
+        return run;
+      }
+      return { ...run, id: 8, status: 'failed', items_done: 0, items_failed: 1 };
+    });
+    const nextRun = page.waitForRequest(req => req.url().includes('/runs/8/logs'));
+    const previousResult = page.waitForResponse(res => res.url().endsWith('/runs/7'));
+    setStatus({ ...active, run_id: 8 });
+    await nextRun;
+    releasePrevious();
+    await (await previousResult).finished();
+    await expect(page.getByRole('button', { name: 'Restoring...' })).toBeVisible();
+    await expect(page.getByText(/Restore completed successfully/)).toHaveCount(0);
+    setStatus(idle);
+    await expect(page.getByText('Restore failed', { exact: true })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: /1 items failed/ })).toBeVisible();
+  });
+
+  test('uses a complete WebSocket result directly', async ({ page }) => {
+    let lookups = 0;
+    let socket: WebSocketRoute | undefined;
+    await setupVaultMockApi(page, { runResult: () => { lookups += 1; return 404; } });
+    await page.routeWebSocket('**/api/v1/ws', ws => { socket = ws; });
+    await submitRestore(page);
+    await expect.poll(() => socket).toBeDefined();
+    socket!.send(JSON.stringify({ ...active, type: 'job_run_started' }));
+    await expect(page.getByText('Restore Log', { exact: true })).toBeVisible();
+    socket!.send(JSON.stringify({ ...run, type: 'job_run_completed', run_id: 7 }));
+    await expect(page.getByText('Restore completed successfully', { exact: true })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: /1\/1 items restored/ })).toBeVisible();
+    expect(lookups).toBe(0);
+  });
+
+  test('retries the outcome after reconnect without another snapshot', async ({ page }) => {
+    const sockets: WebSocketRoute[] = [];
+    let available = false;
+    let attempts = 0;
+    await setupVaultMockApi(page, { runResult: () => {
+      attempts += 1;
+      return available ? run : 503;
+    } });
+    await page.routeWebSocket('**/api/v1/ws', ws => { sockets.push(ws); });
+    await submitRestore(page);
+    await expect.poll(() => sockets.length).toBe(1);
+    sockets[0].send(JSON.stringify({ ...active, type: 'job_run_started' }));
+    await expect(page.getByText('Restore Log', { exact: true })).toBeVisible();
+
+    const unavailable = page.waitForResponse(res => res.url().endsWith('/runs/7') && res.status() === 503);
+    await sockets[0].close();
+    await expect.poll(() => sockets.length).toBe(2);
+    await unavailable;
+    await expect.poll(() => attempts).toBe(2);
+    await expect(page.getByRole('button', { name: 'Restoring...' })).toBeVisible();
+
+    available = true;
+    await expect(page.getByText('Restore completed successfully', { exact: true })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: /1\/1 items restored/ })).toBeVisible();
+    expect(sockets).toHaveLength(2);
+  });
+});
 
 test.describe('Restore Wizard Multi-Job Flow (#438)', () => {
   test.beforeEach(async ({ page }) => {

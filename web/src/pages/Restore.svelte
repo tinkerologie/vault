@@ -1,9 +1,11 @@
 <script>
   import { onMount } from 'svelte'
+  import { SvelteMap } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { getRawHash } from '../lib/router.svelte.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
+  import { outcomeFromCompletion, waitForRestoreOutcome } from '../lib/restore-sync.js'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -16,6 +18,8 @@
   let loading = $state(true)
   let jobs = $state([])
   let toast = $state({ message: '', type: 'info', key: 0 })
+  let destroyed = false
+  const restoreRuns = new SvelteMap()
 
   // Parse query params from hash route (e.g. #/restore?job=1 or
   // #/restore?type=container&name=plex from the Dashboard / command palette).
@@ -37,6 +41,67 @@
     toast = { message, type, key: toast.key + 1 }
   }
 
+  function rememberRestoreRun({ job_id: jobId, run_id: runId, run_type: runType }) {
+    if (runType !== 'restore' || jobId == null || runId == null) return
+    const jobKey = String(jobId)
+    let tracked = restoreRuns.get(jobKey)
+    // A delayed event for an older run must not displace the latest run for this job.
+    if (tracked && Number(runId) < Number(tracked.runId)) return
+    if (tracked?.runId !== String(runId)) {
+      tracked = { jobId, runId: String(runId), resolving: false, reported: false }
+      restoreRuns.set(jobKey, tracked)
+    }
+    return tracked
+  }
+
+  function showRestoreOutcome({ status, done, total, failed }, jobId) {
+    const job = jobs.find(j => j.id === jobId)
+    const jobSuffix = job?.name ? ` for ${job.name}` : jobId ? ` (Job #${jobId})` : ''
+    if (status === 'completed') {
+      showToast(`Restore completed successfully${jobSuffix} (${done}/${total} items restored)`, 'success')
+    } else if (status === 'partial') {
+      showToast(`Restore partially completed${jobSuffix} (${done}/${total} restored, ${failed} failed)`, 'warning')
+    } else if (status === 'cancelled') {
+      showToast(`Restore cancelled${jobSuffix}. The restore location may be partly restored.`, 'warning')
+    } else {
+      showToast(`Restore failed${jobSuffix} (${failed} items failed)`, 'error')
+    }
+  }
+
+  function reportRestoreOutcome(tracked, outcome) {
+    tracked.reported = true
+    showRestoreOutcome(outcome, tracked.jobId)
+  }
+
+  async function resolveRestoreOutcome(tracked) {
+    if (tracked.resolving) return
+    tracked.resolving = true
+    const jobKey = String(tracked.jobId)
+    const isCurrent = () => !destroyed && !tracked.reported && restoreRuns.get(jobKey) === tracked
+    try {
+      const outcome = await waitForRestoreOutcome(api.getRun, tracked, isCurrent)
+      if (outcome && isCurrent()) reportRestoreOutcome(tracked, outcome)
+    } finally {
+      tracked.resolving = false
+    }
+  }
+
+  function handleRestoreCompletion(msg) {
+    const { job_id: jobId, run_id: runId } = msg
+    const outcome = outcomeFromCompletion(msg)
+    if (jobId == null || runId == null) {
+      if (outcome) showRestoreOutcome(outcome, jobId)
+      return
+    }
+    const tracked = rememberRestoreRun(msg)
+    if (!tracked || tracked.reported) return
+    if (outcome) {
+      reportRestoreOutcome(tracked, outcome)
+    } else {
+      void resolveRestoreOutcome(tracked)
+    }
+  }
+
   onMount(() => {
     loadJobs()
     refreshMounts()
@@ -47,27 +112,19 @@
       handleProgressMessage(msg)
       if (msg.type === 'job_run_completed') {
         loadJobs()
-        if (msg.run_type === 'restore') {
-          const total = msg.items_total || msg.items_done || 0
-          const done = msg.items_done || 0
-          const failed = msg.items_failed || 0
-          const job = jobs.find(j => j.id === msg.job_id)
-          const jobSuffix = job?.name ? ` for ${job.name}` : msg.job_id ? ` (Job #${msg.job_id})` : ''
-          if (msg.status === 'completed') {
-            showToast(`Restore completed successfully${jobSuffix} (${done}/${total} items restored)`, 'success')
-          } else if (msg.status === 'partial') {
-            showToast(`Restore partially completed${jobSuffix} (${done}/${total} restored, ${failed} failed)`, 'warning')
-          } else if (msg.status === 'cancelled') {
-            showToast(`Restore cancelled${jobSuffix}. The restore location may be partly restored.`, 'warning')
-          } else {
-            showToast(`Restore failed${jobSuffix} (${failed} items failed)`, 'error')
-          }
-        }
+        if (msg.run_type === 'restore') handleRestoreCompletion(msg)
+      } else if (msg.type === 'job_run_started') {
+        rememberRestoreRun(msg)
+      } else if (msg.type === 'runner_status_snapshot') {
+        if (msg.status?.active) rememberRestoreRun(msg.status)
       } else if (msg.type === 'import_completed') {
         loadJobs()
       }
     })
-    return unsub
+    return () => {
+      destroyed = true
+      unsub()
+    }
   })
 
   async function loadJobs() {

@@ -1,5 +1,77 @@
-import { describe, it, expect } from 'vitest'
-import { isRestoreActive, shouldClearOnCompleted, shouldClearOnSnapshot, matchesJobId } from './restore-sync.js'
+import { describe, it, expect, vi } from 'vitest'
+import { hasTerminalOutcome, isRestoreActive, matchesJobId, outcomeFromCompletion, outcomeFromRun, shouldClearOnCompleted, shouldClearOnSnapshot, waitForRestoreOutcome } from './restore-sync.js'
+
+describe('restore outcomes', () => {
+  const run = { id: 7, job_id: 3, run_type: 'restore', items_done: 1, items_total: 2, items_failed: 1, size_bytes: 35 }
+  const expected = { runId: '7', jobId: 3 }
+
+  it.each(['completed', 'partial', 'failed', 'cancelled'])('accepts the terminal %s status', (status) => {
+    expect(hasTerminalOutcome({ status })).toBe(true)
+    expect(outcomeFromRun({ ...run, status }, expected)).toEqual({ status, done: 1, total: 2, failed: 1, bytes: 35 })
+  })
+
+  it.each([undefined, null, 'unknown', 'running', 'queued'])('waits on %s', (status) => {
+    expect(hasTerminalOutcome({ status })).toBe(false)
+    expect(outcomeFromRun({ ...run, status }, expected)).toBeNull()
+  })
+
+  it.each([{ id: 8 }, { job_id: 4 }, { run_type: 'backup' }])('discard a different run %j', (changes) => {
+    expect(outcomeFromRun({ ...run, ...changes, status: 'completed' }, expected)).toBeNull()
+  })
+
+  it('accepts a terminal WebSocket message with no counters', () => {
+    expect(outcomeFromCompletion({ run_type: 'restore', status: 'failed' }, 2))
+      .toEqual({ status: 'failed', done: 0, total: 2, failed: 2, bytes: 0 })
+  })
+
+  it('preserves explicit zero counts in a terminal result', () => {
+    const result = { ...run, status: 'failed', items_total: 0, items_done: 0, items_failed: 0 }
+    expect(outcomeFromCompletion(result, 2)).toEqual({ status: 'failed', done: 0, total: 0, failed: 0, bytes: 35 })
+  })
+
+  it('backs off on API errors and nonterminal outcomes before returning the recorded result', async () => {
+    vi.useFakeTimers()
+    try {
+      const getRun = vi.fn()
+        .mockRejectedValueOnce(new Error('Unavailable'))
+        .mockResolvedValueOnce({ ...run, status: 'running' })
+        .mockResolvedValue({ ...run, status: 'partial' })
+      const result = waitForRestoreOutcome(getRun, expected, () => true)
+
+      await vi.advanceTimersByTimeAsync(999)
+      expect(getRun).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(getRun).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(getRun).toHaveBeenCalledTimes(3)
+      expect(getRun).toHaveBeenLastCalledWith(expected.runId)
+      await expect(result).resolves.toEqual({ status: 'partial', done: 1, total: 2, failed: 1, bytes: 35 })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('caps the retry delay and stops requesting when the run is superseded', async () => {
+    vi.useFakeTimers()
+    try {
+      let current = true
+      const getRun = vi.fn().mockResolvedValue({ ...run, id: 8, status: 'completed' })
+      const result = waitForRestoreOutcome(getRun, expected, () => current)
+
+      await vi.advanceTimersByTimeAsync(22999)
+      expect(getRun).toHaveBeenCalledTimes(5)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(getRun).toHaveBeenCalledTimes(6)
+      current = false
+      await vi.advanceTimersByTimeAsync(8000)
+
+      await expect(result).resolves.toBeNull()
+      expect(getRun).toHaveBeenCalledTimes(6)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
 
 describe('matchesJobId', () => {
   it('returns true when filter is null or undefined', () => {

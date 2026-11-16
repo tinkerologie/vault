@@ -30,6 +30,12 @@ function lastCall() {
   return { url, method: opts.method, body: opts.body === undefined ? undefined : JSON.parse(opts.body) }
 }
 
+it('fetches a run by its exact ID through the Unraid proxy', async () => {
+  vi.stubGlobal('window', { __VAULT_RUNTIME_CONFIG__: { mode: 'unraid-proxy', proxyPath: '/plugins/vault/include/proxy.php' } })
+  await api.getRun(7)
+  expect(lastCall()).toMatchObject({ method: 'GET', url: '/plugins/vault/include/proxy.php?path=%2Fapi%2Fv1%2Fruns%2F7' })
+})
+
 // [name, invoke, method, url, body?]
 const routes = [
   ['health', () => api.health(), 'GET', '/api/v1/health'],
@@ -79,6 +85,7 @@ const routes = [
   ['getNextRuns', () => api.getNextRuns(), 'GET', '/api/v1/jobs/next-runs'],
   ['getNextRun', () => api.getNextRun(2), 'GET', '/api/v1/jobs/2/next-run'],
   ['getRunnerStatus', () => api.getRunnerStatus(), 'GET', '/api/v1/runner/status'],
+  ['getRun', () => api.getRun(7), 'GET', '/api/v1/runs/7'],
   ['listMounts all', () => api.listMounts(false), 'GET', '/api/v1/mounts?active=false'],
   ['browse root', () => api.browse(), 'GET', '/api/v1/browse'],
   ['browse path+zfs', () => api.browse('/mnt', { includeZfs: true }), 'GET', '/api/v1/browse?path=%2Fmnt&include_zfs=true'],
