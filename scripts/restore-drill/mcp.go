@@ -127,17 +127,17 @@ func writeDrillResult(output io.Writer, command string, result *mcp.CallToolResu
 					_, err := fmt.Fprintln(output, "Restore Request permission refused")
 					return err
 				}
-				return fmt.Errorf("Vault MCP refused %s: %s", command, message.Text)
+				return fmt.Errorf("%s refused by Vault MCP: %s", command, message.Text)
 			}
 		}
-		return fmt.Errorf("Vault MCP refused %s without guidance", command)
+		return fmt.Errorf("%s refused by Vault MCP without guidance", command)
 	}
 	if command == "negative" {
 		return errors.New("inspection-only Restore Request unexpectedly succeeded")
 	}
 	data, err := json.Marshal(result.StructuredContent)
 	if err != nil || result.StructuredContent == nil {
-		return errors.New("Vault MCP did not return structured drill evidence")
+		return errors.New("missing structured drill evidence from Vault MCP")
 	}
 	if command == "request" {
 		var receipt struct {
@@ -147,7 +147,7 @@ func writeDrillResult(output io.Writer, command string, result *mcp.CallToolResu
 			RunID      int64  `json:"run_id"`
 		}
 		if err := json.Unmarshal(data, &receipt); err != nil || receipt.ID == "" || receipt.Status != "pending" || receipt.ReviewLink == "" || receipt.RunID != 0 {
-			return errors.New("Vault MCP did not return a pending Restore Request and review link")
+			return errors.New("missing pending Restore Request and review link from Vault MCP")
 		}
 	}
 	_, err = fmt.Fprintln(output, string(data))
