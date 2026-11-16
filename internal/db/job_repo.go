@@ -51,7 +51,11 @@ func insertJob(ctx context.Context, q jobSQL, job Job) (int64, error) {
 }
 
 func (d *DB) GetJob(id int64) (Job, error) {
-	return getJob(context.Background(), d, id)
+	return d.GetJobContext(context.Background(), id)
+}
+
+func (d *DB) GetJobContext(ctx context.Context, id int64) (Job, error) {
+	return getJob(ctx, d, id)
 }
 
 const selectJob = `SELECT id, name, description, enabled, schedule, backup_type_chain,
@@ -93,7 +97,11 @@ func getJob(ctx context.Context, q jobSQL, id int64) (Job, error) {
 }
 
 func (d *DB) ListJobs() ([]Job, error) {
-	rows, err := d.Query(selectJob + " ORDER BY name")
+	return d.ListJobsContext(context.Background())
+}
+
+func (d *DB) ListJobsContext(ctx context.Context) ([]Job, error) {
+	rows, err := d.QueryContext(ctx, selectJob+" ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -138,9 +146,27 @@ func updateJob(ctx context.Context, q jobSQL, job Job) (sql.Result, error) {
 	)
 }
 
+// ErrApprovedRestoreRunning protects the atomic approval-to-run handoff
+// even when the Runner has not yet published live status.
+var ErrApprovedRestoreRunning = errors.New("an approved Restore Run is in progress")
+
 func (d *DB) DeleteJob(id int64) error {
-	_, err := d.Exec("DELETE FROM jobs WHERE id = ?", id)
-	return err
+	result, err := d.Exec(`DELETE FROM jobs WHERE id = ? AND NOT EXISTS (
+		SELECT 1 FROM job_runs r JOIN restore_request_approvals a ON a.run_id = r.id
+		WHERE r.job_id = jobs.id AND r.status = 'running')`, id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 0 {
+		return err
+	}
+	if _, err := d.GetJob(id); err == nil {
+		return ErrApprovedRestoreRunning
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 // GetJobByName looks up a job by its unique name. Returns ErrNotFound if
@@ -182,7 +208,11 @@ func insertJobItem(ctx context.Context, q jobSQL, item JobItem) (int64, error) {
 }
 
 func (d *DB) GetJobItems(jobID int64) ([]JobItem, error) {
-	return getJobItems(context.Background(), d, jobID)
+	return d.GetJobItemsContext(context.Background(), jobID)
+}
+
+func (d *DB) GetJobItemsContext(ctx context.Context, jobID int64) ([]JobItem, error) {
+	return getJobItems(ctx, d, jobID)
 }
 
 func getJobItems(ctx context.Context, q jobSQL, jobID int64) ([]JobItem, error) {
@@ -467,15 +497,7 @@ func (d *DB) UpdateJobRunProgress(runID int64, done, failed int, sizeBytes int64
 // CleanupStaleRuns marks any "running" job runs as "failed". This handles
 // runs that were interrupted by a daemon restart or crash.
 func (d *DB) CleanupStaleRuns() (int64, error) {
-	res, err := d.Exec(
-		`UPDATE job_runs SET status='failed', completed_at=CURRENT_TIMESTAMP,
-		log='Interrupted: daemon was restarted while backup was running'
-		WHERE status='running'`,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("cleaning up stale runs: %w", err)
-	}
-	return res.RowsAffected()
+	return d.cleanupStaleRuns(context.Background())
 }
 
 // CountRunningBackupsOnDestination returns how many backup runs are currently
@@ -506,7 +528,8 @@ func (d *DB) DeleteOldFailedRuns(keepDays int) (int64, error) {
 	res, err := d.Exec(
 		`DELETE FROM job_runs WHERE status IN ('failed', 'error')
 		AND completed_at IS NOT NULL
-		AND completed_at < datetime('now', '-' || ? || ' days')`,
+		AND completed_at < datetime('now', '-' || ? || ' days')
+		AND id NOT IN (SELECT run_id FROM restore_request_approvals)`,
 		keepDays,
 	)
 	if err != nil {
@@ -528,7 +551,8 @@ func (d *DB) PurgeEligibleRuns(keepDays int) (int64, error) {
 		 WHERE status != 'running'
 		   AND completed_at IS NOT NULL
 		   AND completed_at < datetime('now', '-' || ? || ' days')
-		   AND id NOT IN (SELECT DISTINCT job_run_id FROM restore_points)`,
+		   AND id NOT IN (SELECT DISTINCT job_run_id FROM restore_points)
+		   AND id NOT IN (SELECT run_id FROM restore_request_approvals)`,
 		keepDays,
 	)
 	if err != nil {
@@ -544,7 +568,7 @@ func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
 		items_total, items_done, items_failed, size_bytes,
 		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
 		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at, stalled_at, COALESCE(stall_reason, ''),
-		acknowledged_at, acknowledged_by, acknowledge_reason
+		acknowledged_at, acknowledged_by, acknowledge_reason, stop_requested_at, stopped_by
 		FROM job_runs ORDER BY started_at DESC LIMIT ?`, limit,
 	)
 	if err != nil {
@@ -559,7 +583,7 @@ func (d *DB) ListRecentRuns(limit int) ([]JobRun, error) {
 			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
 			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt,
 			&run.StalledAt, &run.StallReason,
-			&run.AcknowledgedAt, &run.AcknowledgedBy, &run.AcknowledgeReason); err != nil {
+			&run.AcknowledgedAt, &run.AcknowledgedBy, &run.AcknowledgeReason, &run.StopRequestedAt, &run.StoppedBy); err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)
@@ -578,14 +602,14 @@ func (d *DB) ListJobRuns(ctx context.Context, limitPerJob int) ([]JobRun, error)
 				CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END AS duration_seconds,
 				retry_of_run_id, COALESCE(retry_attempt, 0) AS retry_attempt, retry_next_at,
 				stalled_at, COALESCE(stall_reason, '') AS stall_reason,
-				acknowledged_at, acknowledged_by, acknowledge_reason,
+				acknowledged_at, acknowledged_by, acknowledge_reason, stop_requested_at, stopped_by,
 				ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY started_at DESC, id DESC) AS row_num
 			FROM job_runs
 		)
 		SELECT id, job_id, status, backup_type, run_type, started_at, completed_at, log,
 			items_total, items_done, items_failed, size_bytes, duration_seconds,
 			retry_of_run_id, retry_attempt, retry_next_at, stalled_at, stall_reason,
-			acknowledged_at, acknowledged_by, acknowledge_reason
+			acknowledged_at, acknowledged_by, acknowledge_reason, stop_requested_at, stopped_by
 		FROM ranked WHERE row_num <= ? ORDER BY started_at DESC, id DESC`, limitPerJob,
 	)
 	if err != nil {
@@ -600,7 +624,7 @@ func (d *DB) ListJobRuns(ctx context.Context, limitPerJob int) ([]JobRun, error)
 			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
 			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt,
 			&run.StalledAt, &run.StallReason,
-			&run.AcknowledgedAt, &run.AcknowledgedBy, &run.AcknowledgeReason); err != nil {
+			&run.AcknowledgedAt, &run.AcknowledgedBy, &run.AcknowledgeReason, &run.StopRequestedAt, &run.StoppedBy); err != nil {
 			return nil, fmt.Errorf("scan job run: %w", err)
 		}
 		runs = append(runs, run)
@@ -620,14 +644,14 @@ func (d *DB) GetJobRun(id int64) (JobRun, error) {
 		items_total, items_done, items_failed, size_bytes,
 		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
 		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at, stalled_at, COALESCE(stall_reason, ''),
-		acknowledged_at, acknowledged_by, acknowledge_reason
+		acknowledged_at, acknowledged_by, acknowledge_reason, stop_requested_at, stopped_by
 		FROM job_runs WHERE id = ?`, id,
 	).Scan(&run.ID, &run.JobID, &run.Status, &run.BackupType,
 		&run.RunType, &run.StartedAt, &run.CompletedAt, &run.Log, &run.ItemsTotal,
 		&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
 		&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt,
 		&run.StalledAt, &run.StallReason,
-		&run.AcknowledgedAt, &run.AcknowledgedBy, &run.AcknowledgeReason)
+		&run.AcknowledgedAt, &run.AcknowledgedBy, &run.AcknowledgeReason, &run.StopRequestedAt, &run.StoppedBy)
 	if err == sql.ErrNoRows {
 		return run, ErrNotFound
 	}
@@ -674,9 +698,9 @@ func (d *DB) AcknowledgeJobRuns(ctx context.Context, ids []int64, actor, reason 
 	return int(count), len(seen) - int(count), nil
 }
 
-// PurgeJobRuns deletes all job run records and returns the count of deleted rows.
+// PurgeJobRuns deletes run history except the runs linked to Restore Requests.
 func (d *DB) PurgeJobRuns() (int64, error) {
-	res, err := d.Exec("DELETE FROM job_runs")
+	res, err := d.Exec("DELETE FROM job_runs WHERE id NOT IN (SELECT run_id FROM restore_request_approvals)")
 	if err != nil {
 		return 0, fmt.Errorf("purging job runs: %w", err)
 	}
@@ -689,7 +713,7 @@ func (d *DB) GetJobRuns(jobID int64, limit int) ([]JobRun, error) {
 		items_total, items_done, items_failed, size_bytes,
 		CASE WHEN completed_at IS NOT NULL THEN CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS INTEGER) ELSE NULL END,
 		retry_of_run_id, COALESCE(retry_attempt, 0), retry_next_at, stalled_at, COALESCE(stall_reason, ''),
-		acknowledged_at, acknowledged_by, acknowledge_reason
+		acknowledged_at, acknowledged_by, acknowledge_reason, stop_requested_at, stopped_by
 		FROM job_runs WHERE job_id = ? ORDER BY started_at DESC LIMIT ?`, jobID, limit,
 	)
 	if err != nil {
@@ -704,7 +728,7 @@ func (d *DB) GetJobRuns(jobID int64, limit int) ([]JobRun, error) {
 			&run.ItemsDone, &run.ItemsFailed, &run.SizeBytes, &run.DurationSeconds,
 			&run.RetryOfRunID, &run.RetryAttempt, &run.RetryNextAt,
 			&run.StalledAt, &run.StallReason,
-			&run.AcknowledgedAt, &run.AcknowledgedBy, &run.AcknowledgeReason); err != nil {
+			&run.AcknowledgedAt, &run.AcknowledgedBy, &run.AcknowledgeReason, &run.StopRequestedAt, &run.StoppedBy); err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)
@@ -776,11 +800,24 @@ func (d *DB) CreateRestorePoint(rp RestorePoint) (int64, error) {
 }
 
 func (d *DB) ListRestorePoints(jobID int64) ([]RestorePoint, error) {
-	rows, err := d.Query(
-		`SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
+	return d.ListRestorePointsContext(context.Background(), jobID)
+}
+
+func (d *DB) ListRestorePointsContext(ctx context.Context, jobID int64) ([]RestorePoint, error) {
+	return d.ListRestorePointsPage(ctx, jobID, 0)
+}
+
+// ListRestorePointsPage returns the newest Restore Points for a Job.
+func (d *DB) ListRestorePointsPage(ctx context.Context, jobID int64, limit int) ([]RestorePoint, error) {
+	query := `SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
 			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), manifest_id, created_at
-		FROM restore_points WHERE job_id = ? ORDER BY created_at DESC`, jobID,
-	)
+		FROM restore_points WHERE job_id = ? ORDER BY created_at DESC, id DESC`
+	args := []any{jobID}
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := d.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -880,8 +917,12 @@ func (d *DB) DeleteExpiredRestorePoints(jobID int64, olderThanDays int) error {
 
 // GetRestorePoint returns a single restore point by ID.
 func (d *DB) GetRestorePoint(id int64) (RestorePoint, error) {
+	return d.GetRestorePointContext(context.Background(), id)
+}
+
+func (d *DB) GetRestorePointContext(ctx context.Context, id int64) (RestorePoint, error) {
 	var rp RestorePoint
-	err := d.QueryRow(
+	err := d.QueryRowContext(ctx,
 		`SELECT id, job_run_id, job_id, backup_type, storage_path, metadata, size_bytes,
 			COALESCE(parent_restore_point_id, 0), COALESCE(source_id, 0), manifest_id, created_at
 		FROM restore_points WHERE id = ?`, id,

@@ -92,7 +92,7 @@ func (r *Runner) chainSidecarsVouched(chain []db.RestorePoint, itemName string) 
 		if !rpContainsItem(rp, itemName) {
 			continue
 		}
-		if !r.restorePointProvenanceLocal(rp) || len(r.parseItemChecksums(rp.Metadata, itemName)) == 0 {
+		if !r.restorePointProvenanceLocal(rp) || len(parseItemChecksums(rp.Metadata, itemName)) == 0 {
 			return false
 		}
 	}

@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/svelte'
 
 const api = vi.hoisted(() => ({
   listJobs: vi.fn(),
+  listRestoreRequests: vi.fn(async () => ({ requests: [] })),
   getHistory: vi.fn(),
   getHistoryTrend: vi.fn(),
   getRunnerStatus: vi.fn(),

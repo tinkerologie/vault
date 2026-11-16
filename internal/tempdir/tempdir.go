@@ -206,19 +206,46 @@ type CascadeItem struct {
 // It returns the path and a cleanup function that removes the temp dir and
 // prunes its empty parent .vault-stage directory.
 func CreateBackupDir(dest StorageConfig, override string) (string, func(), error) {
-	return createDir(dest, "backup-*", override)
+	return createDir(dest, "backup-*", override, nil)
 }
 
 // CreateRestoreDir creates a temporary staging directory for a restore operation.
 // Same cascade strategy as CreateBackupDir.
 func CreateRestoreDir(dest StorageConfig, override string) (string, func(), error) {
-	return createDir(dest, "restore-*", override)
+	return createDir(dest, "restore-*", override, nil)
+}
+
+// CreateRestoreDirOutside uses the restore cascade without writing staging
+// data beneath the reviewed target, where replacement could delete it.
+func CreateRestoreDirOutside(override string, targets ...string) (string, func(), error) {
+	return createDir(StorageConfig{}, "restore-*", override, targets)
+}
+
+func allowedStagingBase(base, child string, avoid []string) bool {
+	if len(avoid) == 0 {
+		return true
+	}
+	resolved, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		return false
+	}
+	candidate := filepath.Join(resolved, child)
+	for _, target := range avoid {
+		if target == "" {
+			continue
+		}
+		relative, err := filepath.Rel(target, candidate)
+		if err != nil || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+			return false
+		}
+	}
+	return true
 }
 
 // createDir implements the cascade strategy for both backup and restore dirs.
-func createDir(dest StorageConfig, pattern string, override string) (string, func(), error) {
+func createDir(dest StorageConfig, pattern, override string, avoid []string) (string, func(), error) {
 	// Try override first.
-	if override != "" {
+	if override != "" && allowedStagingBase(override, StageDirName, avoid) {
 		if info, err := os.Stat(override); err == nil && info.IsDir() {
 			stageBase := filepath.Join(override, StageDirName)
 			if err := ensureStageDir(stageBase); err == nil {
@@ -234,6 +261,9 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 	}
 
 	tryPath := func(base string) (string, func(), bool) {
+		if !allowedStagingBase(base, StageDirName, avoid) {
+			return "", nil, false
+		}
 		info, err := os.Stat(base)
 		if err != nil || !info.IsDir() {
 			return "", nil, false
@@ -276,6 +306,9 @@ func createDir(dest StorageConfig, pattern string, override string) (string, fun
 	}
 
 	// System temp dir fallback.
+	if !allowedStagingBase(os.TempDir(), "", avoid) {
+		return "", nil, errors.New("no restore staging location outside the reviewed target")
+	}
 	dir, err := os.MkdirTemp("", "vault-"+strings.TrimSuffix(pattern, "*")+"*")
 	if err != nil {
 		return "", nil, fmt.Errorf("creating temp dir: %w", err)

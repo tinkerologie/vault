@@ -503,14 +503,13 @@ func TestSendNotificationFailureBranch(t *testing.T) {
 // TestParseItemChecksumsValid covers the happy path of parseItemChecksums.
 func TestParseItemChecksumsValid(t *testing.T) {
 	t.Parallel()
-	r, _, _ := setupTestRunner(t)
 	meta := `{"checksums":{"plex":{"file1.tar":"abc","file2.tar":"def"}}}`
-	out := r.parseItemChecksums(meta, "plex")
+	out := parseItemChecksums(meta, "plex")
 	if out["file1.tar"] != "abc" || out["file2.tar"] != "def" {
 		t.Errorf("checksums = %+v, want file1:abc file2:def", out)
 	}
 	// Unknown item returns nil/empty map.
-	if got := r.parseItemChecksums(meta, "missing"); got != nil {
+	if got := parseItemChecksums(meta, "missing"); got != nil {
 		t.Errorf("missing item should return nil, got %+v", got)
 	}
 }
@@ -518,21 +517,20 @@ func TestParseItemChecksumsValid(t *testing.T) {
 // TestParseItemChecksumsInvalid covers all early-return branches.
 func TestParseItemChecksumsInvalid(t *testing.T) {
 	t.Parallel()
-	r, _, _ := setupTestRunner(t)
-	if got := r.parseItemChecksums("not json", "plex"); got != nil {
+	if got := parseItemChecksums("not json", "plex"); got != nil {
 		t.Errorf("bad JSON → %+v, want nil", got)
 	}
-	if got := r.parseItemChecksums(`{"other":1}`, "plex"); got != nil {
+	if got := parseItemChecksums(`{"other":1}`, "plex"); got != nil {
 		t.Errorf("no checksums → %+v, want nil", got)
 	}
-	if got := r.parseItemChecksums(`{"checksums":"not-a-map"}`, "plex"); got != nil {
+	if got := parseItemChecksums(`{"checksums":"not-a-map"}`, "plex"); got != nil {
 		t.Errorf("non-map checksums → %+v, want nil", got)
 	}
-	if got := r.parseItemChecksums(`{"checksums":{"plex":"not-a-map"}}`, "plex"); got != nil {
+	if got := parseItemChecksums(`{"checksums":{"plex":"not-a-map"}}`, "plex"); got != nil {
 		t.Errorf("non-map per-item checksums → %+v, want nil", got)
 	}
 	// Non-string hash values must be skipped silently.
-	got := r.parseItemChecksums(`{"checksums":{"plex":{"a":"hash-a","b":42}}}`, "plex")
+	got := parseItemChecksums(`{"checksums":{"plex":{"a":"hash-a","b":42}}}`, "plex")
 	if got["a"] != "hash-a" {
 		t.Errorf("expected hash-a for file a, got %q", got["a"])
 	}

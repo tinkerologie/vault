@@ -17,14 +17,15 @@ import (
 // cancels its context when serving stops and calls the returned join before
 // the CLI closes the database.
 type daemonWorkers struct {
-	scheduler     *scheduler.Scheduler
-	throttle      func(context.Context)
-	snapshots     *db.SnapshotManager
-	evaluator     *anomaly.Evaluator
-	heartbeatPath string
-	discovery     bool
-	addr          string
-	tls           bool
+	scheduler            *scheduler.Scheduler
+	restoreRequestExpiry func(context.Context) error
+	throttle             func(context.Context)
+	snapshots            *db.SnapshotManager
+	evaluator            *anomaly.Evaluator
+	heartbeatPath        string
+	discovery            bool
+	addr                 string
+	tls                  bool
 }
 
 func (w daemonWorkers) run(ctx context.Context, srv *api.Server) error {
@@ -58,6 +59,9 @@ func (w daemonWorkers) start(ctx context.Context) api.WorkerShutdown {
 	if w.throttle != nil {
 		loops.Go(func() { w.throttle(ctx) })
 	}
+	if w.restoreRequestExpiry != nil {
+		loops.Go(func() { runRestoreRequestExpiry(ctx, time.Minute, w.restoreRequestExpiry) })
+	}
 	if w.snapshots != nil {
 		loops.Go(func() { runPeriodicSnapshots(ctx, w.snapshots) })
 	}
@@ -76,6 +80,21 @@ func (w daemonWorkers) start(ctx context.Context) api.WorkerShutdown {
 				}
 			}
 		},
+	}
+}
+
+func runRestoreRequestExpiry(ctx context.Context, interval time.Duration, reconcile func(context.Context) error) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := reconcile(ctx); err != nil && ctx.Err() == nil {
+				log.Printf("Warning: Restore Request expiry reconciliation failed: %v", err)
+			}
+		}
 	}
 }
 

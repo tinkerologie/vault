@@ -19,3 +19,5 @@ See the [glossary](../../GLOSSARY.md), [implementation context](../../CONTEXT.md
 - [0007: Commit a Job and its items together](0007-atomic-job-aggregate-mutation.md)
 
 - [0008: Give daemon workers one shutdown owner](0008-daemon-runtime-shutdown.md)
+
+- [0009: Require operator approval for MCP restores](0009-operator-approved-mcp-restores.md)

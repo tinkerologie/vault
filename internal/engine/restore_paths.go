@@ -13,6 +13,22 @@ import (
 
 var _ = normalizeVMRestorePlan
 
+// ResolveFolderRestoreTarget checks the folder restore policy and resolves
+// the current location without creating any filesystem entries.
+func ResolveFolderRestoreTarget(target string, original bool) (string, error) {
+	if !restorePathSafe(target) {
+		return "", fmt.Errorf("suspicious restore destination %q", target)
+	}
+	check := safepath.CheckCustomRestoreDestination
+	if original {
+		check = safepath.CheckFolderLocation
+	}
+	if _, err := check(target); err != nil {
+		return "", err
+	}
+	return normalizeRestorePath(target)
+}
+
 func normalizeRestorePath(path string) (string, error) {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {

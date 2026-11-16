@@ -22,6 +22,9 @@ type fakeSMBShare struct {
 	file fakeSMBFileErrs
 
 	umounts int
+	// entriesRead counts directory entries handed to the adapter, so tests
+	// can show a listing stopped early.
+	entriesRead int
 }
 
 type fakeSMBFileErrs struct {
@@ -56,7 +59,7 @@ func (f *fakeSMBShare) Open(name string) (smbFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &fakeSMBFile{fh: fh, errs: f.file}, nil
+	return &fakeSMBFile{fh: fh, errs: f.file, share: f}, nil
 }
 
 func (f *fakeSMBShare) Remove(name string) error {
@@ -82,6 +85,7 @@ func (f *fakeSMBShare) ReadDir(dirname string) ([]os.FileInfo, error) {
 		}
 		out = append(out, info)
 	}
+	f.entriesRead += len(out)
 	return out, nil
 }
 
@@ -105,8 +109,18 @@ func (f *fakeSMBShare) Umount() error {
 }
 
 type fakeSMBFile struct {
-	fh   *os.File
-	errs fakeSMBFileErrs
+	fh    *os.File
+	errs  fakeSMBFileErrs
+	share *fakeSMBShare
+}
+
+func (f *fakeSMBFile) Readdir(n int) ([]os.FileInfo, error) {
+	if err := f.share.errs["readdir"]; err != nil {
+		return nil, err
+	}
+	entries, err := f.fh.Readdir(n)
+	f.share.entriesRead += len(entries)
+	return entries, err
 }
 
 func (f *fakeSMBFile) Read(b []byte) (int, error) { return f.fh.Read(b) }

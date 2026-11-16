@@ -180,7 +180,7 @@ func TestQuietRequestLoggerDefaults_458(t *testing.T) {
 func TestAPIKeyAuthFailsClosedOnDBError_458(t *testing.T) {
 	d := testDB(t)
 	cache := newLocalIPCache(time.Minute, func() map[string]struct{} { return map[string]struct{}{} })
-	h := apiKeyAuth(d, cache, newAPIKeyVerifier(), localHostNames())(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	h := apiKeyAuth(d, cache, newAPIKeyVerifier(), localHostNames(), nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}

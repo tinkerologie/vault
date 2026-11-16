@@ -1,5 +1,4 @@
 <?php
-require_once '/usr/local/emhttp/plugins/vault/include/api.php';
 
 function vault_proxy_error($status, $message) {
     http_response_code($status);
@@ -8,6 +7,13 @@ function vault_proxy_error($status, $message) {
     exit;
 }
 
+// The proxy makes keyless local requests on behalf of signed-in operators.
+if (preg_match('/(?:^|,)\s*vault_ak_/', $_SERVER['HTTP_X_API_KEY'] ?? '') === 1) {
+    vault_proxy_error(403, 'Assistant Keys must connect directly to Vault');
+}
+
+require_once '/usr/local/emhttp/plugins/vault/include/api.php';
+
 $path = $_GET['path'] ?? $_POST['path'] ?? '';
 if (!is_string($path) || $path === '' || $path[0] !== '/') {
     vault_proxy_error(400, 'missing or invalid proxy path');
@@ -15,6 +21,21 @@ if (!is_string($path) || $path === '' || $path[0] !== '/') {
 
 if ($path !== '/api/v1' && strpos($path, '/api/v1/') !== 0) {
     vault_proxy_error(403, 'only /api/v1 routes can be proxied');
+}
+
+// Only the native action endpoint may forward operator proofs. Decode before
+// checking so cURL path normalization cannot make an alias bypass this guard.
+$route = rawurldecode(explode('?', $path, 2)[0]);
+$parts = [];
+foreach (explode('/', $route) as $part) {
+    if ($part === '..') {
+        array_pop($parts);
+    } elseif ($part !== '' && $part !== '.') {
+        $parts[] = $part;
+    }
+}
+if (preg_match('#^api/v1/(?:restore-requests/[^/]+/(?:approve|review)|restore-runs/[^/]+/stop)$#', implode('/', $parts)) === 1) {
+    vault_proxy_error(403, 'This action requires the native Unraid Vault page');
 }
 
 if ($path === '/api/v1/ws' || strpos($path, '/api/v1/ws?') === 0) {

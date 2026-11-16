@@ -24,7 +24,11 @@ func (d *DB) CreateStorageDestination(dest StorageDestination) (int64, error) {
 }
 
 func (d *DB) GetStorageDestination(id int64) (StorageDestination, error) {
-	return d.getStorageDestination(context.Background(), d, id)
+	return d.GetStorageDestinationContext(context.Background(), id)
+}
+
+func (d *DB) GetStorageDestinationContext(ctx context.Context, id int64) (StorageDestination, error) {
+	return d.getStorageDestination(ctx, d, id)
 }
 
 // getStorageDestination uses q for the row read and only the in-memory key to
@@ -498,7 +502,11 @@ func (d *DB) HasDedupChunk(storageID int64, chunkID []byte) (bool, error) {
 
 // LocateDedupChunk returns the pack path + chunk offset + length to range-read.
 func (d *DB) LocateDedupChunk(storageID int64, chunkID []byte) (packPath string, offset, length int64, err error) {
-	err = d.QueryRow(`
+	return d.LocateDedupChunkContext(context.Background(), storageID, chunkID)
+}
+
+func (d *DB) LocateDedupChunkContext(ctx context.Context, storageID int64, chunkID []byte) (packPath string, offset, length int64, err error) {
+	err = d.QueryRowContext(ctx, `
         SELECT p.path, c.offset, c.length
           FROM dedup_chunks c JOIN dedup_packs p ON c.pack_id = p.id
          WHERE c.storage_id=? AND c.chunk_id=?`,

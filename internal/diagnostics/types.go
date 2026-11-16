@@ -213,6 +213,7 @@ type DiskUsage struct {
 // rather than the passphrase, "api_key_configured" rather than the key
 // or its hash).
 type SettingsInfo struct {
+	AssistantKeyCount      *int   `json:"assistant_key_count,omitempty"`
 	EncryptionConfigured   bool   `json:"encryption_configured"`
 	APIKeyConfigured       bool   `json:"api_key_configured"`
 	StagingDirOverride     string `json:"staging_dir_override,omitempty"`

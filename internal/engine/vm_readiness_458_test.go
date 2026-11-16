@@ -77,7 +77,7 @@ func TestVerifyRestoredVMReady458(t *testing.T) {
 			name:    "tcp explicit host",
 			config:  vmRestoreVerifyConfig{Mode: vmRestoreVerifyModeTCP, TCPHost: "127.0.0.1", TCPPort: port, TimeoutSeconds: 5},
 			fake:    &fakeLibvirt{},
-			wantMsg: "verified 127.0.0.1:" + strconv.Itoa(port),
+			wantMsg: "verified TCP port " + strconv.Itoa(port),
 		},
 		{
 			name:   "tcp detected host is loopback",
@@ -124,7 +124,7 @@ func TestVerifyRestoredVMReadyTCPUnreachable458(t *testing.T) {
 	port := closedLoopbackPort(t)
 	config := vmRestoreVerifyConfig{Mode: vmRestoreVerifyModeTCP, TCPHost: "127.0.0.1", TCPPort: port, TimeoutSeconds: 1}
 	err := (&VMHandler{conn: &fakeLibvirt{}}).verifyRestoredVMReady(context.Background(), libvirt.Domain{}, "vm1", config, noProgress)
-	if err == nil || !strings.HasPrefix(err.Error(), "waiting for restored VM service 127.0.0.1:") {
+	if err == nil || !strings.HasPrefix(err.Error(), "waiting for restored VM service on TCP port ") {
 		t.Fatalf("err = %v", err)
 	}
 }

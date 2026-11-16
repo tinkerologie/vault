@@ -20,6 +20,7 @@ import (
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/restorerequest"
 )
 
 const (
@@ -83,6 +84,9 @@ func requestPath(r *http.Request) string {
 		return "/"
 	}
 
+	if strings.Contains(r.URL.Path, crypto.AssistantKeyPrefix) {
+		return "[redacted path]"
+	}
 	return r.URL.Path
 }
 
@@ -277,20 +281,39 @@ func BodySizeLimit(maxBytes int64) func(http.Handler) http.Handler {
 type accessLevel int
 
 const (
-	accessNone   accessLevel = iota
-	accessAPIKey             // presented the configured API key
-	accessLocal              // the daemon's own host, not a cross-origin page
+	accessNone      accessLevel = iota
+	accessAPIKey                // presented the configured API key
+	accessAssistant             // presented an inspection-only Assistant Key
+	accessLocal                 // the daemon's own host, not a cross-origin page
 )
 
-type accessLevelKey struct{}
+type principalKey struct{}
+
+type principal struct {
+	level           accessLevel
+	assistantID     int64
+	assistantDigest string
+	restoreGrant    string
+}
+
+func requestPrincipal(r *http.Request) principal {
+	p, _ := r.Context().Value(principalKey{}).(principal)
+	return p
+}
 
 func requestAccess(r *http.Request) accessLevel {
-	level, _ := r.Context().Value(accessLevelKey{}).(accessLevel)
-	return level
+	return requestPrincipal(r).level
+}
+
+func withPrincipal(r *http.Request, p principal) *http.Request {
+	ctx := context.WithValue(r.Context(), principalKey{}, p)
+	return r.WithContext(restorerequest.WithPrincipal(ctx, restorerequest.Principal{
+		AssistantDigest: p.assistantDigest, LocalReview: p.level == accessLocal,
+	}))
 }
 
 func withAccess(r *http.Request, level accessLevel) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), accessLevelKey{}, level))
+	return withPrincipal(r, principal{level: level})
 }
 
 // LocalOnly restricts a route to the daemon's own host. It covers routes that
@@ -317,20 +340,40 @@ func LocalOnly(next http.Handler) http.Handler {
 //   - Everyone else, which in practice means replication peers and Home
 //     Assistant, must present the configured API key. With no key configured they
 //     get 401 and a message saying where to generate one.
-func APIKeyAuth(database *db.DB) func(http.Handler) http.Handler {
-	return apiKeyAuth(database, newLocalIPCache(localIPCacheTTL, readLocalInterfaceIPs), newAPIKeyVerifier(), localHostNames())
+func APIKeyAuth(database *db.DB, revocations *db.AssistantRevocations) func(http.Handler) http.Handler {
+	return apiKeyAuth(database, newLocalIPCache(localIPCacheTTL, readLocalInterfaceIPs), newAPIKeyVerifier(), localHostNames(), revocations)
 }
 
 // apiKeyAuth is the testable core of APIKeyAuth. The localIPCache identifies
 // addresses that count as "this host" (in addition to loopback); hostNames are
 // the Host names that may claim local trust.
-func apiKeyAuth(database *db.DB, local *localIPCache, verifier *apiKeyVerifier, hostNames map[string]struct{}) func(http.Handler) http.Handler {
+func apiKeyAuth(database *db.DB, local *localIPCache, verifier *apiKeyVerifier, hostNames map[string]struct{}, revocations *db.AssistantRevocations) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key, presented := presentedAssistantKey(r.Header.Values("X-API-Key"))
+			legacyAdmin := crypto.IsLegacyAdminKeyWithAssistantPrefix(key)
+			if presented && !legacyAdmin {
+				digest, valid := crypto.AssistantKeyDigest(key)
+				if valid && revocations.Permits(digest) {
+					key, err := database.FindAssistantKey(r.Context(), digest)
+					if err == nil && revocations.Permits(digest) {
+						p := principal{level: accessAssistant, assistantID: key.ID, assistantDigest: digest}
+						if revocations.PermitsRestoreRequests(key) {
+							p.restoreGrant = key.RestoreGrant
+						}
+						next.ServeHTTP(w, withPrincipal(r, p))
+						return
+					}
+				}
+				verifier.rejectAssistantKey(w, r)
+				return
+			}
+
 			// The Unraid PHP proxy connects to whichever address the daemon is
 			// bound to, so on a specific NIC bind its source address is that
 			// NIC IP rather than loopback (#139).
-			if isLocalRequest(r.RemoteAddr, local) && !isCrossOrigin(r) && isLocalHostHeader(r.Host, hostNames) {
+			localAccess := isLocalRequest(r.RemoteAddr, local) && !isCrossOrigin(r) && isLocalHostHeader(r.Host, hostNames)
+			if localAccess && !legacyAdmin {
 				next.ServeHTTP(w, withAccess(r, accessLocal))
 				return
 			}
@@ -349,10 +392,14 @@ func apiKeyAuth(database *db.DB, local *localIPCache, verifier *apiKeyVerifier, 
 				return
 			}
 			if hash == "" {
+				if legacyAdmin {
+					verifier.rejectAssistantKey(w, r)
+					return
+				}
 				respondJSON(w, http.StatusUnauthorized, map[string]string{"error": unconfiguredRefusal})
 				return
 			}
-			key := r.Header.Get("X-API-Key")
+			key = r.Header.Get("X-API-Key")
 			if key == "" {
 				respondUnauthorized(w)
 				return
@@ -360,14 +407,48 @@ func apiKeyAuth(database *db.DB, local *localIPCache, verifier *apiKeyVerifier, 
 
 			switch verifier.check(w, r, key, hash) {
 			case keyValid:
-				next.ServeHTTP(w, withAccess(r, accessAPIKey))
+				level := accessAPIKey
+				if localAccess {
+					level = accessLocal
+				}
+				next.ServeHTTP(w, withAccess(r, level))
 			case keyThrottled:
-				respondJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many API key attempts, try again later"})
+				respondKeyThrottled(w)
 			default:
 				respondUnauthorized(w)
 			}
 		})
 	}
+}
+
+// A repeated or comma-combined header mentioning an Assistant Key is ambiguous.
+// Refuse it in the scoped branch instead of treating it as keyless local access.
+func presentedAssistantKey(values []string) (string, bool) {
+	for _, value := range values {
+		for part := range strings.SplitSeq(value, ",") {
+			key := strings.TrimSpace(part)
+			if strings.HasPrefix(key, crypto.AssistantKeyPrefix) {
+				if len(values) != 1 || value != key {
+					return "", true
+				}
+				return key, true
+			}
+		}
+	}
+	return "", false
+}
+
+func (v *apiKeyVerifier) rejectAssistantKey(w http.ResponseWriter, r *http.Request) {
+	client, _ := keyByRemoteAddr(r)
+	if v.attempts.OnLimit(w, r, client) {
+		respondKeyThrottled(w)
+		return
+	}
+	respondUnauthorized(w)
+}
+
+func respondKeyThrottled(w http.ResponseWriter) {
+	respondJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many API key attempts, try again later"})
 }
 
 // unconfiguredRefusal is the refusal when no key exists. A key is only needed for

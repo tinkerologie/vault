@@ -101,11 +101,16 @@ func readVMRestoreMetadata(sourceDir string) (vmBackupMetadata, error) {
 		return vmBackupMetadata{}, err
 	}
 
+	return parseVMRestoreMetadata(data)
+}
+
+func parseVMRestoreMetadata(data []byte) (vmBackupMetadata, error) {
 	var metadata vmBackupMetadata
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		return vmBackupMetadata{}, fmt.Errorf("parse vm metadata: %w", err)
 	}
 
+	var err error
 	metadata.State = strings.TrimSpace(metadata.State)
 	metadata.RestoreVerify, err = normalizeVMRestoreVerifyConfig(metadata.RestoreVerify)
 	if err != nil {

@@ -1,0 +1,284 @@
+package restorerequest
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/engine"
+	"github.com/tinkerologie/vault/internal/runner"
+)
+
+var (
+	ErrApprovalPersistence = errors.New("the approval could not be saved to flash; no restore was started")
+	ErrReviewDigest        = errors.New("the submitted approval does not match the reviewed operation")
+	ErrRequestTerminal     = errors.New("this Restore Request cannot start")
+)
+
+const manualContainerRestore = Invalid("this container needs an override in the manual Restore wizard")
+
+func reviewDigest(operation json.RawMessage) string {
+	sum := sha256.Sum256(operation)
+	return hex.EncodeToString(sum[:])
+}
+
+// Approve runs only after the native operator proof has been verified. It
+// accepts the stored operation verbatim and conditionally claims it under
+// immediate Runner admission.
+func (s *Service) Approve(ctx context.Context, id, digest, operator, passphrase string) (View, bool, error) {
+	if !validRequestID(id) {
+		return View{}, false, db.ErrNotFound
+	}
+	current, err := s.db.GetRestoreRequest(ctx, id, "")
+	if err != nil {
+		return View{}, false, fmt.Errorf("loading Restore Request for approval: %w", err)
+	}
+	if digest != reviewDigest(current.Operation) {
+		return View{}, false, ErrReviewDigest
+	}
+	if current.Status != "pending" {
+		return s.approvalOutcome(ctx, current, false)
+	}
+
+	if !s.maintenance.TryLock() {
+		// The first approval may have committed while its response is
+		// still in flight. Return that run on a later authenticated retry.
+		return View{}, false, ErrBusy
+	}
+	defer s.maintenance.Unlock()
+
+	var runID int64
+	err = s.runner.AdmitApprovedRestore(func() (runner.ApprovedRestore, error) {
+		var approved runner.ApprovedRestore
+		now := s.now().UTC()
+		if !current.ExpiresAt.After(now) {
+			changed, err := s.db.ExpireRestoreRequests(ctx, now, id)
+			s.flushChange(changed)
+			if err != nil {
+				return approved, fmt.Errorf("expiring Restore Request at approval: %w", err)
+			}
+			return approved, nil
+		}
+
+		var stored Operation
+		if err := json.Unmarshal(current.Operation, &stored); err != nil {
+			return approved, fmt.Errorf("decoding reviewed Restore Request operation: %w", err)
+		}
+		if !stored.Eligible {
+			if stored.RequiresMetadataReview {
+				return approved, Invalid("unlock the saved backup configuration in Vault before approving")
+			}
+			if stored.ManualRestoreRequired {
+				return approved, manualContainerRestore
+			}
+			return approved, Invalid("the reviewed operation is ineligible for approval")
+		}
+
+		if stored.RequiresPassphrase && passphrase == "" {
+			return approved, runner.ErrRestorePassphrase
+		}
+
+		revalidate := func(ctx context.Context) (Operation, error) {
+			fresh, err := s.capture(ctx, stored.Input, passphrase)
+			var invalid Invalid
+			if errors.Is(err, db.ErrNotFound) || errors.As(err, &invalid) {
+				return Operation{}, runner.ErrReviewedRestoreChanged
+			}
+			if err != nil {
+				return Operation{}, err
+			}
+			if fresh.sourceProbeUnavailable() {
+				return Operation{}, runner.ErrApprovedStorageUnavailable
+			}
+			data, err := json.Marshal(fresh)
+			if err != nil {
+				return Operation{}, fmt.Errorf("encoding revalidated Restore Request operation: %w", err)
+			}
+			if !fresh.Eligible || reviewDigest(data) != digest {
+				return Operation{}, runner.ErrReviewedRestoreChanged
+			}
+			return fresh, nil
+		}
+
+		fresh, err := revalidate(ctx)
+		if err == nil {
+			probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			err = s.runner.CheckApprovedRestorePassphrase(probeCtx, fresh.plan, passphrase)
+			cancel()
+		}
+		if errors.Is(err, runner.ErrReviewedRestoreChanged) {
+			changed, err := s.db.InvalidateRestoreRequest(ctx, id, s.now().UTC())
+			s.flushChange(changed)
+			if err != nil {
+				return approved, fmt.Errorf("invalidating changed Restore Request: %w", err)
+			}
+			return approved, nil
+		}
+		if err != nil {
+			return approved, err
+		}
+
+		run := db.JobRun{JobID: fresh.plan.Job.ID, BackupType: fresh.plan.Point.BackupType, ItemsTotal: 1, RunType: "restore", Status: "running"}
+		approval := db.RestoreApproval{RequestID: id, OperatorName: operator, ReviewDigest: digest}
+		run.ID, err = s.db.ClaimRestoreApproval(ctx, approval, run, s.now)
+		if err != nil {
+			return approved, fmt.Errorf("claiming Restore Request approval: %w", err)
+		}
+		if run.ID == 0 {
+			return approved, nil
+		}
+		if s.flush != nil {
+			if err := s.flush(); err != nil {
+				run.Status = "failed"
+				run.Log = ErrApprovalPersistence.Error()
+				// The local transaction may have reached flash despite an
+				// error. Never revert this claim to pending.
+				if finishErr := s.db.FinishApprovedRestore(context.WithoutCancel(ctx), id, run, "failed", "approval_persistence_failed"); finishErr != nil {
+					log.Printf("restore requests: could not mark Restore Run %d failed after the persistence barrier", run.ID)
+				}
+				s.flushChange(true)
+				return approved, ErrApprovalPersistence
+			}
+		}
+		runID = run.ID
+		return runner.ApprovedRestore{
+			RequestID: id, Run: run, Plan: fresh.plan, Passphrase: passphrase, Flush: s.flush,
+			Revalidate: func(ctx context.Context) error {
+				_, err := revalidate(ctx)
+				return err
+			},
+		}, nil
+	})
+	if err != nil {
+		return View{}, false, err
+	}
+
+	current, err = s.db.GetRestoreRequest(ctx, id, "")
+	if err != nil {
+		return View{}, false, fmt.Errorf("reloading approved Restore Request: %w", err)
+	}
+	if current.Status == "pending" && !current.ExpiresAt.After(s.now()) {
+		changed, err := s.db.ExpireRestoreRequests(ctx, s.now().UTC(), id)
+		if err != nil {
+			return View{}, false, fmt.Errorf("expiring unapproved Restore Request: %w", err)
+		}
+		s.flushChange(changed)
+		current, err = s.db.GetRestoreRequest(ctx, id, "")
+		if err != nil {
+			return View{}, false, fmt.Errorf("reloading expired Restore Request: %w", err)
+		}
+	}
+	return s.approvalOutcome(ctx, current, runID != 0)
+}
+
+func (s *Service) approvalOutcome(ctx context.Context, request db.RestoreRequest, started bool) (View, bool, error) {
+	result, err := s.view(ctx, request, true, "")
+	if err == nil && result.RunID == 0 {
+		err = ErrRequestTerminal
+	}
+	return result, started, err
+}
+
+type ApprovalView struct {
+	ApprovedAt   time.Time `json:"approved_at"`
+	OperatorName string    `json:"operator_name,omitempty"`
+}
+
+type RunItemView struct {
+	Status string `json:"status"`
+}
+
+type RunView struct {
+	ItemResults       []RunItemView             `json:"item_results,omitempty"`
+	Active            bool                      `json:"active,omitempty"`
+	Stopping          bool                      `json:"stopping,omitempty"`
+	StopRequestedAt   *time.Time                `json:"stop_requested_at,omitempty"`
+	StoppedBy         string                    `json:"stopped_by,omitempty"`
+	Status            string                    `json:"status"`
+	ItemsTotal        int                       `json:"items_total"`
+	ItemsDone         int                       `json:"items_done"`
+	ItemsFailed       int                       `json:"items_failed"`
+	Phase             string                    `json:"phase,omitempty"`
+	Percent           *int                      `json:"percent,omitempty"`
+	ApplicationHealth string                    `json:"application_health"`
+	ReadinessChecks   []string                  `json:"readiness_checks"`
+	VMReadiness       *engine.VMReadinessResult `json:"vm_readiness,omitempty"`
+}
+
+func (s *Service) view(ctx context.Context, request db.RestoreRequest, operator bool, warning string) (View, error) {
+	result, err := view(request, operator, warning)
+	if err != nil || request.Status == "pending" || request.Status == "withdrawn" || request.Status == "expired" {
+		return result, err
+	}
+	approval, err := s.db.GetRestoreApproval(ctx, request.ID)
+	if errors.Is(err, db.ErrNotFound) {
+		return result, nil
+	}
+	if err != nil {
+		return View{}, fmt.Errorf("loading Restore Request approval: %w", err)
+	}
+	result.RunID = approval.RunID
+	if operator {
+		result.Approval = &ApprovalView{ApprovedAt: approval.ApprovedAt, OperatorName: approval.OperatorName}
+	}
+	run, err := s.db.GetJobRun(approval.RunID)
+	if errors.Is(err, db.ErrNotFound) {
+		return result, nil // The Job was explicitly deleted; the audit link survives.
+	}
+	if err != nil {
+		return View{}, fmt.Errorf("loading approved Restore Run: %w", err)
+	}
+	runView := RunView{
+		Status: run.Status, ItemsTotal: run.ItemsTotal, ItemsDone: run.ItemsDone, ItemsFailed: run.ItemsFailed,
+		ApplicationHealth: "unchecked", ReadinessChecks: []string{}, StopRequestedAt: run.StopRequestedAt,
+	}
+	if operator {
+		runView.StoppedBy = run.StoppedBy
+	}
+	if request.Status == "interrupted" {
+		runView.Status = "interrupted"
+	}
+	var items []struct {
+		Status          string                    `json:"status"`
+		ReadinessChecks []string                  `json:"readiness_checks"`
+		VMReadiness     *engine.VMReadinessResult `json:"vm_readiness"`
+	}
+	if json.Unmarshal([]byte(run.Log), &items) == nil {
+		for _, item := range items {
+			switch item.Status {
+			case "ok":
+				runView.ItemResults = append(runView.ItemResults, RunItemView{Status: "completed"})
+			case "failed", "cancelled", "not_attempted":
+				runView.ItemResults = append(runView.ItemResults, RunItemView{Status: item.Status})
+			}
+			if result.Item.ItemType == "vm" && item.VMReadiness != nil {
+				runView.VMReadiness = item.VMReadiness
+			}
+			for _, check := range item.ReadinessChecks {
+				switch check {
+				case runner.FolderDataStaged, runner.FolderReviewRevalidated, runner.FolderRestoreCompleted,
+					engine.ContainerStarted, engine.ContainerStartFailed, engine.ContainerDatabaseReady, engine.ContainerDatabaseNotReady,
+					engine.ContainerDatabaseReplayed, engine.ContainerDatabaseReplayFailed:
+					runView.ReadinessChecks = append(runView.ReadinessChecks, check)
+				}
+			}
+		}
+	}
+	status := s.runner.Status()
+	if status.Active && status.RunID == run.ID && run.Status == "running" {
+		runView.Active = true
+		runView.Phase = status.Phase
+		runView.Stopping = status.Cancelling
+		if status.CurrentItem != "" {
+			runView.Percent = &status.CurrentItemPercent
+		}
+	}
+	result.Run = &runView
+	return result, nil
+}

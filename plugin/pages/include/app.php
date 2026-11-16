@@ -37,6 +37,7 @@ if ($html === false) {
 $runtimeConfig = array_merge([
     'mode' => 'unraid-proxy',
     'proxyPath' => '/plugins/vault/include/proxy.php',
+    'restoreRequestActionPath' => '/plugins/vault/include/restore-request.php',
     'apiDisplayBase' => '/plugins/vault/include/proxy.php',
     'daemonBindAddress' => vault_get_bind_address(),
     'daemonPort' => vault_get_port(),

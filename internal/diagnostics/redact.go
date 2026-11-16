@@ -178,6 +178,8 @@ var logRedactPatterns = []logRedactPattern{
 	// AWS SigV4 credential outside Authorization header (e.g. in URL
 	// query strings or debug-dumped canonical requests).
 	{regexp.MustCompile(`(?i)(AWS4-HMAC-SHA256\s+Credential=)[A-Z0-9]+`), `${1}` + redactedPlaceholder},
+	// Assistant Keys copied into free text without a header or field name.
+	{regexp.MustCompile(`vault_ak_[A-Za-z0-9_-]{43}`), redactedPlaceholder},
 	// JSON/query-string credential fields.
 	{regexp.MustCompile(`(?i)("?password"?\s*[:=]\s*"?)[^"\s,&}]+`), `${1}` + redactedPlaceholder},
 	{regexp.MustCompile(`(?i)("?secret[_-]?key"?\s*[:=]\s*"?)[^"\s,&}]+`), `${1}` + redactedPlaceholder},

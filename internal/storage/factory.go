@@ -11,8 +11,16 @@ import (
 // Options tunes the middleware chain. Zero value = production defaults with
 // verbose logging off.
 type Options struct {
-	VerboseLogging bool
-	DestLabel      string // human destination name for logs/metrics
+	// MetadataProbeLimit enables bounded metadata probes. The adapter skips
+	// middleware retries and never falls back to a provider's unbounded List.
+	MetadataProbeLimit   int
+	MetadataProbeContext context.Context
+	// MetadataProbeSplitSizes lets a bounded probe read a split file's small
+	// manifest (WebDAV) to learn its logical size. Without it the size of a
+	// split file is reported as unavailable.
+	MetadataProbeSplitSizes bool
+	VerboseLogging          bool
+	DestLabel               string // human destination name for logs/metrics
 	// WebDAVContext binds the operation context to WebDAV client requests.
 	// Nil leaves requests subject to the usual transport timeouts.
 	WebDAVContext context.Context
@@ -63,6 +71,19 @@ func NewAdapterWithOptions(storageType, configJSON string, opts Options) (Adapte
 		webdav.requestContext = opts.WebDAVContext
 	}
 
+	label := opts.DestLabel
+	if label == "" {
+		label = storageType
+	}
+	if opts.MetadataProbeLimit > 0 {
+		// A bounded metadata probe dispatches on the concrete provider, so
+		// it sits directly on it. It skips throttle (its reads are a few
+		// bounded listings and sidecars) and retry (a probe failure must
+		// surface as "storage unavailable" within its deadline), but keeps
+		// metrics and logging outermost like every other adapter.
+		return withLogging(withMetrics(newMetadataAdapter(provider, opts), label), label, opts.VerboseLogging), nil
+	}
+
 	a := provider
 	// Static throttle (innermost wrapper): no-op when limit <= 0. For
 	// network destinations this protects the internet uplink (symmetric —
@@ -85,10 +106,6 @@ func NewAdapterWithOptions(storageType, configJSON string, opts Options) (Adapte
 	// retry wraps throttle so a throttled-then-failed attempt is re-issued.
 	a = withRetry(a, DefaultRetryPolicy, opts.Diag)
 	// metrics + logging outermost record the logical op and final outcome.
-	label := opts.DestLabel
-	if label == "" {
-		label = storageType
-	}
 	a = withMetrics(a, label)
 	a = withLogging(a, label, opts.VerboseLogging)
 	return a, nil

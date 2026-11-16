@@ -178,7 +178,7 @@ func TestAPIKeyAuth(t *testing.T) {
 	localCache := newLocalIPCache(time.Minute, func() map[string]struct{} {
 		return map[string]struct{}{"192.168.20.21": {}}
 	})
-	middleware := apiKeyAuth(database, localCache, newAPIKeyVerifier(), map[string]struct{}{"tower": {}, "localhost": {}})
+	middleware := apiKeyAuth(database, localCache, newAPIKeyVerifier(), map[string]struct{}{"tower": {}, "localhost": {}}, nil)
 	handler := middleware(okHandler)
 
 	// Split to avoid generic-secret scanner false positives on the test fixture.
@@ -432,7 +432,7 @@ func TestAPIKeyAuthReportsThrottling(t *testing.T) {
 		v.slots <- struct{}{}
 	}
 	local := newLocalIPCache(time.Minute, func() map[string]struct{} { return nil })
-	h := apiKeyAuth(database, local, v, nil)(http.NotFoundHandler())
+	h := apiKeyAuth(database, local, v, nil, nil)(http.NotFoundHandler())
 	req := verifierRequest("192.0.2.1:1")
 	req.Header.Set("X-API-Key", "guess")
 	w := httptest.NewRecorder()

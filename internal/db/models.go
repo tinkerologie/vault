@@ -157,6 +157,8 @@ type JobRun struct {
 	AcknowledgedAt    *time.Time `json:"acknowledged_at"`
 	AcknowledgedBy    *string    `json:"acknowledged_by"`
 	AcknowledgeReason *string    `json:"acknowledge_reason"`
+	StopRequestedAt   *time.Time `json:"stop_requested_at,omitempty"`
+	StoppedBy         string     `json:"stopped_by,omitempty"`
 }
 
 type RestorePoint struct {

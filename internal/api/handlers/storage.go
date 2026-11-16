@@ -713,6 +713,10 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.restoreMu.Unlock()
+	if !req.VerifyOnly && h.runner != nil && h.runner.Status().RestoreRequestID != "" {
+		respondError(w, http.StatusConflict, "wait for the Restore Request run to finish before replacing the database")
+		return
+	}
 
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
@@ -815,6 +819,13 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		_ = testDB.Close()
 		_ = os.Remove(tmpPath)
 		respondInternalError(w, fmt.Errorf("preserving API key: %w", err))
+		return
+	}
+	if err := db.CarryAssistantKeys(r.Context(), h.db, testDB); err != nil {
+		_ = testDB.Close()
+		_ = os.Remove(tmpPath)
+		// The database driver may include bound values in errors.
+		respondError(w, http.StatusInternalServerError, "could not preserve Assistant Keys")
 		return
 	}
 	_ = testDB.Close()

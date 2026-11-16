@@ -68,10 +68,46 @@ CREATE TABLE IF NOT EXISTS restore_points (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX IF NOT EXISTS idx_restore_points_job_created ON restore_points(job_id, created_at DESC, id DESC);
+
 CREATE TABLE IF NOT EXISTS settings (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS assistant_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    key_digest TEXT NOT NULL UNIQUE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Requests survive deletion of the key, Job, and Restore Point they refer to.
+CREATE TABLE IF NOT EXISTS restore_requests (
+    id TEXT PRIMARY KEY,
+    owner_digest TEXT NOT NULL,
+    requester_name TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    terminal_at INTEGER,
+    terminal_reason TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_restore_requests_owner ON restore_requests(owner_digest, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_restore_requests_owner_pending ON restore_requests(owner_digest, expires_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_restore_requests_due ON restore_requests(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_restore_requests_history ON restore_requests(status, created_at DESC, id DESC);
+
+-- Keep the approval and historical run ID when a Job is explicitly deleted.
+CREATE TABLE IF NOT EXISTS restore_request_approvals (
+    request_id TEXT PRIMARY KEY REFERENCES restore_requests(id) ON DELETE CASCADE,
+    run_id INTEGER NOT NULL UNIQUE,
+    approved_at INTEGER NOT NULL,
+    operator_name TEXT NOT NULL,
+    review_digest TEXT NOT NULL
+);
+
 
 CREATE TABLE IF NOT EXISTS activity_log (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,6 +143,8 @@ CREATE TABLE IF NOT EXISTS verify_runs (
 	completed_at DATETIME,
 	error_summary TEXT DEFAULT ''
 );
+
+CREATE INDEX IF NOT EXISTS idx_verify_runs_point_started ON verify_runs(restore_point_id, started_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS replication_sources (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -242,6 +280,8 @@ CREATE INDEX IF NOT EXISTS idx_capacity_samples_dest_time ON destination_capacit
 // alterMigrations are idempotent ALTER TABLE statements for columns added
 // after the initial schema. Errors (e.g. duplicate column) are expected.
 var alterMigrations = []string{
+	"ALTER TABLE restore_requests ADD COLUMN withdrawal_flush_after INTEGER NOT NULL DEFAULT 0",
+	"ALTER TABLE assistant_keys ADD COLUMN restore_request_grant TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE jobs ADD COLUMN verify_backup INTEGER DEFAULT 1",
 	"ALTER TABLE job_items ADD COLUMN sort_order INTEGER DEFAULT 0",
 	"ALTER TABLE jobs ADD COLUMN encryption TEXT DEFAULT 'none'",
@@ -251,6 +291,8 @@ var alterMigrations = []string{
 	"ALTER TABLE jobs ADD COLUMN compression_level TEXT DEFAULT ''",
 	"ALTER TABLE restore_points ADD COLUMN source_id INTEGER DEFAULT 0",
 	"ALTER TABLE job_runs ADD COLUMN run_type TEXT DEFAULT 'backup'",
+	"ALTER TABLE job_runs ADD COLUMN stop_requested_at DATETIME",
+	"ALTER TABLE job_runs ADD COLUMN stopped_by TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE replication_sources ADD COLUMN type TEXT DEFAULT 'remote_vault'",
 	"ALTER TABLE replication_sources ADD COLUMN config TEXT DEFAULT '{}'",
 	"ALTER TABLE jobs ADD COLUMN defer_remote_upload INTEGER DEFAULT 0",

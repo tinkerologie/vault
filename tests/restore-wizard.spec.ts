@@ -375,3 +375,182 @@ test.describe('Restore Wizard partial-restore file picker (#449)', () => {
     await expect(summary).toContainText('No restorable files');
   });
 });
+
+test.describe('Folder Restore Request review', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page, { restoreRequestFixtures: true });
+  });
+
+  test('opens a direct request link and follows query-only selection in an iframe', async ({ page }) => {
+    await page.route('**/test-restore-review', route => route.fulfill({
+      contentType: 'text/html',
+      body: '<iframe title="Vault" src="/?embed=1#/restore?request=review-replace"></iframe>',
+    }));
+    await page.goto('/test-restore-review');
+    const frame = page.frameLocator('iframe[title="Vault"]');
+    const review = frame.getByRole('region', { name: 'Restore Request review' });
+    await expect(review.getByText('/mnt/user/recovery/fixture')).toBeVisible();
+    await expect(review.getByText(/Clear all existing target contents/i)).toBeVisible();
+    await expect(review.getByText(/This backup has no recorded Verification/i)).toBeVisible();
+    await expect(review.getByRole('button', { name: /approve|start restore/i })).toHaveCount(0);
+
+    await frame.getByRole('link', { name: /merge fixture/i }).click();
+    await expect(review.getByText(/Overwrite matching entries/i)).toBeVisible();
+    await expect(review.getByText(/Backup Chain could not be confirmed/i)).toBeVisible();
+    await expect(review.getByText('/mnt/user/recovery/fixture')).toHaveCount(0);
+  });
+
+  test('shows unavailable and denied review links', async ({ page }) => {
+    await page.goto('/#/restore?request=missing');
+    await expect(page.getByText('Restore Request not found.')).toBeVisible();
+    await page.evaluate(() => { window.location.hash = '/restore?request=denied'; });
+    await expect(page.getByText('Operator access required to review this Restore Request.')).toBeVisible();
+  });
+
+  test('paginates terminal request history separately from run history', async ({ page }) => {
+    await page.goto('/#/history');
+    const history = page.getByRole('region', { name: 'Request history' });
+    await expect(history.getByText('withdrawn fixture', { exact: false })).toBeVisible();
+    await history.getByRole('button', { name: 'Load more requests' }).click();
+    await expect(history.getByText('expired fixture', { exact: false })).toBeVisible();
+    await expect(history.getByRole('button', { name: 'Load more requests' })).toHaveCount(0);
+  });
+});
+
+test('native folder approval keeps a busy request pending and follows the linked Restore Run', async ({ page }) => {
+  await setupVaultMockApi(page, { restoreRequestFixtures: true });
+  await page.addInitScript(() => {
+    Object.assign(window, { __VAULT_RUNTIME_CONFIG__: {
+      mode: 'unraid-proxy',
+      csrfToken: 'native-csrf-fixture',
+      restoreRequestActionPath: '/plugins/vault/include/restore-request.php',
+    } });
+  });
+  let approvalAttempts = 0;
+  let finished = false;
+  await page.route('**/api/v1/restore-requests/review-replace', route => route.fulfill({ json: {
+    id: 'review-replace', status: finished ? 'completed' : 'pending',
+    requester_name: 'Recovery assistant', job_name: 'Folder backups',
+    item: { item_name: 'archive', item_type: 'folder' },
+    restore_point: { id: 11, created_at: '2026-11-10T02:00:00Z' },
+    target_choice: 'alternate', configured_path: '/mnt/user/restore/review',
+    resolved_path: '/mnt/cache/restore/review',
+    expires_at: '2026-11-14T02:00:00Z', membership: 'confirmed', verification: { status: 'none' },
+    chain: { status: 'confirmed', steps: [] }, effective_write_mode: 'replace',
+    effects: ['clear_target_contents', 'write_backed_up_entries'], warnings: ['unverified_backup'],
+    eligible_for_approval: true, requires_passphrase: true, review_digest: 'reviewed-fixture',
+    ...(finished ? {
+      run_id: 77, approval: { operator_name: 'root', approved_at: '2026-11-12T02:00:00Z' },
+      run: { status: 'completed', items_done: 1, items_total: 1, items_failed: 0, application_health: 'unchecked' },
+    } : {}),
+  } }));
+  await page.route('**/plugins/vault/include/restore-request.php', route => {
+    approvalAttempts += 1;
+    const req = route.request();
+    expect(req.url()).not.toContain('ephemeral-fixture');
+    expect(Object.fromEntries(new URLSearchParams(req.postData() || ''))).toEqual({
+      action: 'approve', id: 'review-replace', review_digest: 'reviewed-fixture',
+      passphrase: 'ephemeral-fixture', csrf_token: 'native-csrf-fixture',
+    });
+    if (approvalAttempts === 1) {
+      return route.fulfill({ status: 409, json: { error: 'Runner busy. Try again when it finishes.' } });
+    }
+    finished = true;
+    return route.fulfill({ status: 202, json: { run_id: 77, status: 'running' } });
+  });
+
+  await page.route('**/api/v1/runs/77/logs?*', route => route.fulfill({ json: {
+    run_id: 77, entries: [{ id: 1, message: 'Folder Restore completed' }],
+  } }));
+  await page.route(url => url.pathname === '/api/v1/restore-requests' &&
+    url.searchParams.get('status')?.includes('completed') === true, route => route.fulfill({ json: {
+    requests: [{ id: 'review-replace', status: 'completed', run_id: 77, job_name: 'Folder backups',
+      item: { item_name: 'archive', item_type: 'folder' }, approval: { operator_name: 'root' } }],
+  } }));
+
+  await page.goto('/#/restore?request=review-replace');
+  const review = page.getByRole('region', { name: 'Restore Request review' });
+  await expect(review.getByText('/mnt/cache/restore/review')).toBeVisible();
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await review.getByRole('button', { name: 'Approve and run' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Approve Restore Request' });
+    await dialog.getByLabel('Backup Passphrase').fill('ephemeral-fixture');
+    await dialog.getByLabel(/Type RESTORE to confirm/).fill('RESTORE');
+    await dialog.getByRole('button', { name: 'Approve and run' }).click();
+    if (attempt === 0) {
+      await expect(review.getByRole('alert')).toContainText('Runner busy');
+      await expect(review.getByText('pending', { exact: true })).toBeVisible();
+    }
+  }
+  await expect(review.getByText('Restore Run #77')).toBeVisible();
+  await expect(review.getByText('unchecked', { exact: true })).toBeVisible();
+  await review.getByText('Restore Run log', { exact: true }).click();
+  await expect(review.getByText('Folder Restore completed', { exact: true })).toBeVisible();
+  await page.goto('/#/history');
+  const history = page.getByRole('region', { name: 'Request history' });
+  await expect(history.getByText(/Restore Run #77/)).toBeVisible();
+  await expect(history.getByText(/root/)).toBeVisible();
+  await history.getByRole('link', { name: 'archive · Folder backups' }).click();
+  await page.reload();
+  await expect(review.getByText('Restore Run #77')).toBeVisible();
+});
+
+for (const stopOutcome of ['cancelled', 'completed'] as const) {
+  test(`native exact-run stop shows the ${stopOutcome} outcome`, async ({ page }) => {
+    let status = 'running';
+    await setupVaultMockApi(page, {
+      restoreRequestFixtures: true,
+      restoreRequestRun: () => ({
+        status,
+        run_id: 91,
+        terminal_reason: status === 'cancelled' ? 'stopped_by_operator' : undefined,
+        run: {
+          status, active: status === 'running', items_total: 1, items_done: status === 'completed' ? 1 : 0,
+          items_failed: 0, application_health: 'unchecked',
+        },
+      }),
+    });
+    await page.addInitScript(() => {
+      Object.assign(window, { __VAULT_RUNTIME_CONFIG__: {
+        mode: 'unraid-proxy',
+        csrfToken: 'native-csrf-fixture',
+        restoreRequestActionPath: '/plugins/vault/include/restore-request.php',
+      } });
+    });
+    let acceptStop = () => {};
+    const stopReply = new Promise<void>(resolve => { acceptStop = resolve; });
+    let attempts = 0;
+    await page.route('**/plugins/vault/include/restore-request.php', async route => {
+      attempts += 1;
+      expect(Object.fromEntries(new URLSearchParams(route.request().postData() || ''))).toEqual({
+        action: 'stop', id: '91', csrf_token: 'native-csrf-fixture',
+      });
+      await stopReply;
+      if (stopOutcome === 'completed') {
+        status = 'completed';
+        return route.fulfill({ status: 409, json: { run_id: 91, status } });
+      }
+      return route.fulfill({ status: 202, json: { run_id: 91, status: 'stopping' } });
+    });
+
+    await page.goto('/#/restore?request=review-replace');
+    const review = page.getByRole('region', { name: 'Restore Request review' });
+    await expect(review.getByRole('heading', { name: 'Restore Run #91' })).toBeVisible();
+    await review.getByRole('button', { name: 'Stop Restore Run' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Stop Restore Run #91' });
+    await expect(dialog.getByText('Stopping can leave the restore location partly restored.')).toBeVisible();
+    const stop = dialog.getByRole('button', { name: 'Stop Restore Run' });
+    await stop.click();
+    await expect(stop).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+    acceptStop();
+    if (stopOutcome === 'cancelled') {
+      await expect(review.getByRole('status').filter({ hasText: 'Stopping…' })).toBeVisible();
+      status = 'cancelled';
+      await expect(review.getByText('The restore location may be partly restored.', { exact: false })).toBeVisible();
+    }
+    await expect(review.getByRole('status').filter({ hasText: new RegExp(stopOutcome, 'i') })).toBeVisible();
+    await expect(review.getByRole('button', { name: 'Stop Restore Run' })).toHaveCount(0);
+    expect(attempts).toBe(1);
+  });
+}

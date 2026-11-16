@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Create and revoke named Assistant Keys in Settings. Each key grants read-only access to the recovery catalog over REST and MCP (#639).
+- Find Restore Points for a Backup Item and inspect its recorded membership, required Backup Chain, storage metadata and Verification over REST and MCP (#640).
+- Grant an Assistant Key permission to prepare a folder Restore Request. Review the selected Restore Point and write effects in Restore, and see withdrawn or expired requests in History (#641).
+- Approve a folder Restore Request from the signed-in Unraid Vault page, then follow its linked Restore Run in Vault or through the requesting Assistant Key (#642).
+- Stop an active approved Restore Run by its exact ID from the signed-in Unraid Vault page. Deduplicated folder restores stop between chunks. Vault saves who requested the stop and when before acknowledging it, and the linked request records the actual outcome (#643).
+- Review and approve Docker Restore Requests in Unraid, including saved image and volume effects, and follow container startup and database replay outcomes (#644).
+- Review and approve VM Restore Requests with the required checkpoint chain and disk, firmware and domain effects. Tracked VM Restore Runs show measured guest readiness outcomes. Review works on SFTP, SMB and WebDAV storage, and treats a disk named through another Unraid share mount as in use (#645).
+
+### Changed
+
+- The MCP `restore_item` tool now prepares a pending Restore Request and returns a review link. A signed-in Unraid operator must approve it before Vault restores the selected folder, Docker container, or VM (#646).
+
+### Fixed
+
+- Stopping an approved Docker Restore Run now also interrupts a single-file bind mount mid-file instead of finishing it (#638).
+- Docker Restore Requests for older backups that never recorded the item type now reach saved-configuration review, which confirms the type. If it can't, the request stays ineligible and says why (#638).
+
 ## [v2026.11.02] - 2026-11-12
 
 ### Fixed

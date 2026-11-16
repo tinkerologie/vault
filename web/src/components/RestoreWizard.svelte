@@ -126,11 +126,13 @@
     restoring = false
     const anySuccess = entries.some(u => u.state === 'completed' || (u.state === 'partial' && u.done > 0))
     const anyFailure = entries.some(u => u.state !== 'completed')
+    const anyCancelled = entries.some(u => u.state === 'cancelled')
 
     const totalDone = entries.reduce((s, u) => s + (u.done || 0), 0)
     const totalItems = entries.reduce((s, u) => s + (u.total || 0), 0)
     const totalFailed = entries.reduce((s, u) => {
       if (u.state === 'completed') return s
+      if (u.state === 'cancelled') return s + (u.failed || 0)
       if (u.failed) return s + u.failed
       if (u.state === 'partial') return s + Math.max(0, (u.total || 0) - (u.done || 0))
       return s + (u.total || 0)
@@ -138,7 +140,9 @@
     const totalSize = entries.reduce((s, u) => s + (u.sizeBytes || 0), 0)
 
     let finalStatus = 'completed'
-    if (!anySuccess) {
+    if (anyCancelled) {
+      finalStatus = 'cancelled'
+    } else if (!anySuccess) {
       finalStatus = 'failed'
     } else if (anyFailure) {
       finalStatus = 'partial'
@@ -2024,6 +2028,8 @@
                     <span class="px-2 py-0.5 rounded-full bg-success/20 text-success font-medium">Completed ({run.done}/{run.total})</span>
                   {:else if run.state === 'partial'}
                     <span class="px-2 py-0.5 rounded-full bg-warning/20 text-warning font-medium">Partial ({run.done}/{run.total})</span>
+                  {:else if run.state === 'cancelled'}
+                    <span class="px-2 py-0.5 rounded-full bg-warning/20 text-warning font-medium">Cancelled ({run.done}/{run.total})</span>
                   {:else if run.state === 'failed' || run.state === 'rejected'}
                     <span class="px-2 py-0.5 rounded-full bg-danger/20 text-danger font-medium" title={run.error || ''}>Failed</span>
                   {/if}
@@ -2038,7 +2044,7 @@
     <!-- Outcome Banner -->
     {#if restoreOutcome}
       <div class="mt-5 p-4 rounded-xl border flex items-start justify-between gap-3
-        {restoreOutcome.status === 'completed' ? 'bg-success/10 border-success/30' : restoreOutcome.status === 'partial' ? 'bg-warning/10 border-warning/30' : 'bg-danger/10 border-danger/30'}">
+        {restoreOutcome.status === 'completed' ? 'bg-success/10 border-success/30' : ['partial', 'cancelled'].includes(restoreOutcome.status) ? 'bg-warning/10 border-warning/30' : 'bg-danger/10 border-danger/30'}">
         <div class="flex items-start gap-3">
           {#if restoreOutcome.status === 'completed'}
             <svg aria-hidden="true" class="w-5 h-5 text-success shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2048,13 +2054,18 @@
               <p class="text-sm font-semibold text-success">Restore completed successfully</p>
               <p class="text-xs text-text-muted mt-0.5">{restoreOutcome.done}/{restoreOutcome.total} items restored{restoreOutcome.sizeBytes ? ` · ${formatBytes(restoreOutcome.sizeBytes)}` : ''}</p>
             </div>
-          {:else if restoreOutcome.status === 'partial'}
+          {:else if restoreOutcome.status === 'partial' || restoreOutcome.status === 'cancelled'}
             <svg aria-hidden="true" class="w-5 h-5 text-warning shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
             </svg>
             <div>
-              <p class="text-sm font-semibold text-warning">Restore completed with errors</p>
-              <p class="text-xs text-text-muted mt-0.5">{restoreOutcome.done}/{restoreOutcome.total} items restored, {restoreOutcome.failed} failed{restoreOutcome.sizeBytes ? ` · ${formatBytes(restoreOutcome.sizeBytes)}` : ''}</p>
+              {#if restoreOutcome.status === 'cancelled'}
+                <p class="text-sm font-semibold text-warning">Restore cancelled</p>
+                <p class="text-xs text-text-muted mt-0.5">The restore location may be partly restored.</p>
+              {:else}
+                <p class="text-sm font-semibold text-warning">Restore completed with errors</p>
+                <p class="text-xs text-text-muted mt-0.5">{restoreOutcome.done}/{restoreOutcome.total} items restored, {restoreOutcome.failed} failed{restoreOutcome.sizeBytes ? ` · ${formatBytes(restoreOutcome.sizeBytes)}` : ''}</p>
+              {/if}
             </div>
           {:else}
             <svg aria-hidden="true" class="w-5 h-5 text-danger shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

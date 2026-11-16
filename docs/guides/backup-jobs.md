@@ -296,6 +296,24 @@ This removes both the backup files from storage and the restore point record fro
 
 ---
 
+## Review a Restore Request
+
+A Restore Request covers one whole folder, Docker container, or VM from one Restore Point. When an assistant gives you a review link, open it while signed in to Unraid. You can also find the request under **Restore** → **Pending Restore Requests**.
+
+Check the selected Backup Item, Restore Point, Backup Chain, destination and write effects. Enter the Backup Passphrase in Vault if the review asks for it. Select **Approve and run** to start the reviewed operation. If the Runner is busy, retry approval when it becomes available. Follow the linked Restore Run in the request or in **History**.
+
+Use the manual Restore wizard for a container that needs **Container approvals**, for a plugin or ZFS dataset, or to restore selected files. See the [MCP migration guide](../mcp.md#migrate-restore_item-clients) for updates to existing assistant clients.
+
+### VM Restore Requests
+
+A VM Restore Request shows the disks and NVRAM Vault will write and the domain definition Vault will create. The required chain starts at the VM's recorded full backup. Each required disk layer must be available before Vault stops or removes an existing domain. An alternate directory changes the disk and NVRAM paths for the same VM identity.
+
+Vault checks the reviewed source and destination effects before execution. Libvirt actions and disk writes occur separately and can leave a partially restored VM if they fail or are interrupted. History shows whether Vault started the VM and which configured readiness checks ran. Application health stays unchecked.
+
+## Stop an approved Restore Run
+
+Open the Restore Request on the signed-in Unraid Vault page. While the run is active, select **Stop Restore Run** and confirm the run ID and restore location. Stopping can leave the restore location partly restored. Check the recorded outcome in the request. If the restore finishes before it can stop, Vault shows the outcome of that restore.
+
 ## Restoring Across Backup Jobs
 
 The Restore wizard supports selecting items that belong to different backup jobs (for example, restoring containers from an appdata job together with a VM from a virtualisation job):

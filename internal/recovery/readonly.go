@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 
+	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/storage"
 )
 
@@ -51,4 +53,25 @@ func (a readOnlyAdapter) GetCapacity(ctx context.Context) (storage.Capacity, err
 func (a readOnlyAdapter) Close() error {
 	storage.CloseAdapter(a.inner)
 	return nil
+}
+
+type metadataReadOnlyAdapter struct {
+	readOnlyAdapter
+}
+
+func (metadataReadOnlyAdapter) TestConnection() error { return ErrReadOnly }
+
+func (metadataReadOnlyAdapter) Read(string) (io.ReadCloser, error) {
+	return nil, ErrReadOnly
+}
+
+func (metadataReadOnlyAdapter) ReadRange(string, int64, int64) (io.ReadCloser, error) {
+	return nil, ErrReadOnly
+}
+
+// GetEvidence checks only recorded data and storage metadata.
+func GetEvidence(ctx context.Context, database *db.DB, pointID int64, item runner.ItemSelection) (runner.RecoveryEvidence, error) {
+	return runner.InspectRecovery(ctx, database, pointID, item, func(adapter storage.Adapter) runner.RecoveryMetadata {
+		return metadataReadOnlyAdapter{readOnlyAdapter{inner: adapter}}
+	})
 }

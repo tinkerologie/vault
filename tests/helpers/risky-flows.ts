@@ -128,7 +128,7 @@ export const RISKY_FLOWS: RiskyFlow[] = [
     isAction: (r) => r.method() === 'DELETE' && /\/history$/.test(r.url()),
     calls: 1,
     source: ['All jobs: the entire history, not only the filtered rows'],
-    loss: ['All job-run history is deleted', 'All restore points are deleted', 'orphans', 'cannot be undone'],
+    loss: ['Runs linked to Restore Requests stay in History', 'All restore points are deleted', 'orphans', 'cannot be undone'],
     actionUrl: /\/history$/,
     afterConfirm: async (page) => {
       await expect(page.getByRole('dialog')).toHaveCount(0);

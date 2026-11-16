@@ -76,7 +76,7 @@ export function restoreAnywaySummary(units) {
 export const PURGE_HISTORY_SUMMARY = {
   source: [{ label: 'Scope', value: 'All jobs: the entire history, not only the filtered rows' }],
   consequences: [
-    'All job-run history is deleted.',
+    'Job-run history is deleted. Runs linked to Restore Requests stay in History.',
     'All restore points are deleted, so Vault can no longer restore from them.',
     'Backup files stay on storage as orphans and must be re-imported.',
     'This cannot be undone.',

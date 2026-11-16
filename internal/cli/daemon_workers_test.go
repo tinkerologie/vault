@@ -57,3 +57,43 @@ func TestDaemonWorkersJoinBlockedLoop(t *testing.T) {
 		}
 	})
 }
+
+func TestDaemonWorkersWaitForRestoreRequestExpiryBeforeFinalSnapshot(t *testing.T) {
+	d := openTestDB(t)
+	path := filepath.Join(t.TempDir(), "final.db")
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		expiring, release := make(chan struct{}), make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(release) })
+		defer unblock()
+		workers := daemonWorkers{
+			scheduler: scheduler.New(d, func(int64) {}),
+			snapshots: db.NewSnapshotManager(d, path, path),
+			restoreRequestExpiry: func(ctx context.Context) error {
+				close(expiring)
+				<-ctx.Done()
+				<-release
+				return ctx.Err()
+			},
+		}
+		shutdown := workers.start(ctx)
+		<-expiring
+		cancel()
+		shutdown.WaitForDispatch()
+		joined := make(chan struct{})
+		go func() {
+			shutdown.Join()
+			close(joined)
+		}()
+		synctest.Wait()
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("snapshot appeared before expiry finished: %v", err)
+		}
+		unblock()
+		<-joined
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("final snapshot missing after expiry joined: %v", err)
+		}
+	})
+}
