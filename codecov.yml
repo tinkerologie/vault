@@ -1,9 +1,11 @@
 codecov:
-  require_ci_to_pass: true
+  require_ci_to_pass: false
 
-github_checks:
-  annotations: true
-
+  strict_yaml_branch: main
+  notify:
+    wait_for_ci: false
+    after_n_builds: 2
+github_checks: false
 coverage:
   status:
     default_rules:
@@ -31,6 +33,7 @@ coverage:
         target: 90%
         threshold: 0%
         informational: false
+        if_not_found: failure
     changes: false
 
 flags:

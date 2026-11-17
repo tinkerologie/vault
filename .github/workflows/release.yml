@@ -16,6 +16,7 @@ permissions:
 
 jobs:
   validate-ref:
+    timeout-minutes: 60
     # Runs nothing from the tag: only commits already reviewed into main may be
     # built and released.
     name: Validate release tag
@@ -65,6 +66,7 @@ jobs:
           echo "Releasing $TAG at $SHA"
 
   release:
+    timeout-minutes: 60
     name: Release
     needs: validate-ref
     runs-on: ubuntu-latest
@@ -301,6 +303,7 @@ jobs:
           echo "**URL:** https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${VERSION_VERSION}" >> $GITHUB_STEP_SUMMARY
 
   publish-plg:
+    timeout-minutes: 60
     # main requires pull requests; the Unraid plugin manager and Community Applications read
     # the .plg from main, so its new hash is pushed with the Tinkerologie-Release app, the
     # only actor the ruleset lets bypass that rule (GITHUB_TOKEN cannot be a bypass actor).

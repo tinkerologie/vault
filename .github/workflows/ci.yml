@@ -19,6 +19,7 @@ env:
 
 jobs:
   ansible-test:
+    timeout-minutes: 30
     name: Ansible SSH key handling
     runs-on: ubuntu-latest
     steps:
@@ -37,6 +38,7 @@ jobs:
         run: make test-ansible
 
   test:
+    timeout-minutes: 30
     name: Test
     runs-on: ubuntu-latest
     permissions:
@@ -178,6 +180,7 @@ jobs:
           retention-days: 1
 
   coverage-upload:
+    timeout-minutes: 30
     # Holds the Codecov OIDC permission away from the job that runs repository
     # code, npm scripts and third-party tools. Only pinned actions run here.
     name: Upload Coverage
@@ -207,8 +210,8 @@ jobs:
           files: ./coverage.txt
           flags: backend
           disable_search: true
-          use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
-          fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
+          use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          fail_ci_if_error: false
 
       - name: Upload web coverage to Codecov
         if: ${{ hashFiles('web/coverage/lcov.info') != '' }}
@@ -218,8 +221,8 @@ jobs:
           files: ./web/coverage/lcov.info
           flags: frontend
           disable_search: true
-          use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
-          fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
+          use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          fail_ci_if_error: false
 
       - name: Upload test results to Codecov
         if: ${{ hashFiles('web/test-report.junit.xml') != '' }}
@@ -229,10 +232,11 @@ jobs:
           files: ./web/test-report.junit.xml
           report_type: test_results
           disable_search: true
-          use_oidc: ${{ env.CODECOV_OIDC == 'true' }}
-          fail_ci_if_error: ${{ env.CODECOV_OIDC == 'true' }}
+          use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          fail_ci_if_error: false
 
   format:
+    timeout-minutes: 30
     name: Format
     runs-on: ubuntu-latest
     permissions:
@@ -253,6 +257,7 @@ jobs:
           exit "$status"
 
   recovery-fixture:
+    timeout-minutes: 30
     # Builds real backups on Linux, with file names Windows cannot store, for
     # the windows job to recover. Archived as one tar because artifact uploads
     # reject some of the names involved.
@@ -284,6 +289,7 @@ jobs:
           retention-days: 3
 
   windows:
+    timeout-minutes: 30
     # Runs the recovery code on Windows and recovers the Linux-built fixture,
     # so Windows path, name and filesystem behaviour is tested for real.
     name: Test (Windows)

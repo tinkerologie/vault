@@ -15,6 +15,7 @@ permissions: {}
 
 jobs:
   docker:
+    timeout-minutes: 10
     name: Docker
     runs-on: ubuntu-latest
     permissions:

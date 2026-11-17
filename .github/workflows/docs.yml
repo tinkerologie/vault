@@ -24,6 +24,7 @@ concurrency:
 
 jobs:
   build-deploy:
+    timeout-minutes: 10
     name: Build and Deploy
     runs-on: ubuntu-latest
     environment:
