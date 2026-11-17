@@ -89,11 +89,19 @@ func structuredBind(binds []mounttypes.Mount, target string) *mounttypes.Mount {
 }
 
 func checkStructuredBindSource(bind mounttypes.Mount) error {
-	if _, err := os.Stat(bind.Source); err != nil {
-		if errors.Is(err, os.ErrNotExist) && bind.BindOptions != nil && bind.BindOptions.CreateMountpoint {
-			return nil
+	// The plan already resolved the source. Keep the lookup pinned to that
+	// parent and refuse any symlink introduced since planning.
+	parent, err := safepath.OpenPinnedDir(filepath.Dir(bind.Source))
+	if err == nil {
+		defer parent.Close()
+		var info os.FileInfo
+		info, err = parent.Lstat(filepath.Base(bind.Source))
+		if err == nil && info.Mode()&os.ModeSymlink != 0 {
+			err = safepath.ErrSymlinkInPath
 		}
-		return fmt.Errorf("structured bind source unavailable: %w", err)
 	}
-	return nil
+	if err == nil || (errors.Is(err, os.ErrNotExist) && bind.BindOptions != nil && bind.BindOptions.CreateMountpoint) {
+		return nil
+	}
+	return fmt.Errorf("structured bind source unavailable: %w", err)
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/safepath"
 )
 
 func TestClassicRestoreRecreatesStructuredBindMount(t *testing.T) {
@@ -371,6 +372,27 @@ func TestStructuredBindRevalidationRefusesMissingExcludedSource(t *testing.T) {
 	}
 	if err := checkReviewedContainerPaths(reviewedCtrcovContext(t, review, nil), inspectFromJSON(t, saved), ""); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected missing-source refusal before stopping the container, got %v", err)
+	}
+}
+
+func TestCheckStructuredBindSourceRequiresResolvedPath(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(base, "data")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{alias, filepath.Join(alias, "entry")} {
+		bind := mounttypes.Mount{Source: source, BindOptions: &mounttypes.BindOptions{CreateMountpoint: true}}
+		if err := checkStructuredBindSource(bind); !errors.Is(err, safepath.ErrSymlinkInPath) {
+			t.Errorf("source %q must be resolved before the bind check, got %v", source, err)
+		}
 	}
 }
 
