@@ -131,6 +131,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vault-linux-amd64
+          retention-days: 7
           path: build/vault-linux-amd64
 
       - name: Cross-compile Windows binary
@@ -161,6 +162,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vault-windows-amd64
+          retention-days: 7
           path: build/vault-windows-amd64.exe
 
       - name: Upload coverage reports for the Codecov job
