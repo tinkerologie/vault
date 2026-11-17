@@ -296,3 +296,89 @@ func TestStructuredBindReviewRefusesAlternateAliasOutsideDestination(t *testing.
 		t.Fatalf("expected refusal for the alternate alias, got %v", err)
 	}
 }
+
+func TestStructuredBindReviewChecksExcludedSource(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "excluded")
+	for _, tc := range []struct {
+		name        string
+		create      bool
+		wantBlocked bool
+	}{
+		{name: "missing bind", wantBlocked: true},
+		{name: "Docker can create the source", create: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			saved := structuredBindFixture(source, tc.create)
+			manifest := ctrcovJSON(t, []volumeManifestEntry{{Index: 0, Source: source, SkipReason: "excluded by selection"}})
+			_, err := (&ContainerHandler{}).ReviewClassicRestore(sameServerRestore(t), BackupItem{Name: "fixture"},
+				[]ContainerBackupMetadata{{Inspect: []byte(saved), Volumes: manifest, Files: []string{"image.tar"}}}, "", false)
+			if tc.wantBlocked {
+				if err == nil || !strings.Contains(err.Error(), "structured bind source unavailable") {
+					t.Fatalf("expected missing-source refusal, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("review of creatable source: %v", err)
+			}
+		})
+	}
+}
+
+func TestRecreationChecksResolvedStructuredBindsBeforeRemoval(t *testing.T) {
+	t.Run("missing required source", func(t *testing.T) {
+		inspect := inspectFromJSON(t, structuredBindFixture(filepath.Join(t.TempDir(), "missing"), false))
+		docker, recorded := newRestoreDaemon458()
+		err := (&ContainerHandler{cli: docker}).recreateAndStartContainer(sameServerRestore(t), BackupItem{Name: "fixture"}, inspect, "", "", noopProgress)
+		if !errors.Is(err, os.ErrNotExist) || len(recorded.removed) != 0 || len(recorded.created) != 0 {
+			t.Fatalf("missing source must fail before replacement: %v", err)
+		}
+	})
+	t.Run("unapproved resolved host source", func(t *testing.T) {
+		inspect := inspectFromJSON(t, structuredBindFixture(t.TempDir(), false))
+		docker, recorded := newRestoreDaemon458()
+		err := (&ContainerHandler{cli: docker}).recreateAndStartContainer(t.Context(), BackupItem{Name: "fixture"}, inspect, "", "", noopProgress)
+		if !errors.Is(err, ErrRestoreNeedsApproval) || len(recorded.removed) != 0 || len(recorded.created) != 0 {
+			t.Fatalf("resolved host source must require approval before replacement: %v", err)
+		}
+	})
+}
+
+func TestStructuredBindRestoreRefusesUnapprovedAlternateBeforeImageLoad(t *testing.T) {
+	item := BackupItem{Name: "fixture", Settings: map[string]any{"restore_destination": t.TempDir()}}
+	stage := t.TempDir()
+	writeFile458(t, filepath.Join(stage, "config.json"), structuredBindFixture("/mnt/cache/fixture", false))
+	writeFile458(t, filepath.Join(stage, "image.tar"), "image fixture")
+	docker, recorded := newRestoreDaemon458()
+	err := (&ContainerHandler{cli: docker}).Restore(t.Context(), item, stage, noopProgress)
+	if !errors.Is(err, ErrRestoreNeedsApproval) || recorded.loaded || len(recorded.removed) != 0 {
+		t.Fatalf("alternate host source must require approval before Docker mutation: %v", err)
+	}
+}
+
+func TestStructuredBindRevalidationRefusesMissingExcludedSource(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "excluded")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	saved := structuredBindFixture(source, false)
+	manifest := ctrcovJSON(t, []volumeManifestEntry{{Index: 0, Source: source, SkipReason: "excluded by selection"}})
+	review, err := (&ContainerHandler{}).ReviewClassicRestore(sameServerRestore(t), BackupItem{Name: "fixture"},
+		[]ContainerBackupMetadata{{Inspect: []byte(saved), Volumes: manifest, Files: []string{"image.tar"}}}, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkReviewedContainerPaths(reviewedCtrcovContext(t, review, nil), inspectFromJSON(t, saved), ""); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected missing-source refusal before stopping the container, got %v", err)
+	}
+}
+
+func structuredBindFixture(source string, create bool) string {
+	return fmt.Sprintf(`{
+		"Name": "/fixture",
+		"Config": {"Image": "example.invalid/fixture:1"},
+		"HostConfig": {"Mounts": [{"Type": "bind", "Source": %[1]q, "Target": "/config", "BindOptions": {"CreateMountpoint": %[2]t}}]},
+		"Mounts": [{"Type": "bind", "Source": %[1]q, "Destination": "/config"}]
+	}`, source, create)
+}

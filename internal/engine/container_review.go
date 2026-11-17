@@ -229,6 +229,9 @@ func (h *ContainerHandler) reviewContainerRestore(ctx context.Context, item Back
 	if err != nil {
 		return ContainerRestoreReview{}, err
 	}
+	if trustErr == nil {
+		trustErr = enforceStructuredBindPrivileges(ctx, item, structuredBinds)
+	}
 	mounts := inspect.mountInfos()
 	if err := checkVolumeTargetCollisions(destination, mounts); err != nil {
 		return ContainerRestoreReview{}, err
@@ -255,8 +258,13 @@ func (h *ContainerHandler) reviewContainerRestore(ctx context.Context, item Back
 		// A mount with no saved data is still applied in the recreated
 		// configuration. Preserve its path for review even when it would
 		// not pass Vault's independent rules for extracting backup files.
-		if source := structuredBindSource(structuredBinds, mount.Destination); source != "" {
-			target = source
+		if bind := structuredBind(structuredBinds, mount.Destination); bind != nil {
+			target = bind.Source
+			if mode == "configuration_only" {
+				if err := checkStructuredBindSource(*bind); err != nil {
+					return ContainerRestoreReview{}, err
+				}
+			}
 		} else if mode != "configuration_only" || destination != "" {
 			target, err = normalizeRestorePath(target)
 			if err != nil {
@@ -550,10 +558,16 @@ func checkReviewedContainerPathPlan(ctx context.Context, inspect restoreInspect,
 		}
 	}
 	for _, bind := range structuredBinds {
-		if !slices.ContainsFunc(reviewed.review.Effects.Volumes, func(volume ContainerVolumeEffect) bool {
+		index := slices.IndexFunc(reviewed.review.Effects.Volumes, func(volume ContainerVolumeEffect) bool {
 			return volume.Mount == bind.Target && volume.Target == bind.Source
-		}) {
+		})
+		if index < 0 {
 			return ErrContainerReviewChanged
+		}
+		if reviewed.review.Effects.Volumes[index].WriteMode == "configuration_only" {
+			if err := checkStructuredBindSource(bind); err != nil {
+				return err
+			}
 		}
 	}
 	for _, mount := range inspect.Mounts {

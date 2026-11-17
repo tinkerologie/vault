@@ -14,7 +14,7 @@ Use an approved disposable Unraid 7 or later environment. Run the folder, Docker
    ```
 
 3. Confirm that health, WebSocket, MCP, and the Vault UI work. Compare the installed binary and served UI assets with the candidate.
-4. Create a drill root with separate source, storage, restore, and scratch directories. Check the resolved paths for overlap and symlinks. Create a local Vault Storage Destination for the storage directory. Create one manual-only Job with one Backup Item for each drill. Disable automatic retries.
+4. Create a drill root with separate source, storage, restore, and scratch directories. Check the resolved paths for overlap and symlinks. Create a local Vault Storage Destination for the storage directory. Use a separate fixture under the source directory for each workload.
 5. Create two disposable Assistant Keys in **Settings** → **Security** → **Assistant Keys**. Leave one inspection-only. Enable **Allow Restore Requests** for the other. Store each key in a private file outside the repository. Use HTTPS or a trusted LAN for remote checks. Use an SSH tunnel for the host-local checks.
 
 Build the operator's drill helper from the same checkout.
@@ -44,7 +44,7 @@ Use an extra disposable request for this last check. Withdraw it after the check
 
 ## Request and follow a restore
 
-1. Run the relevant Backup Job. Record the Backup Run and its Restore Point. Require one completed item and zero failures or skipped items.
+1. Create the workload fixture before its Backup Job. Use one manual-only Job with one Backup Item for each drill. Disable automatic retries. Run the Job and record its Backup Run and Restore Point. Require one completed item and zero failures or skipped items.
 2. Inspect the point with the inspection key. Use the request-scoped key to submit the legacy `restore_item` call through the helper.
 
    ```sh
@@ -55,7 +55,7 @@ Use an extra disposable request for this last check. Withdraw it after the check
    Add `-destination "$RESTORE_TARGET"` for an approved alternate location. Check `eligible_for_approval` and record any warnings.
 
 3. Open the Review Link in signed-in Unraid. Confirm the Restore Point, Backup Item, exact target, and write effects. Select **Approve and run** only after the operator authorizes the exact restore. Enter any Backup Passphrase in the Vault review.
-4. Follow the request with the requesting Assistant Key until it records the terminal outcome. Confirm that Unraid History shows the same Restore Run ID. Record the verified approval time from the operator view. Capture redacted item outcomes and readiness checks from the History logs.
+4. Read the current request state with the requesting Assistant Key. Repeat the command while the request is pending or running. Confirm that Unraid History shows the same Restore Run ID. Record the verified approval time from the operator view. Capture redacted item outcomes and readiness checks from the History logs.
 
    ```sh
    "$SCRATCH/restore-drill" follow -endpoint "$MCP_ENDPOINT" -key-file "$REQUEST_KEY_FILE" -id "$REQUEST_ID"
@@ -63,7 +63,7 @@ Use an extra disposable request for this last check. Withdraw it after the check
 
 ### Folder drill
 
-- Use `folder-create "$SOURCE_DIR" "$SCRATCH/folder.json"` to create the fixture and SHA-256 manifest. Keep the manifest outside all source, storage, and restore paths.
+- Set `SOURCE_DIR` to a new path under the source directory, such as `source/drill-folder`. Use `folder-create "$SOURCE_DIR" "$SCRATCH/folder.json"` to create the fixture and SHA-256 manifest. Add that fixture to the Backup Job after creation. Keep the manifest outside all source, storage, and restore paths.
 - Before requesting the restore, add an extra file to a separate disposable restore directory. Review a replace operation for that directory.
 - After the Restore Run completes, use `folder-check "$RESTORE_TARGET" "$SCRATCH/folder.json"`. Require an exact match for the regular files, file hashes, and directory set. Confirm that the extra file is gone. Record permissions, ownership, and timestamps separately.
 

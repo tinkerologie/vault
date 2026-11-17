@@ -1761,7 +1761,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	if err != nil {
 		return err
 	}
-	if _, _, err := inspect.structuredRestoreBinds(restoreDest); err != nil {
+	if err := inspect.checkStructuredRestorePlan(ctx, item, restoreDest); err != nil {
 		return err
 	}
 	if reviewed, ok := reviewedContainerFrom(ctx); ok {
@@ -2130,6 +2130,14 @@ func (h *ContainerHandler) recreateAndStartContainerID(ctx context.Context, item
 	mounts, mountRewrites, err := inspect.structuredRestoreBinds(restoreDest)
 	if err != nil {
 		return "", err
+	}
+	if err := enforceStructuredBindPrivileges(ctx, item, mounts); err != nil {
+		return "", fmt.Errorf("%w: the resolved structured bind needs host access approval before replacement", ErrRestoreNeedsApproval)
+	}
+	for _, mount := range mounts {
+		if err := checkStructuredBindSource(mount); err != nil {
+			return "", err
+		}
 	}
 
 	// Remove existing container with the same name if present.
@@ -2994,7 +3002,7 @@ func (h *ContainerHandler) RestorePreparedChunked(ctx context.Context, item Back
 	if err != nil {
 		return err
 	}
-	if _, _, err := inspect.structuredRestoreBinds(restoreDest); err != nil {
+	if err := inspect.checkStructuredRestorePlan(ctx, item, restoreDest); err != nil {
 		return err
 	}
 

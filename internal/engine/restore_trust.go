@@ -125,6 +125,15 @@ func enforceRestorePrivileges(ctx context.Context, item BackupItem, ri restoreIn
 	return fmt.Errorf("%w: restoring %s would grant host access from a backup this server cannot vouch for (imported or replicated): %s; nothing was changed. Review these settings, then restart the restore with \"Allow host-level access\" enabled (API: allow_host_privileges)", ErrRestoreNeedsApproval, item.Name, summary)
 }
 
+func enforceStructuredBindPrivileges(ctx context.Context, item BackupItem, mounts []mounttypes.Mount) error {
+	if len(mounts) == 0 {
+		return nil
+	}
+	var resolved restoreInspect
+	resolved.HostConfig.Mounts = mounts
+	return enforceRestorePrivileges(ctx, item, resolved)
+}
+
 type approvalsSettledKey struct{}
 
 // WithApprovalsSettled registers fn to be told when a restore is past every

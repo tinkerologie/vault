@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,14 @@ import (
 
 	"github.com/tinkerologie/vault/internal/safepath"
 )
+
+func (inspect restoreInspect) checkStructuredRestorePlan(ctx context.Context, item BackupItem, destination string) error {
+	mounts, _, err := inspect.structuredRestoreBinds(destination)
+	if err != nil {
+		return err
+	}
+	return enforceStructuredBindPrivileges(ctx, item, mounts)
+}
 
 // structuredRestoreBinds maps Docker's --mount bind syntax using the same
 // source as volume extraction. The other structured mount types are unchanged.
@@ -69,11 +79,21 @@ func (inspect restoreInspect) structuredRestoreBinds(destination string) ([]moun
 	return mounts, rewrites, nil
 }
 
-func structuredBindSource(binds []mounttypes.Mount, target string) string {
-	for _, bind := range binds {
-		if bind.Target == target {
-			return bind.Source
+func structuredBind(binds []mounttypes.Mount, target string) *mounttypes.Mount {
+	for i := range binds {
+		if binds[i].Target == target {
+			return &binds[i]
 		}
 	}
-	return ""
+	return nil
+}
+
+func checkStructuredBindSource(bind mounttypes.Mount) error {
+	if _, err := os.Stat(bind.Source); err != nil {
+		if errors.Is(err, os.ErrNotExist) && bind.BindOptions != nil && bind.BindOptions.CreateMountpoint {
+			return nil
+		}
+		return fmt.Errorf("structured bind source unavailable: %w", err)
+	}
+	return nil
 }
