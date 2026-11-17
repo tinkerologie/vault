@@ -63,6 +63,7 @@ nav:
       - Storage Destinations: guides/storage-destinations.md
       - Anomaly Detection: guides/anomaly-detection.md
       - Disaster Recovery: guides/disaster-recovery.md
+      - Assistant Restore Drills: guides/restore-drills.md
   - How Backup Works: how-backup-works.md
   - Settings Reference:
       - App / Daemon Settings: reference/app-settings.md
