@@ -327,7 +327,15 @@ jobs:
   ci-gate:
     name: CI Gate
     if: ${{ always() }}
-    needs: ["ansible-test", "test", "coverage-upload", "format", "recovery-fixture", "windows"]
+    needs:
+      [
+        'ansible-test',
+        'test',
+        'coverage-upload',
+        'format',
+        'recovery-fixture',
+        'windows',
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
