@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [v2026.11.03] - 2026-11-19
+
 ### Fixed
 
 - Open SFTP uploads with write-only access so gateways that reject writes on read/write handles can receive deduplicated and classic backups (#662).
