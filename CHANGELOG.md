@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Open SFTP uploads with write-only access so gateways that reject writes on read/write handles can receive deduplicated and classic backups (#662).
 - Configure native Unraid and direct Discord backup alerts independently. Upgrading with Unraid notifications off preserves the Discord mute by selecting Disabled and keeping the saved webhook. A job set to Never stays muted on both channels (#656).
 
 - Include free and total space in low-space anomaly notifications and supply a description for Unraid notifications that would otherwise be blank (#653).
