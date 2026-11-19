@@ -37,7 +37,7 @@ type SFTPConfig struct {
 // the pool holds open per adapter instance.
 const sftpPoolSize = 4
 
-// Keep 32 KiB packets for server compatibility and bound the request window.
+// Bound the request window. pkg/sftp defaults to 32 KiB packets without a packet-size option.
 const sftpWriteConcurrency = 64
 
 const sftpWriteBatchBytes = sftpWriteConcurrency * 32768
@@ -274,7 +274,8 @@ func (s *SFTPAdapter) Write(path string, reader io.Reader) (retErr error) {
 		return fmt.Errorf("mkdir: %w", err)
 	}
 
-	f, err := client.Create(full)
+	// Uploads only write. Some SFTP gateways reject writes on read/write handles.
+	f, err := client.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {
 		return fmt.Errorf("create: %w", err)
 	}
