@@ -8,7 +8,7 @@
     <!ENTITY pluginURL "https://raw.githubusercontent.com/tinkerologie/&name;/main/plugin/vault.plg">
     <!ENTITY bundle    "&name;-&version;.txz">
     <!ENTITY bundleURL "&gitURL;/releases/download/v&version;/&bundle;">
-    <!ENTITY sha256      "3e7a15c65cef2aa614aa9b14c969e521923fb078c34583b23ce758b4b1dfd50d">
+    <!ENTITY sha256      "bfd54319afd72cdb383540e032d582e12c44fb461de09e5663b5d04a0e564bce">
     <!ENTITY support   "https://forums.unraid.net/topic/197786-plugin-vault-backup-manager">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;"
@@ -18,12 +18,41 @@
         readme="&gitURL;#readme">
 
 <CHANGES><![CDATA[
-## v2026.11.02
+## v2026.11.03
 
 ### Fixed
 
-- Include committed SQLite WAL changes in Destination Database Backups. Report export failures separately and keep the previous latest copy when snapshot creation fails (#648).
-- Preserve static IPv6 addresses, network aliases, gateway priorities, and the configured DockerMan MAC in classic and chunked container restores (#649).
+- Open SFTP uploads with write-only access so gateways that reject writes on read/write handles can receive deduplicated and classic backups (#662).
+- Configure native Unraid and direct Discord backup alerts independently. Upgrading with Unraid notifications off preserves the Discord mute by selecting Disabled and keeping the saved webhook. A job set to Never stays muted on both channels (#656).
+
+- Include free and total space in low-space anomaly notifications and supply a description for Unraid notifications that would otherwise be blank (#653).
+- Show the recorded Restore Run result in the wizard and Restore page when Vault detects completion by polling or after reconnecting, including when the result is briefly unavailable (#654).
+- Restore preflight estimates space for the selected Backup Items and reports which staging and custom destination filesystems it checked (#655).
+
+### Added
+
+- Create and revoke named Assistant Keys in Settings. Each key grants read-only access to the recovery catalog over REST and MCP (#639).
+- Find Restore Points for a Backup Item and inspect its recorded membership, required Backup Chain, storage metadata and Verification over REST and MCP (#640).
+- Grant an Assistant Key permission to prepare a folder Restore Request. Review the selected Restore Point and write effects in Restore, and see withdrawn or expired requests in History (#641).
+- Approve a folder Restore Request from the signed-in Unraid Vault page, then follow its linked Restore Run in Vault or through the requesting Assistant Key (#642).
+- Stop an active approved Restore Run by its exact ID from the signed-in Unraid Vault page. Deduplicated folder restores stop between chunks. Vault saves who requested the stop and when before acknowledging it, and the linked request records the actual outcome (#643).
+- Review and approve Docker Restore Requests in Unraid, including saved image and volume effects, and follow container startup and database replay outcomes (#644).
+- Review and approve VM Restore Requests with the required checkpoint chain and disk, firmware and domain effects. Tracked VM Restore Runs show measured guest readiness outcomes. Review works on SFTP, SMB and WebDAV storage, and treats a disk named through another Unraid share mount as in use (#645).
+- Add an Unraid restore drill guide and helper to verify folder contents and follow scoped MCP Restore Requests (#647).
+
+### Changed
+
+- The MCP `restore_item` tool now prepares a pending Restore Request and returns a review link. A signed-in Unraid operator must approve it before Vault restores the selected folder, Docker container, or VM (#646).
+
+### Fixed
+
+- Restore Docker bind mounts saved with structured mount options. Keep alternate volume paths and the Unraid template in sync (#666).
+- Stopping an approved Docker Restore Run now also interrupts a single-file bind mount mid-file instead of finishing it (#638).
+- Docker Restore Requests for older backups that never recorded the item type now reach saved-configuration review, which confirms the type. If it can't, the request stays ineligible and says why (#638).
+
+### Security
+
+- Build Vault with Go 1.27.4 to include the standard-library HTTP server security fix (GO-2026-6859).
 ]]></CHANGES>
 
 <!-- Prepare persistent plugin storage and prune stale cached bundles -->
