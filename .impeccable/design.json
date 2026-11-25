@@ -422,49 +422,32 @@
     "themes": [
       {
         "name": "Default",
-        "modes": [
-          "light",
-          "dark"
-        ],
+        "modes": ["light", "dark"],
         "note": "Gray neutrals, Guardian Amber accent; tokens in @theme and .dark."
       },
       {
         "name": "1-Bit",
-        "modes": [
-          "light",
-          "dark"
-        ],
+        "modes": ["light", "dark"],
         "note": "Pure black/white; every status and hue maps to text colour; monospace nav and tables."
       },
       {
         "name": "Retro",
-        "modes": [
-          "light",
-          "dark"
-        ],
+        "modes": ["light", "dark"],
         "note": "Parchment light / night-sky dark, pixel fonts; redesign tracked in #618."
       },
       {
         "name": "Dracula",
-        "modes": [
-          "dark"
-        ],
+        "modes": ["dark"],
         "note": "Dracula palette, purple accent."
       },
       {
         "name": "Catppuccin",
-        "modes": [
-          "light (Latte)",
-          "dark (Mocha)"
-        ],
+        "modes": ["light (Latte)", "dark (Mocha)"],
         "note": "Mauve accent."
       },
       {
         "name": "Unraid host",
-        "modes": [
-          "light",
-          "dark"
-        ],
+        "modes": ["light", "dark"],
         "note": "Embedded view starts in the host mode until the user picks a theme."
       }
     ],

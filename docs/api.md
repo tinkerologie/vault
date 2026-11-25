@@ -75,28 +75,28 @@ The job payload's `schedule`, `verify_schedule` and `full_backup_schedule` field
 
 The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `differential`. Incremental and differential jobs automatically run as a **full** backup on their first run (when the job has no previous restore point to attach to); later runs capture only changes.
 
-| Method | Endpoint                                           | Description                                                                               |
-| ------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| GET    | `/jobs`                                            | List jobs                                                                                 |
-| POST   | `/jobs`                                            | Create a Job and return the committed Job and items                                       |
-| GET    | `/jobs/next-runs`                                  | Next scheduled run for every job                                                          |
+| Method | Endpoint                                           | Description                                                                                 |
+| ------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| GET    | `/jobs`                                            | List jobs                                                                                   |
+| POST   | `/jobs`                                            | Create a Job and return the committed Job and items                                         |
+| GET    | `/jobs/next-runs`                                  | Next scheduled run for every job                                                            |
 | GET    | `/jobs/schedule-preview?schedule=…&count=…`        | Next runs of a cron expression on the server's clock, with its timezone (default 3, max 10) |
-| GET    | `/jobs/{id}`                                       | Get a job and its items                                                                   |
-| PUT    | `/jobs/{id}`                                       | Update a Job and return the committed Job and items                                       |
-| DELETE | `/jobs/{id}`                                       | Delete a job                                                                              |
-| GET    | `/jobs/{id}/history`                               | Job run history (returns `[]` when empty)                                                 |
-| GET    | `/jobs/{id}/restore-points`                        | Restore points with chain-health annotations (returns `[]` when empty)                    |
-| GET    | `/jobs/{id}/retention-preview`                     | Preview which restore points the configured retention policy would prune                  |
-| DELETE | `/jobs/{id}/restore-points/{rpid}`                 | Delete a specific restore point and its files                                             |
-| GET    | `/jobs/{id}/restore-points/{rpid}/contents?item=…` | List files inside a restore point (works for classic and dedup restore points)            |
-| POST   | `/jobs/{id}/restore-points/{rpid}/preflight`       | Check a restore before starting                                                           |
-| POST   | `/jobs/{id}/restore-points/{rpid}/verify`          | Start SHA-256 verification of a restore point                                             |
-| GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                                |
-| GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                      |
-| POST   | `/jobs/{id}/run`                                   | Start a backup immediately                                                                |
-| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup or manual restore, or remove a queued operation                   |
-| POST   | `/jobs/{id}/restore`                               | Start a restore. Set `destination` to an absolute path or, for a ZFS item, a dataset name |
-| GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                            |
+| GET    | `/jobs/{id}`                                       | Get a job and its items                                                                     |
+| PUT    | `/jobs/{id}`                                       | Update a Job and return the committed Job and items                                         |
+| DELETE | `/jobs/{id}`                                       | Delete a job                                                                                |
+| GET    | `/jobs/{id}/history`                               | Job run history (returns `[]` when empty)                                                   |
+| GET    | `/jobs/{id}/restore-points`                        | Restore points with chain-health annotations (returns `[]` when empty)                      |
+| GET    | `/jobs/{id}/retention-preview`                     | Preview which restore points the configured retention policy would prune                    |
+| DELETE | `/jobs/{id}/restore-points/{rpid}`                 | Delete a specific restore point and its files                                               |
+| GET    | `/jobs/{id}/restore-points/{rpid}/contents?item=…` | List files inside a restore point (works for classic and dedup restore points)              |
+| POST   | `/jobs/{id}/restore-points/{rpid}/preflight`       | Check a restore before starting                                                             |
+| POST   | `/jobs/{id}/restore-points/{rpid}/verify`          | Start SHA-256 verification of a restore point                                               |
+| GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                                  |
+| GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                        |
+| POST   | `/jobs/{id}/run`                                   | Start a backup immediately                                                                  |
+| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup or manual restore, or remove a queued operation                     |
+| POST   | `/jobs/{id}/restore`                               | Start a restore. Set `destination` to an absolute path or, for a ZFS item, a dataset name   |
+| GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                              |
 
 Preflight accepts optional `items`, `passphrase` and `destination` fields.
 Pass Backup Item names in `items`. Omitting it or passing an empty array
