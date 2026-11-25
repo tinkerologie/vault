@@ -1920,7 +1920,7 @@
                 {#if t.paths}
                   <span class="block mt-1 text-text-muted">{t.description}</span>
                   <ul class="mt-1.5 space-y-1.5" data-testid="restore-write-targets">
-                    {#each t.paths as p (p.path)}
+                    {#each t.paths as p, i (i)}
                       <li>
                         <span class="text-text-muted">{p.label}</span>
                         <code class="block font-mono text-text [overflow-wrap:anywhere]">{p.path}</code>

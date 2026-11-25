@@ -495,4 +495,8 @@ var dataMigrations = []string{
 	// them is a no-op.
 	"UPDATE activity_log SET category = 'health' WHERE category = 'anomaly'",
 	"UPDATE activity_log SET level = 'warn' WHERE category = 'health' AND level = 'info' AND (message LIKE 'Anomaly %' OR message LIKE '%anomaly(s) acknowledged%')",
+	// Escrow confirmations briefly stored the backup passphrase's bcrypt hash
+	// instead of a marker of it (#714, unreleased). Drop any record that isn't
+	// a 16-character marker; the next deduplicated backup writes a new one.
+	"DELETE FROM settings WHERE key LIKE '" + DedupEscrowConfirmedPrefix + "%' AND length(value) <> 16",
 }

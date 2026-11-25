@@ -133,9 +133,21 @@ omitted when no container or VM is selected.
       "type": "container",
       "status": "resolved",
       "write_targets": [
-        { "kind": "volume", "path": "/mnt/user/appdata/plex", "mount": "/config", "clearable": true },
-        { "kind": "file", "path": "/mnt/user/appdata/plex/hook.sh", "mount": "/hook.sh" },
-        { "kind": "template", "path": "/boot/config/plugins/dockerMan/templates-user/my-plex.xml" }
+        {
+          "kind": "volume",
+          "path": "/mnt/user/appdata/plex",
+          "mount": "/config",
+          "clearable": true
+        },
+        {
+          "kind": "file",
+          "path": "/mnt/user/appdata/plex/hook.sh",
+          "mount": "/hook.sh"
+        },
+        {
+          "kind": "template",
+          "path": "/boot/config/plugins/dockerMan/templates-user/my-plex.xml"
+        }
       ]
     },
     {
@@ -143,8 +155,15 @@ omitted when no container or VM is selected.
       "type": "vm",
       "status": "resolved",
       "write_targets": [
-        { "kind": "disk", "path": "/mnt/user/domains/win11/vdisk1.img", "mount": "vda" },
-        { "kind": "nvram", "path": "/etc/libvirt/qemu/nvram/win11_VARS-pure-efi.fd" },
+        {
+          "kind": "disk",
+          "path": "/mnt/user/domains/win11/vdisk1.img",
+          "mount": "vda"
+        },
+        {
+          "kind": "nvram",
+          "path": "/etc/libvirt/qemu/nvram/win11_VARS-pure-efi.fd"
+        },
         { "kind": "domain", "name": "win11" }
       ]
     }
@@ -158,10 +177,14 @@ omitted when no container or VM is selected.
   A volume too shallow to clear is merged instead. Files, disks and NVRAM are
   replaced with the backed-up copy.
 - `status` is `unavailable` when the paths could not be resolved before the
-  restore. `write_targets` is then empty and `reason` gives a code, such as
-  `backup_metadata_locked` (supply `passphrase`), `vm_host_unavailable`,
-  `storage_unavailable`, `destination_disallowed`, `busy` or a Restore
-  Request ineligibility reason.
+  restore. `write_targets` is then empty and `reason` is one of
+  `backup_metadata_locked` or `passphrase_required` (supply `passphrase`),
+  `vm_host_unavailable`, `storage_unavailable`, `destination_disallowed`,
+  `not_in_restore_point`, `invalid_selection`, `unsupported_item_type`,
+  `unresolved`, `busy`, `cancelled`, `too_many_items`, or a Restore Request
+  ineligibility reason.
+- Paths are resolved for at most 32 items, within 45 seconds per pre-flight;
+  later items report `too_many_items` or `cancelled`.
 
 Assistant Keys cannot call this endpoint, so these paths never reach an
 assistant response.

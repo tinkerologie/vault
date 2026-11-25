@@ -51,8 +51,9 @@ func serverKeyAtRisk(database *db.DB, jobs []db.Job) bool {
 	}
 	dests, err := database.ListStorageDestinations()
 	if err != nil {
+		// Unknown is not safe: keep the caution visible until it can be checked.
 		log.Printf("health summary: listing storage destinations: %v", err)
-		return false
+		return true
 	}
 	dedup := map[int64]bool{}
 	for _, dest := range dests {

@@ -9,7 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - Stop a running restore from the Restore wizard. The Stop button stops that exact Restore Run, and the result offers View run and Retry failed items (#701).
-- Restore containers, VMs and folders that have left their job, from the Restore Points that still hold them (#669).
+- Restore containers, VMs and folders that have left their job, from the Restore Points that still hold them. A folder or ZFS item that has left its job needs a custom destination, because its original location isn't recorded (#669).
+- See the exact host paths each container and VM restore will write before it runs, in the Restore wizard and in the typed RESTORE confirmation (#716).
 - Choose Manual only in the job schedule builder, and preview the next three runs in the server's timezone (#682).
 - Deep links to Settings tabs (`#/settings/security`) and filters kept in the URL on History, Logs and Anomalies (#712, #693).
 - Warn on the Dashboard and Disaster Recovery when vault.key is the only way to open deduplicated backups, until a copy of the current key is saved or a backup password is set (#714).
@@ -24,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Going back in the Restore wizard keeps chosen Restore Points and options for unchanged jobs (#702).
 - The restore file tree supports full keyboard navigation and stays fast with 100,000+ files (#703).
 - Editing a job opens the full form with every option. Collapsed sections show when they are configured (#712).
-- Closing the job editor, storage form or Settings with unsaved changes asks first. Back closes an open dialog instead of leaving the page (#687).
+- Closing the job editor, storage form or Settings with unsaved changes asks first. Back closes an open dialog instead of leaving the page (#687). Settings asks on Back, Forward, the command palette and links, and covers every section that needs Save (#719).
 - Form errors appear under the field they belong to, and connection test failures stay visible in the form (#688).
 - Every password and key field has a show/hide toggle. Saved secrets are no longer pre-filled; leave the field blank to keep them (#706).
 - Warning and error messages stay until dismissed, and several messages stack instead of replacing each other (#685).
@@ -36,6 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - Pages that fail to load show an error with Retry instead of an empty or "all clear" state (#681).
+- Links to a History run open it even when it is beyond the first page, or say when it no longer exists (#720).
 - Editing a manual-only job no longer schedules it daily at 2:00, and schedule times between the half-hour slots are kept (#682).
 - Deleting a Restore Point from the Restore wizard works and asks for confirmation (#704).
 - Restores are refused when an item's type has changed since the backup, so data is never restored in the wrong layout (#669).
@@ -52,7 +54,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Security
 
-- The vault.key copy record is tied to the current key and can only be set by downloading the key or confirming a copy from the signed-in Unraid page (#714).
+- The vault.key copy record is tied to the current key and can only be set by downloading the key or confirming a copy from the signed-in Unraid page. A backup password counts only once each deduplicated destination has confirmed it, and that confirmation never stores or returns the password hash (#714).
 
 ## [v2026.11.03] - 2026-11-19
 
