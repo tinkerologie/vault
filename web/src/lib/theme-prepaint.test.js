@@ -54,7 +54,6 @@ function fakeEnv({ stored = {}, prefersDark = true, failStorage = false, failMat
 /** Classes the inline script puts on <html>. */
 function prepaint(opts) {
   const env = fakeEnv(opts)
-  // eslint-disable-next-line no-new-func -- runs the inline script exactly as the browser would
   new Function('window', 'document', 'localStorage', SCRIPT)(env.win, env.document, env.localStorage)
   return [...env.classes].sort()
 }
