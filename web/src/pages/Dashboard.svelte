@@ -18,9 +18,12 @@
   import { getAnomalies, setOpenList } from '../lib/anomalies.svelte.js'
   import { createDashboardLayout, SPAN_OPTIONS } from '../lib/dashboardLayout.svelte.js'
   import { attentionCaption, attentionHref, countRunOutcomes, deriveBackupStatus, healthText, healthTone, isDiscoveryIncomplete, mergeRunCounts, unhealthyStorage } from '../lib/backupStatus.js'
-  import { classifyProtection, protectedPercent } from '../lib/protection.js'
+  import { classifyProtection, protectedPercent, protectionDot } from '../lib/protection.js'
   import { progressAnnouncement } from '../lib/progressAnnouncement.js'
   import { runStatusLabel } from '../lib/statusLabels.js'
+  import InlineSpinner from '../components/InlineSpinner.svelte'
+  import { ICONS, ITEM_TYPE_ICONS, PAGE_ICONS } from '../lib/icons.js'
+  import { sizeTrendClass } from '../lib/outcome-colour.js'
 
   let loading = $state(true)
   let error = $state('')
@@ -680,28 +683,28 @@
   // self-carding component/panel); the rest get the shared card shell.
   const CATALOG = {
     health:       { name: 'Job health',         span: 3, maxSpan: 6, icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z' },
-    protected:    { name: 'Protected items',    span: 3, maxSpan: 6, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
-    nextrun:      { name: 'Next run',           span: 3, maxSpan: 6, icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
+    protected:    { name: 'Protected items',    span: 3, maxSpan: 6, icon: ICONS.shield },
+    nextrun:      { name: 'Next run',           span: 3, maxSpan: 6, icon: ICONS.clock },
     lastbackup:   { name: 'Last backup',        span: 3, maxSpan: 6, icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
     threetwoone:  { name: '3-2-1 rule',         span: 12, bare: true, icon: 'M9 17V9m3 8v-5m3 5v-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
-    progress:     { name: 'Backup in progress', span: 6, bare: true, icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
+    progress:     { name: 'Backup in progress', span: 6, bare: true, icon: ICONS.refresh },
     activity:     { name: 'Recent activity',    span: 6, bare: true, icon: 'M4 6h16M4 10h16M4 14h16M4 18h16' },
     jobs:         { name: 'Backup jobs',        span: 6, bare: true, icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' },
-    protection:   { name: 'Protection status',  span: 12, bare: true, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
-    storageCombined:  { name: 'Storage — combined',  span: 4, maxSpan: 6, icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
-    storagePerTarget: { name: 'Storage — per target', span: 6, icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
-    recovery:     { name: 'Recovery readiness', span: 4, maxSpan: 6, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
-    attention:    { name: 'Needs attention',    span: 4, maxSpan: 6, icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
+    protection:   { name: 'Protection status',  span: 12, bare: true, icon: ICONS.shield },
+    storageCombined:  { name: 'Storage — combined',  span: 4, maxSpan: 6, icon: PAGE_ICONS['/storage'] },
+    storagePerTarget: { name: 'Storage — per target', span: 6, icon: PAGE_ICONS['/storage'] },
+    recovery:     { name: 'Recovery readiness', span: 4, maxSpan: 6, icon: ICONS.shield },
+    attention:    { name: 'Needs attention',    span: 4, maxSpan: 6, icon: ICONS.warning },
     successrate:  { name: 'Success rate',       span: 4, maxSpan: 6, icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
-    anomalies:    { name: 'Anomalies',          span: 4, maxSpan: 6, icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
-    quickactions: { name: 'Quick actions',      span: 4, maxSpan: 6, icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
+    anomalies:    { name: 'Anomalies',          span: 4, maxSpan: 6, icon: ICONS.warning },
+    quickactions: { name: 'Quick actions',      span: 4, maxSpan: 6, icon: ICONS.bolt },
     sizeTrend:    { name: 'Backup size trend',  span: 6, icon: 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
     calendar:     { name: 'Backup calendar',    span: 4, icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
     savings:      { name: 'Dedup & compression', span: 4, maxSpan: 6, icon: 'M19 14l-7 7m0 0l-7-7m7 7V3' },
-    forecast:     { name: 'Storage forecast',   span: 4, maxSpan: 6, icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
+    forecast:     { name: 'Storage forecast',   span: 4, maxSpan: 6, icon: ICONS.clock },
     largest:      { name: 'Largest backups',    span: 6, icon: 'M3 4h18M3 4v16M7 20V10m5 10V6m5 14v-8' },
-    retention:    { name: 'Retention & cleanup', span: 4, maxSpan: 6, icon: 'M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16' },
-    replicationStatus: { name: 'Replication status', span: 4, maxSpan: 6, icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
+    retention:    { name: 'Retention & cleanup', span: 4, maxSpan: 6, icon: ICONS.trash },
+    replicationStatus: { name: 'Replication status', span: 4, maxSpan: 6, icon: ICONS.refresh },
   }
 
   const layout = createDashboardLayout(Object.keys(CATALOG))
@@ -851,8 +854,8 @@
 <Toast message={toast.message} type={toast.type} key={toast.key} />
 
 {#snippet pendingBadge()}
-  <span class="ml-auto inline-flex items-center gap-1 text-[11px] text-info shrink-0 whitespace-nowrap" title="In a backup job but not captured in a restore point yet — it will be backed up on the next scheduled run">
-    <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+  <span class="ml-auto inline-flex items-center gap-1 text-2xs text-info shrink-0 whitespace-nowrap" title="In a backup job but not captured in a restore point yet — it will be backed up on the next scheduled run">
+    <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.clock}/></svg>
     pending first backup
   </span>
 {/snippet}
@@ -866,7 +869,7 @@
     <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0">
       <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={icon}/></svg>
     </span>
-    <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted truncate">{label}</span>
+    <span class="text-2xs font-semibold uppercase tracking-wider text-text-muted truncate">{label}</span>
   </div>
 {/snippet}
 
@@ -891,7 +894,7 @@
       </div>
       <div class="min-w-0 break-words">
         <p class="text-xs font-medium text-text">{healthSummaryText}</p>
-        {#if avgSpeed}<p class="text-[11px] text-text-dim mt-0.5 tabular-nums">avg {avgSpeed}</p>{/if}
+        {#if avgSpeed}<p class="text-2xs text-text-dim mt-0.5 tabular-nums">avg {avgSpeed}</p>{/if}
       </div>
     </div>
   </a>
@@ -900,18 +903,18 @@
 {#snippet tProtected()}
   <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
     {@render mHead(CATALOG.protected.icon, 'Protected')}
-    <p class="text-[26px] leading-none font-bold text-text tabular-nums">{protection.known ? formatInt(totalProtected) : '–'}<span class="text-base text-text-dim font-semibold">/{formatInt(totalItems)}</span></p>
+    <p class="text-metric leading-none font-bold text-text tabular-nums">{protection.known ? formatInt(totalProtected) : '–'}<span class="text-base text-text-dim font-semibold">/{formatInt(totalItems)}</span></p>
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5">
       <div class="h-full {protectionBar} transition-all duration-500" style="width: {protection.known ? protectionPct : 0}%"></div>
     </div>
     {#if !protection.known}
-      <p class="text-[11px] text-text-dim mt-1.5 font-medium">Protection status unavailable</p>
+      <p class="text-2xs text-text-dim mt-1.5 font-medium">Protection status unavailable</p>
     {:else if fullyProtected}
-      <p class="text-[11px] text-success mt-1.5 font-medium">All items protected</p>
+      <p class="text-2xs text-success mt-1.5 font-medium">All items protected</p>
     {:else}
       <!-- Protected means a recent enough Restore Point (#708). Each other state
            is named, so a short count never reads as "all covered". -->
-      <p class="text-[11px] mt-1.5 font-medium flex flex-wrap gap-x-2 tabular-nums">
+      <p class="text-2xs mt-1.5 font-medium flex flex-wrap gap-x-2 tabular-nums">
         {#if hasUnprotectedItems}<a href="#/jobs" class="text-vault-text hover:underline">{formatInt(unprotectedCount)} unprotected →</a>{/if}
         {#if outOfDateCount > 0}<a href="#/recovery" class="text-warning hover:underline">{formatInt(outOfDateCount)} out of date →</a>{/if}
         {#if pendingCount > 0}<span class="text-text-dim">{formatInt(pendingCount)} pending first backup</span>{/if}
@@ -925,11 +928,11 @@
     {@render mHead(CATALOG.nextrun.icon, 'Next run')}
     {#if soonestNextRun}
       <p class="text-xl font-bold text-text tabular-nums leading-none">{relTimeUntil(soonestNextRun)}</p>
-      {#if soonestJob}<p class="text-[11px] text-text-dim mt-1 truncate">{soonestJob.name}</p>{/if}
+      {#if soonestJob}<p class="text-2xs text-text-dim mt-1 truncate">{soonestJob.name}</p>{/if}
     {:else}
       <p class="text-xl font-bold text-text-dim leading-none">No schedule</p>
     {/if}
-    <p class="text-[11px] text-vault-text font-medium mt-auto pt-1.5 tabular-nums">{jobs.length} job{jobs.length === 1 ? '' : 's'} · {enabledJobs.length} enabled</p>
+    <p class="text-2xs text-vault-text font-medium mt-auto pt-1.5 tabular-nums">{jobs.length} job{jobs.length === 1 ? '' : 's'} · {enabledJobs.length} enabled</p>
   </a>
 {/snippet}
 
@@ -947,9 +950,9 @@
         <span class="w-2 h-2 rounded-full shrink-0 {ok ? 'bg-success' : running ? 'bg-info' : partial ? 'bg-warning' : neutral ? 'bg-surface-5' : 'bg-danger'}"></span>
         {runStatusLabel(lastBackup.status)}
       </p>
-      <p class="text-[11px] text-text-muted mt-1 truncate">{lastBackup.jobName} · {relTime(lastBackup.started_at)}</p>
+      <p class="text-2xs text-text-muted mt-1 truncate">{lastBackup.jobName} · {relTime(lastBackup.started_at)}</p>
       {#if lastBackup.size_bytes || lastBackup.duration_seconds}
-        <p class="text-[11px] text-text-muted mt-auto pt-1 tabular-nums">{formatBytes(lastBackup.size_bytes || 0)}{lastBackup.duration_seconds ? ` · ${fmtDur(lastBackup.duration_seconds)}` : ''}</p>
+        <p class="text-2xs text-text-muted mt-auto pt-1 tabular-nums">{formatBytes(lastBackup.size_bytes || 0)}{lastBackup.duration_seconds ? ` · ${fmtDur(lastBackup.duration_seconds)}` : ''}</p>
       {/if}
     {:else}
       <p class="text-base font-bold text-text-dim">No runs yet</p>
@@ -983,11 +986,11 @@
     <div class="bg-surface-2 border border-vault/30 rounded-xl p-3.5">
       <div class="flex items-center gap-2 mb-2.5">
         <div class="w-2.5 h-2.5 rounded-full bg-vault animate-pulse shrink-0"></div>
-        <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{activeRunLabel}</span>
-        <span class="ml-auto text-[11px] px-2 py-0.5 rounded-full bg-vault/15 text-vault-text font-medium truncate max-w-[45%]">{progress.activeRun.job_name}</span>
+        <span class="text-2xs font-semibold uppercase tracking-wider text-text-muted">{activeRunLabel}</span>
+        <span class="ml-auto text-2xs px-2 py-0.5 rounded-full bg-vault/15 text-vault-text font-medium truncate max-w-[45%]">{progress.activeRun.job_name}</span>
         {#if progress.activeRun.run_type !== 'restore'}
           <button onclick={cancelActiveRun} disabled={progress.cancelling}
-            class="text-[11px] px-2 py-0.5 rounded-full border border-danger/40 text-danger hover:bg-danger/10 transition-colors disabled:opacity-50 shrink-0"
+            class="text-2xs px-2 py-0.5 rounded-full border border-danger/40 text-danger hover:bg-danger/10 transition-colors disabled:opacity-50 shrink-0"
             title="Cancel this backup" aria-label="Cancel running backup">
             {progress.cancelling ? 'Cancelling…' : 'Cancel'}
           </button>
@@ -999,23 +1002,23 @@
       <div class="w-full h-2 bg-surface-4 rounded-full overflow-hidden">
         <div class="h-full rounded-full transition-all duration-300 {overallPct < 100 ? 'shimmer-bar' : 'bg-vault'}" style="width: {overallPct}%"></div>
       </div>
-      <p class="text-[11px] text-text-dim mt-2 tabular-nums">
+      <p class="text-2xs text-text-dim mt-2 tabular-nums">
         {progress.overallDone}/{progress.overallTotal} items · {elapsedStr}{#if progress.overallFailed > 0} · <span class="text-danger">{progress.overallFailed} failed</span>{/if}{#if liveSpeed} · <span class="text-info">{liveSpeed}</span>{/if}
       </p>
       {#if progress.currentItem}
-        <p class="text-[11px] text-text-dim mt-1 truncate">
+        <p class="text-2xs text-text-dim mt-1 truncate">
           {progress.activeRun.run_type === 'restore' ? 'Restoring' : 'Backing up'}: <span class="text-text font-medium">{progress.currentItem.name}</span>{#if progress.currentItem.item_type} <span class="text-text-muted">({progress.currentItem.item_type})</span>{/if}
         </p>
         <ItemProgress item={progress.currentItem} runType={progress.activeRun.run_type} />
       {/if}
-      {#if progress.phaseMessage}<p class="text-[11px] text-warning animate-pulse mt-1">{progress.phaseMessage}</p>{/if}
+      {#if progress.phaseMessage}<p class="text-2xs text-warning animate-pulse mt-1">{progress.phaseMessage}</p>{/if}
     </div>
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
       {@render mHead(CATALOG.progress.icon, 'Backup in progress')}
       <div class="flex items-center gap-2 mt-auto text-text-dim">
-        <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-        <div><p class="text-sm font-medium text-text">No backup running</p>{#if soonestNextRun}<p class="text-[11px] text-text-dim tabular-nums">Next: {relTimeUntil(soonestNextRun)}</p>{/if}</div>
+        <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ICONS.shield}/></svg>
+        <div><p class="text-sm font-medium text-text">No backup running</p>{#if soonestNextRun}<p class="text-2xs text-text-dim tabular-nums">Next: {relTimeUntil(soonestNextRun)}</p>{/if}</div>
       </div>
     </div>
   {/if}
@@ -1029,7 +1032,7 @@
   <div class="bg-surface-2 border border-border rounded-xl">
     <div class="px-4 py-3 border-b border-border flex items-center gap-2">
       <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.jobs.icon}/></svg></span>
-      <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Backup jobs</span>
+      <span class="text-2xs font-semibold uppercase tracking-wider text-text-muted">Backup jobs</span>
       <a href="#/jobs" class="ml-auto text-xs text-vault-text hover:underline font-medium">View all →</a>
     </div>
     {#if jobs.length === 0}
@@ -1045,15 +1048,15 @@
             {#if !isReplicaMode()}
               <div class="flex items-center gap-2 shrink-0">
                 <a href="#/restore?job={job.id}" class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-surface-3 text-text-muted hover:bg-surface-4 hover:text-text" title="Restore from {job.name}" aria-label="Restore: {job.name}">
-                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.refresh}/></svg>
                   Restore
                 </a>
                 <button onclick={() => runNow(job)} disabled={runningJob === job.id} aria-label="{runningJob === job.id ? 'Running...' : 'Run Now'}: {job.name}" class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-vault/10 text-vault-text hover:bg-vault/20 disabled:opacity-50">
                   {#if runningJob === job.id}
-                    <svg aria-hidden="true" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    <InlineSpinner size="xs" />
                     Running...
                   {:else}
-                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.play}/></svg>
                     Run Now
                   {/if}
                 </button>
@@ -1070,34 +1073,34 @@
   {@const displayLabel = itemDisplayLabel({ item_type: it.group === 'flash' ? 'flash' : it.type, item_name: it.name, ...it.source })}
   {@const backedUp = it.state === 'protected' || it.state === 'out_of_date'}
   <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {it.state === 'protected' ? 'bg-success/5' : it.state === 'out_of_date' ? 'bg-warning/5' : 'bg-surface-3'} group" data-protection-state={it.state}>
-    <div class="w-2 h-2 rounded-full shrink-0 {it.state === 'protected' ? 'bg-success' : it.state === 'out_of_date' ? 'bg-warning' : it.state === 'pending' ? 'bg-info' : 'bg-surface-5'}"></div>
+    <div class="w-2 h-2 rounded-full shrink-0 {protectionDot(it.state)}"></div>
     <!-- The name wraps rather than truncating, and the USB badge drops below it
          when the row is narrow (#715). -->
     <div class="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
       <span class="text-sm text-text break-words min-w-0">{displayLabel}</span>
-      {#if it.group === 'flash'}<span class="text-[11px] px-1.5 py-0.5 rounded bg-hue-amber/15 text-hue-amber font-medium whitespace-nowrap">USB boot drive</span>{/if}
+      {#if it.group === 'flash'}<span class="text-2xs px-1.5 py-0.5 rounded bg-hue-amber/15 text-hue-amber font-medium whitespace-nowrap">USB boot drive</span>{/if}
     </div>
     {#if backedUp && !isReplicaMode()}
       <a href="#/restore?type={it.type}&name={encodeURIComponent(it.name)}" class="opacity-40 hover:opacity-100 focus-visible:opacity-100 p-1 text-vault-text hover:bg-vault/10 rounded transition-all shrink-0" title="Restore {it.name}" aria-label="Restore: {it.name}">
-        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.refresh}/></svg>
       </a>
     {/if}
     {#if it.state === 'protected'}
-      <span class="inline-flex items-center gap-1 text-[11px] text-success shrink-0 whitespace-nowrap">
-        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+      <span class="inline-flex items-center gap-1 text-2xs text-success shrink-0 whitespace-nowrap">
+        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d={ICONS.shield}/></svg>
         <span class="sr-only">Protected</span>
       </span>
     {:else if it.state === 'out_of_date'}
-      <span class="inline-flex items-center gap-1 text-[11px] text-warning shrink-0 whitespace-nowrap tabular-nums" title={it.lastBackupAt ? `Last backup ${formatDate(it.lastBackupAt)}` : 'Out of date'}>
-        <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+      <span class="inline-flex items-center gap-1 text-2xs text-warning shrink-0 whitespace-nowrap tabular-nums" title={it.lastBackupAt ? `Last backup ${formatDate(it.lastBackupAt)}` : 'Out of date'}>
+        <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
         {it.lastBackupAt ? `Last backup ${relTime(it.lastBackupAt)}` : 'Out of date'}
       </span>
     {:else if it.state === 'pending'}
       {@render pendingBadge()}
     {:else if it.state === 'unknown'}
-      <span class="text-[11px] text-text-dim shrink-0">status unknown</span>
+      <span class="text-2xs text-text-dim shrink-0">status unknown</span>
     {:else}
-      <span class="text-[11px] text-text-dim shrink-0">unprotected</span>
+      <span class="text-2xs text-text-dim shrink-0">unprotected</span>
     {/if}
   </div>
 {/snippet}
@@ -1123,7 +1126,7 @@
       <div class="px-4 py-3 flex items-center justify-between gap-2 flex-wrap {protectionExpanded ? 'border-b border-border' : ''}">
         <div class="flex items-center gap-2 min-w-0 flex-wrap">
           <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.protection.icon}/></svg></span>
-          <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Protection</span>
+          <span class="text-2xs font-semibold uppercase tracking-wider text-text-muted">Protection</span>
           {#if protection.known}
             <span class="text-xs px-2 py-0.5 rounded-full font-medium tabular-nums shrink-0 {fullyProtected ? 'bg-success/15 text-success' : protectionPct >= 50 ? 'bg-warning/15 text-warning' : 'bg-danger/15 text-danger'}">
               {formatInt(totalProtected)}/{formatInt(totalItems)} protected · {protectionPct}%
@@ -1138,7 +1141,7 @@
         {:else if fullyProtected}
           <button onclick={toggleProtection} aria-expanded={protectionExpanded} class="flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text transition-colors">
             {protectionExpanded ? 'Hide items' : 'Show items'}
-            <svg aria-hidden="true" class="w-4 h-4 transition-transform {protectionExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            <svg aria-hidden="true" class="w-4 h-4 transition-transform {protectionExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronDown}/></svg>
           </button>
         {/if}
       </div>
@@ -1148,10 +1151,10 @@
             <div class="h-full rounded-full transition-all duration-500 {protectionBar}" style="width: {protection.known ? protectionPct : 0}%"></div>
           </div>
           <div class="space-y-6">
-            {@render protGroup('Containers', 'text-hue-blue', 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4', protection.groups.container)}
-            {@render protGroup('Virtual Machines', 'text-hue-purple', 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z', protection.groups.vm)}
-            {@render protGroup('Folders', 'text-hue-amber', 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z', protection.groups.folder)}
-            {@render protGroup('Flash Drive', 'text-hue-amber', 'M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2', protection.groups.flash)}
+            {@render protGroup('Containers', 'text-hue-blue', ITEM_TYPE_ICONS.container, protection.groups.container)}
+            {@render protGroup('Virtual Machines', 'text-hue-purple', ITEM_TYPE_ICONS.vm, protection.groups.vm)}
+            {@render protGroup('Folders', 'text-hue-amber', ICONS.folder, protection.groups.folder)}
+            {@render protGroup('Flash Drive', 'text-hue-amber', ITEM_TYPE_ICONS.flash, protection.groups.flash)}
           </div>
         </div>
       {/if}
@@ -1165,8 +1168,8 @@
   {#if storageCombined}
     <a href="#/storage" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.storageCombined.icon, 'Storage used')}
-      <p class="text-[26px] leading-none font-bold text-text tabular-nums">{formatBytes(storageCombined.used)}</p>
-      <p class="text-[11px] text-text-muted mt-1 tabular-nums">of {formatBytes(storageCombined.total)} · {storageCombined.count} target{storageCombined.count === 1 ? '' : 's'}</p>
+      <p class="text-metric leading-none font-bold text-text tabular-nums">{formatBytes(storageCombined.used)}</p>
+      <p class="text-2xs text-text-muted mt-1 tabular-nums">of {formatBytes(storageCombined.total)} · {storageCombined.count} target{storageCombined.count === 1 ? '' : 's'}</p>
       <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full bg-vault" style="width: {storageCombined.pct}%"></div></div>
     </a>
   {:else}{@render metricCardEmpty(CATALOG.storageCombined.icon, 'Storage used')}{/if}
@@ -1192,17 +1195,17 @@
 {#snippet tRecovery()}
   <a href="#/recovery" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.recovery.icon, 'Recovery readiness')}
-    <p class="text-[26px] leading-none font-bold tabular-nums {protectionText}">{protection.known ? `${protectionPct}%` : '–'}</p>
+    <p class="text-metric leading-none font-bold tabular-nums {protectionText}">{protection.known ? `${protectionPct}%` : '–'}</p>
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {protectionBar}" style="width: {protection.known ? protectionPct : 0}%"></div></div>
-    <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{#if protection.known}{formatInt(totalProtected)} of {formatInt(totalItems)} protected{#if outOfDateCount > 0} · {formatInt(outOfDateCount)} out of date{/if}{:else}Protection status unavailable{/if}</p>
+    <p class="text-2xs text-text-muted mt-1.5 tabular-nums">{#if protection.known}{formatInt(totalProtected)} of {formatInt(totalItems)} protected{#if outOfDateCount > 0} · {formatInt(outOfDateCount)} out of date{/if}{:else}Protection status unavailable{/if}</p>
   </a>
 {/snippet}
 
 {#snippet tAttention()}
   <a href="#{attentionHref({ failures: recentFailures, unprotected: knownUnprotected, outOfDate: outOfDateCount, replica: isReplicaMode() })}" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.attention.icon, 'Needs attention')}
-    <p class="text-[26px] leading-none font-bold tabular-nums {attentionCount > 0 ? 'text-danger' : healthSummary ? 'text-success' : 'text-text-dim'}">{formatInt(attentionCount)}</p>
-    <p class="text-[11px] text-text-muted mt-auto pt-1.5">{attentionCaption({ failures: recentFailures, unprotected: knownUnprotected, outOfDate: outOfDateCount, other: otherProblems, fullyProtected, known: !!healthSummary })}</p>
+    <p class="text-metric leading-none font-bold tabular-nums {attentionCount > 0 ? 'text-danger' : healthSummary ? 'text-success' : 'text-text-dim'}">{formatInt(attentionCount)}</p>
+    <p class="text-2xs text-text-muted mt-auto pt-1.5">{attentionCaption({ failures: recentFailures, unprotected: knownUnprotected, outOfDate: outOfDateCount, other: otherProblems, fullyProtected, known: !!healthSummary })}</p>
   </a>
 {/snippet}
 
@@ -1210,12 +1213,12 @@
   <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.successrate.icon, 'Success rate')}
     {#if successStats}
-      <p class="text-[26px] leading-none font-bold text-text tabular-nums">{successStats.pct}%</p>
+      <p class="text-metric leading-none font-bold text-text tabular-nums">{successStats.pct}%</p>
       <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {successStats.pct >= 90 ? 'bg-success' : successStats.pct >= 50 ? 'bg-warning' : 'bg-danger'}" style="width: {successStats.pct}%"></div></div>
-      <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{successStats.ok} of {successStats.total} recent runs</p>
+      <p class="text-2xs text-text-muted mt-1.5 tabular-nums">{successStats.ok} of {successStats.total} recent runs</p>
     {:else}
-      <p class="text-[26px] leading-none font-bold text-text-dim">—</p>
-      <p class="text-[11px] text-text-dim mt-auto pt-1.5">No completed runs yet</p>
+      <p class="text-metric leading-none font-bold text-text-dim">—</p>
+      <p class="text-2xs text-text-dim mt-auto pt-1.5">No completed runs yet</p>
     {/if}
   </a>
 {/snippet}
@@ -1225,14 +1228,14 @@
     <!-- Unknown is not green: a failed count is "unavailable", never 0 (#681). -->
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
       {@render mHead(CATALOG.anomalies.icon, 'Anomalies')}
-      <p class="text-[26px] leading-none font-bold text-text-dim">–</p>
+      <p class="text-metric leading-none font-bold text-text-dim">–</p>
       <div class="mt-auto pt-1.5"><LoadError compact title="Anomalies unavailable" onretry={retryAnomalies} retrying={anomaliesRetrying} /></div>
     </div>
   {:else if getAnomalyEnabled()}
     <a href="#/anomalies" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.anomalies.icon, 'Anomalies')}
-      <p class="text-[26px] leading-none font-bold tabular-nums {anomalies.openList.length === 0 ? 'text-success' : 'text-warning'}">{anomalies.openList.length}</p>
-      <p class="text-[11px] text-text-dim mt-auto pt-1.5">{anomalies.openList.length === 0 ? 'No unusual runs detected' : 'open — review on Anomalies'}</p>
+      <p class="text-metric leading-none font-bold tabular-nums {anomalies.openList.length === 0 ? 'text-success' : 'text-warning'}">{anomalies.openList.length}</p>
+      <p class="text-2xs text-text-dim mt-auto pt-1.5">{anomalies.openList.length === 0 ? 'No unusual runs detected' : 'open — review on Anomalies'}</p>
     </a>
   {:else}{@render metricCardEmpty(CATALOG.anomalies.icon, 'Anomalies')}{/if}
 {/snippet}
@@ -1266,9 +1269,9 @@
   <a href="#/history" class="block bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors">
     <div class="flex items-center gap-2 mb-2.5">
       <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.sizeTrend.icon}/></svg></span>
-      <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted truncate">Backup size trend</span>
+      <span class="text-2xs font-semibold uppercase tracking-wider text-text-muted truncate">Backup size trend</span>
       {#if trendChange}
-        <span class="ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full tabular-nums {trendChange.pctChange > 0 ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'}">{trendChange.pctChange >= 0 ? '+' : ''}{formatInt(trendChange.pctChange)}% · 30d</span>
+        <span class="ml-auto text-2xs font-semibold px-2 py-0.5 rounded-full tabular-nums bg-surface-3 {sizeTrendClass(trendChange.pctChange > 0 ? 'up' : 'down')}">{trendChange.pctChange >= 0 ? '+' : ''}{formatInt(trendChange.pctChange)}% · 30d</span>
       {/if}
     </div>
     {#if trendPolyline}
@@ -1276,7 +1279,7 @@
         <polyline points="{trendPolyline} 300,64 0,64" fill="var(--color-vault)" opacity="0.10" vector-effect="non-scaling-stroke" />
         <polyline points={trendPolyline} fill="none" stroke="var(--color-vault)" stroke-width="2" vector-effect="non-scaling-stroke" />
       </svg>
-      {#if trendChange}<p class="text-[11px] text-text-dim mt-2 tabular-nums">{formatBytes(trendChange.last)}/day now · was {formatBytes(trendChange.first)}</p>{/if}
+      {#if trendChange}<p class="text-2xs text-text-dim mt-2 tabular-nums">{formatBytes(trendChange.last)}/day now · was {formatBytes(trendChange.first)}</p>{/if}
     {:else}
       <p class="text-xs text-text-dim py-5 text-center">{trendLoading ? 'Loading trend…' : 'Not enough history yet'}</p>
     {/if}
@@ -1297,7 +1300,7 @@
         <!-- The coloured grid is a picture of the table below, which carries the
              per-day detail for screen readers (#690). -->
         <div class="flex gap-2" aria-hidden="true">
-          <div class="grid gap-1 text-[9px] leading-none text-text-dim shrink-0 items-center" style="grid-template-rows: repeat(7, 15px);">
+          <div class="grid gap-1 text-2xs leading-none text-text-dim shrink-0 items-center" style="grid-template-rows: repeat(7, 15px);">
             <span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span>
           </div>
           <div class="grid gap-1" style="grid-auto-flow: column; grid-template-rows: repeat(7, 15px); grid-auto-columns: 15px;">
@@ -1319,16 +1322,16 @@
           <div class="flex gap-5 sm:gap-6 shrink-0">
             <div>
               <p class="text-xl font-bold text-text tabular-nums leading-none">{calendarStats.ran}<span class="text-xs text-text-dim font-semibold">/{calendarStats.days}</span></p>
-              <p class="text-[11px] text-text-dim mt-1">days backed up</p>
+              <p class="text-2xs text-text-dim mt-1">days backed up</p>
             </div>
             <div>
               <p class="text-xl font-bold text-text tabular-nums leading-none">{calendarStats.streak}</p>
-              <p class="text-[11px] text-text-dim mt-1">day streak</p>
+              <p class="text-2xs text-text-dim mt-1">day streak</p>
             </div>
           </div>
         {/if}
       </div>
-      <div class="flex items-center gap-1.5 mt-3 text-[10px] text-text-dim">
+      <div class="flex items-center gap-1.5 mt-3 text-2xs text-text-dim">
         <span aria-hidden="true">Less</span>
         <span aria-hidden="true" class="w-2.5 h-2.5 rounded-[3px] bg-surface-4"></span>
         <span aria-hidden="true" class="w-2.5 h-2.5 rounded-[3px]" style="background: color-mix(in srgb, var(--color-success) 40%, transparent);"></span>
@@ -1347,8 +1350,8 @@
   {#if dedupSummary}
     <a href="#/storage" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.savings.icon, 'Dedup & compression')}
-      <p class="text-[26px] leading-none font-bold text-success tabular-nums">{dedupSummary.ratio.toFixed(1)}×</p>
-      <p class="text-[11px] text-text-muted mt-auto pt-1.5 tabular-nums">{formatBytes(dedupSummary.logical)} → {formatBytes(dedupSummary.physical)} stored</p>
+      <p class="text-metric leading-none font-bold text-success tabular-nums">{dedupSummary.ratio.toFixed(1)}×</p>
+      <p class="text-2xs text-text-muted mt-auto pt-1.5 tabular-nums">{formatBytes(dedupSummary.logical)} → {formatBytes(dedupSummary.physical)} stored</p>
     </a>
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
@@ -1356,7 +1359,7 @@
       {#if dedupError}
         <div class="mt-auto"><LoadError compact title="Couldn't load dedup savings" onretry={retryDedup} /></div>
       {:else}
-        <p class="text-[11px] text-text-dim mt-auto">{dedupLoading ? 'Loading…' : 'No deduplicated data yet'}</p>
+        <p class="text-2xs text-text-dim mt-auto">{dedupLoading ? 'Loading…' : 'No deduplicated data yet'}</p>
       {/if}
     </div>
   {/if}
@@ -1366,9 +1369,9 @@
   {#if forecastSummary}
     <a href="#/storage" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.forecast.icon, 'Storage forecast')}
-      <p class="text-[26px] leading-none font-bold text-text tabular-nums">~{forecastSummary.days}<span class="text-base text-text-dim font-semibold"> days</span></p>
-      <p class="text-[11px] text-text-muted mt-1.5">until {forecastSummary.name} is full</p>
-      <p class="text-[11px] text-warning mt-auto pt-1 font-medium tabular-nums">+{formatBytes(forecastSummary.perDay)}/day</p>
+      <p class="text-metric leading-none font-bold text-text tabular-nums">~{forecastSummary.days}<span class="text-base text-text-dim font-semibold"> days</span></p>
+      <p class="text-2xs text-text-muted mt-1.5">until {forecastSummary.name} is full</p>
+      <p class="text-2xs text-warning mt-auto pt-1 font-medium tabular-nums">+{formatBytes(forecastSummary.perDay)}/day</p>
     </a>
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
@@ -1376,7 +1379,7 @@
       {#if forecastError}
         <div class="mt-auto"><LoadError compact title="Couldn't load the storage forecast" onretry={retryForecast} /></div>
       {:else}
-        <p class="text-[11px] text-text-dim mt-auto">{forecastLoading ? 'Loading…' : 'Not filling / not enough samples'}</p>
+        <p class="text-2xs text-text-dim mt-auto">{forecastLoading ? 'Loading…' : 'Not filling / not enough samples'}</p>
       {/if}
     </div>
   {/if}
@@ -1411,10 +1414,10 @@
   <a href="#/jobs" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.retention.icon, 'Retention & cleanup')}
     {#if retentionSummary}
-      <p class="text-[26px] leading-none font-bold text-text tabular-nums">{retentionSummary.prunable}<span class="text-base text-text-dim font-semibold"> prunable</span></p>
-      <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">of {retentionSummary.total} restore point{retentionSummary.total === 1 ? '' : 's'}{#if soonestRetentionNextRun} · next prune {relTimeUntil(soonestRetentionNextRun)}{/if}</p>
+      <p class="text-metric leading-none font-bold text-text tabular-nums">{retentionSummary.prunable}<span class="text-base text-text-dim font-semibold"> prunable</span></p>
+      <p class="text-2xs text-text-muted mt-1.5 tabular-nums">of {retentionSummary.total} restore point{retentionSummary.total === 1 ? '' : 's'}{#if soonestRetentionNextRun} · next prune {relTimeUntil(soonestRetentionNextRun)}{/if}</p>
     {:else}
-      <p class="text-[11px] text-text-dim mt-auto">{retentionLoading ? 'Loading…' : 'No retention policy set'}</p>
+      <p class="text-2xs text-text-dim mt-auto">{retentionLoading ? 'Loading…' : 'No retention policy set'}</p>
     {/if}
   </a>
   {/if}
@@ -1430,12 +1433,12 @@
       {@render mHead(CATALOG.replicationStatus.icon, 'Replication status')}
       {#if noneActive}
         <p class="text-base font-bold text-text-dim mt-auto">All sources disabled</p>
-        <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{rs.total} configured</p>
+        <p class="text-2xs text-text-muted mt-1.5 tabular-nums">{rs.total} configured</p>
       {:else}
         <!-- numerator and denominator both scoped to enabled sources, so the
              count and the caption never disagree (e.g. "2/2 · All synced"). -->
-        <p class="text-[26px] leading-none font-bold tabular-nums {rs.failed > 0 ? 'text-danger' : ok ? 'text-success' : 'text-warning'}">{rs.synced}<span class="text-base text-text-dim font-semibold">/{rs.enabled}</span></p>
-        <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{caption}{#if rs.lastSync} · last {relTime(rs.lastSync)}{/if}</p>
+        <p class="text-metric leading-none font-bold tabular-nums {rs.failed > 0 ? 'text-danger' : ok ? 'text-success' : 'text-warning'}">{rs.synced}<span class="text-base text-text-dim font-semibold">/{rs.enabled}</span></p>
+        <p class="text-2xs text-text-muted mt-1.5 tabular-nums">{caption}{#if rs.lastSync} · last {relTime(rs.lastSync)}{/if}</p>
       {/if}
     </a>
   {:else}{@render metricCardEmpty(CATALOG.replicationStatus.icon, 'Replication status')}{/if}
@@ -1491,7 +1494,7 @@
         {#if layout.editMode}
           <button onclick={layout.reset} class="flex-1 sm:flex-none min-h-[44px] px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-2 border border-border hover:bg-surface-3 rounded-lg transition-colors">Reset</button>
           <button onclick={layout.toggleEdit} class="flex-1 sm:flex-none min-h-[44px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-semibold text-on-status bg-success hover:bg-success/90 rounded-lg transition-colors">
-            <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>Done
+            <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d={ICONS.check}/></svg>Done
           </button>
         {:else}
           <button onclick={layout.toggleEdit} class="flex-1 sm:flex-none min-h-[44px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-2 border border-border hover:bg-surface-3 rounded-lg transition-colors">
@@ -1504,7 +1507,7 @@
 
   {#if isReplicaMode()}
     <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
-      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/></svg>
       <span>Read-only replica — write actions are disabled on this instance.</span>
     </div>
   {/if}
@@ -1533,7 +1536,7 @@
       <div class="bg-surface-2 border border-vault/30 rounded-xl p-6 mb-8">
         <div class="flex items-start gap-4">
           <div class="w-10 h-10 rounded-lg bg-vault/10 flex items-center justify-center shrink-0 mt-0.5">
-            <svg aria-hidden="true" class="w-5 h-5 text-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <svg aria-hidden="true" class="w-5 h-5 text-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.bolt}/></svg>
           </div>
           <div class="flex-1 min-w-0">
             <h2 class="text-base font-semibold text-text">Getting Started</h2>
@@ -1541,7 +1544,7 @@
             <div class="mt-4 flex flex-col sm:flex-row gap-3">
               <button onclick={() => navigate('/storage')} class="flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left {storage.length > 0 ? 'border-success/30 bg-success/5' : 'border-vault/40 bg-vault/5 hover:bg-vault/10'}">
                 <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {storage.length > 0 ? 'bg-success text-on-status' : 'bg-vault text-on-vault'}">
-                  {#if storage.length > 0}<svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>{:else}1{/if}
+                  {#if storage.length > 0}<svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check}/></svg>{:else}1{/if}
                 </div>
                 <div>
                   <p class="text-sm font-medium {storage.length > 0 ? 'text-success' : 'text-text'}">Configure Storage</p>
@@ -1550,7 +1553,7 @@
               </button>
               <button onclick={() => navigate('/jobs')} disabled={storage.length === 0} class="flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left {jobs.length > 0 ? 'border-success/30 bg-success/5' : storage.length > 0 ? 'border-vault/40 bg-vault/5 hover:bg-vault/10' : 'border-border bg-surface-3 opacity-50 cursor-not-allowed'}">
                 <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 {jobs.length > 0 ? 'bg-success text-on-status' : storage.length > 0 ? 'bg-vault text-on-vault' : 'bg-surface-4 text-text-muted'}">
-                  {#if jobs.length > 0}<svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>{:else}2{/if}
+                  {#if jobs.length > 0}<svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check}/></svg>{:else}2{/if}
                 </div>
                 <div>
                   <p class="text-sm font-medium {jobs.length > 0 ? 'text-success' : storage.length > 0 ? 'text-text' : 'text-text-dim'}">Create Backup Job</p>
@@ -1599,27 +1602,27 @@
                    wrap to a second line instead of squeezing it to a letter (#715). -->
               <div class="relative z-[2] flex flex-wrap items-center gap-x-2 gap-y-1 mb-1.5 px-1">
                 <div class="flex flex-1 items-center gap-2 min-w-[7rem] cursor-grab py-1 -my-1 touch-none" style="touch-action: none;" onpointerdown={(e) => tilePointerDown(e, t.idx, true)} aria-hidden="true" title="Drag to reorder">
-                  <svg class="w-4 h-4 text-text-dim shrink-0" fill="currentColor" viewBox="0 0 24 24"><circle cx="8" cy="6" r="1.4"/><circle cx="8" cy="12" r="1.4"/><circle cx="8" cy="18" r="1.4"/><circle cx="16" cy="6" r="1.4"/><circle cx="16" cy="12" r="1.4"/><circle cx="16" cy="18" r="1.4"/></svg>
-                  <span class="text-[11px] font-medium text-text-muted break-words" data-tile-label>{t.name}</span>
+                  <svg aria-hidden="true" class="w-4 h-4 text-text-dim shrink-0" fill="currentColor" viewBox="0 0 24 24"><circle cx="8" cy="6" r="1.4"/><circle cx="8" cy="12" r="1.4"/><circle cx="8" cy="18" r="1.4"/><circle cx="16" cy="6" r="1.4"/><circle cx="16" cy="12" r="1.4"/><circle cx="16" cy="18" r="1.4"/></svg>
+                  <span class="text-2xs font-medium text-text-muted break-words" data-tile-label>{t.name}</span>
                 </div>
                 <div class="ml-auto flex items-center gap-1 shrink-0">
                   <span class="resize-controls flex items-center gap-1">
                     <button onclick={() => layout.resize(t.id, t.span, -1, CATALOG[t.id].maxSpan ?? 12)} disabled={t.span <= SPAN_OPTIONS[0]} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Make {t.name} narrower" title="Narrower">
-                      <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+                      <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d={ICONS.chevronLeft}/></svg>
                     </button>
                     <button onclick={() => layout.resize(t.id, t.span, 1, CATALOG[t.id].maxSpan ?? 12)} disabled={t.span >= Math.min(SPAN_OPTIONS[SPAN_OPTIONS.length - 1], CATALOG[t.id].maxSpan ?? 12)} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Make {t.name} wider" title="Wider">
-                      <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+                      <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d={ICONS.chevronRight}/></svg>
                     </button>
                     <span class="w-px h-4 bg-border mx-0.5"></span>
                   </span>
                   <button onclick={() => layout.moveBy(t.id, -1)} disabled={t.idx === 0} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Move {t.name} up" title="Move up">
-                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/></svg>
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d={ICONS.chevronUp}/></svg>
                   </button>
                   <button onclick={() => layout.moveBy(t.id, 1)} disabled={t.idx === layout.order.length - 1} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Move {t.name} down" title="Move down">
-                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d={ICONS.chevronDown}/></svg>
                   </button>
                   <button onclick={() => layout.remove(t.id)} class="p-1 rounded text-danger hover:bg-danger/10" aria-label="Remove {t.name}" title="Remove tile">
-                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d={ICONS.close}/></svg>
                   </button>
                 </div>
               </div>
@@ -1645,7 +1648,7 @@
                   </span>
                   <span class="text-xs font-medium text-text truncate">{c.name}</span>
                 </div>
-                <span class="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full {c.shown ? 'bg-success/15 text-success' : 'bg-vault/15 text-vault-text'}">{c.shown ? 'Added' : '+ Add'}</span>
+                <span class="shrink-0 text-2xs font-semibold px-2 py-0.5 rounded-full {c.shown ? 'bg-success/15 text-success' : 'bg-vault/15 text-vault-text'}">{c.shown ? 'Added' : '+ Add'}</span>
               </button>
             {/each}
           </div>

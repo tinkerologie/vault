@@ -22,6 +22,8 @@
   import LoadError from '../components/LoadError.svelte'
   import { createArrivalAnnouncer } from '../lib/logannounce.js'
   import { readHashFilters, writeHashFilters } from '../lib/urlFilters.js'
+  import InlineSpinner from '../components/InlineSpinner.svelte'
+  import { ICONS } from '../lib/icons.js'
 
   // Filters live in the hash query (#693): level, category, job and search
   // survive a reload, a shared link and Back.
@@ -669,28 +671,28 @@
       </button>
       <button onclick={toggleMeta} aria-pressed={showMeta}
         class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm transition-colors flex items-center gap-1.5 {showMeta ? 'text-text border-vault/50' : 'text-text-muted hover:text-text'}" title="Show the key=value metadata tail on each line">
-        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.info}/></svg>
         Details: {showMeta ? 'on' : 'off'}
       </button>
       <button onclick={copyAllLogs} disabled={store.filtered.length === 0}
         class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-text transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Copy all filtered logs">
         {#if copiedAll}
-          <svg aria-hidden="true" class="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          <svg aria-hidden="true" class="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.check}/></svg>
           Copied
         {:else}
-          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.copy}/></svg>
           Copy
         {/if}
       </button>
       <button onclick={exportLogs} disabled={store.filtered.length === 0}
         class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-text transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Export logs">
-        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.fileDownload}/></svg>
         Export
       </button>
       {#if !isReplicaMode()}
         <button onclick={() => confirmPurge = true} disabled={store.entries.length === 0}
           class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-danger hover:bg-danger/10 transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Purge all logs">
-          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.trash}/></svg>
           Purge
         </button>
       {/if}
@@ -699,7 +701,7 @@
 
   {#if isReplicaMode()}
     <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
-      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/></svg>
       <span>Read-only replica — write actions are disabled.</span>
     </div>
   {/if}
@@ -714,7 +716,7 @@
     </button>
     <div class="w-px h-4 bg-border" aria-hidden="true"></div>
     <label class="flex items-center gap-1.5">
-      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-dim">Level</span>
+      <span class="text-2xs font-semibold uppercase tracking-wide text-text-dim">Level</span>
       <select
         value={store.levelFilter}
         onchange={(e) => handleLevel(e.target.value)}
@@ -727,7 +729,7 @@
     </label>
     <div class="w-px h-4 bg-border" aria-hidden="true"></div>
     <label class="flex items-center gap-1.5">
-      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-dim">Category</span>
+      <span class="text-2xs font-semibold uppercase tracking-wide text-text-dim">Category</span>
       <select
         value={store.category}
         onchange={(e) => handleCategory(e.target.value)}
@@ -740,7 +742,7 @@
     </label>
     <div class="w-px h-4 bg-border" aria-hidden="true"></div>
     <label class="flex items-center gap-1.5">
-      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-dim">Job</span>
+      <span class="text-2xs font-semibold uppercase tracking-wide text-text-dim">Job</span>
       <select
         value={store.jobFilter}
         onchange={(e) => handleJob(e.target.value)}
@@ -754,7 +756,7 @@
     </label>
     <div class="w-px h-4 bg-border" aria-hidden="true"></div>
     <label class="flex items-center gap-1.5">
-      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-dim">Search</span>
+      <span class="text-2xs font-semibold uppercase tracking-wide text-text-dim">Search</span>
       <div class="relative">
         <input
           type="text"
@@ -785,21 +787,21 @@
     <LoadError title="Couldn't load logs" message={store.error} onretry={retryLoad} retrying={store.loading} />
   {:else if store.search && store.filtered.length === 0 && (store.searching || store.loadingOlder || store.loading)}
     <div class="py-4 text-center text-sm text-text-dim flex items-center justify-center gap-2" aria-live="polite">
-      <span aria-hidden="true" class="inline-block w-4 h-4 border border-vault/30 border-t-vault rounded-full animate-spin"></span>
+      <InlineSpinner class="text-vault" />
       <span>searching older logs…</span>
     </div>
   {:else if store.filtered.length === 0}
     {@const empty = logEmptyState({ problemsOnly: store.levelFilter === 'problems', hasMore: store.hasMore && store.entries.length > 0, stopped: store.historyStopped })}
     {#if empty.kind === 'loading'}
       <div class="py-4 text-center text-sm text-text-dim flex items-center justify-center gap-2" aria-live="polite">
-        <span aria-hidden="true" class="inline-block w-4 h-4 border border-vault/30 border-t-vault rounded-full animate-spin"></span>
+        <InlineSpinner class="text-vault" />
         <span>{empty.text}</span>
       </div>
     {:else}
       <EmptyState title={empty.title} subtitle={empty.subtitle} description={empty.description ?? ''}
         actionLabel={empty.kind === 'partial' ? 'Try again' : ''} onaction={empty.kind === 'partial' ? () => store.loadAll() : null}>
         {#snippet iconSlot()}
-          <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+          <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ICONS.terminal}/></svg>
         {/snippet}
       </EmptyState>
     {/if}
@@ -853,9 +855,9 @@
                  while you scroll through it; every row below can then drop the
                  date and show a bare time. -->
             <div class="sticky top-0 z-[2] flex items-center gap-2 pl-3 pr-24 min-h-8 bg-surface-2/95 backdrop-blur-sm border-y border-border select-none">
-              <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{row.label}</span>
+              <span class="text-2xs font-semibold uppercase tracking-wider text-text-muted">{row.label}</span>
               <span class="h-px flex-1 bg-border" aria-hidden="true"></span>
-              <span class="text-[11px] text-text-dim tabular-nums">{row.count}</span>
+              <span class="text-2xs text-text-dim tabular-nums">{row.count}</span>
             </div>
           {:else}
             {@const entry = row.entry}
@@ -872,7 +874,7 @@
                 <button type="button" onclick={() => toggleExpanded(row)} aria-expanded={open} aria-controls={open ? detailsId : undefined}
                   aria-label={rowDetailsLabel(entry, rowStamp(entry.ts, rowTime(entry.ts)), row.repeat)} title={open ? 'Hide details' : 'Show details'}
                   class="w-6 h-6 shrink-0 flex items-center justify-center text-text-muted hover:text-text cursor-pointer">
-                  <svg aria-hidden="true" class="w-3 h-3 transition-transform {open ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
+                  <svg aria-hidden="true" class="w-3 h-3 transition-transform {open ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d={ICONS.chevronRight}/></svg>
                 </button>
               {:else}
                 <span class="w-6 h-6 shrink-0" aria-hidden="true"></span>
@@ -883,7 +885,7 @@
               <!-- Level pill. Colour AND text, so the console still reads in
                    the monochrome themes where every hue collapses to one ink. The
                    highlighted row's tint is too strong for the level's own colour. -->
-              <span class={`shrink-0 w-[3.5rem] mt-1 leading-4 text-center rounded px-1 text-[11px] uppercase tracking-wide ${st.pill} ${focusedId === String(entry.id) ? '!text-text' : ''}`} title={entry.level}>{levelLabel(entry.level)}</span>
+              <span class={`shrink-0 w-[3.5rem] mt-1 leading-4 text-center rounded px-1 text-2xs uppercase tracking-wide ${st.pill} ${focusedId === String(entry.id) ? '!text-text' : ''}`} title={entry.level}>{levelLabel(entry.level)}</span>
               <span class="shrink-0 w-[7ch] truncate text-text-muted" title={entry.category}>{entry.category}</span>
               <span class="min-w-0 flex-1 flex items-center gap-1.5 max-sm:order-last max-sm:basis-full max-sm:pl-8 max-sm:pb-1">
                 <!-- On a phone the cause is the reason the row exists, so it wraps there. -->
@@ -891,16 +893,16 @@
                   {text}
                 </span>
                 {#if row.repeat > 1}
-                  <span class="shrink-0 rounded px-1 leading-4 text-[11px] tabular-nums bg-surface-3 text-text-muted" title={repeatTitle(row)}>{`×${row.repeat}`}</span>
+                  <span class="shrink-0 rounded px-1 leading-4 text-2xs tabular-nums bg-surface-3 text-text-muted" title={repeatTitle(row)}>{`×${row.repeat}`}</span>
                 {/if}
                 {#if showMeta && line.meta}<span class="{st.meta} min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={line.meta}>{line.meta}</span>{/if}
               </span>
               <button type="button" onclick={() => copyRow(row)} aria-label={row.repeat > 1 ? `Copy ${row.repeat} log lines` : 'Copy log line'}
                 class={`log-row-copy ${copiedId === entry.id || focusedId === String(entry.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'} w-6 h-6 max-sm:ml-auto shrink-0 flex items-center justify-center text-text-muted hover:text-text transition-all cursor-pointer`} title="Copy">
                 {#if copiedId === entry.id}
-                  <svg aria-hidden="true" class="w-3 h-3 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                  <svg aria-hidden="true" class="w-3 h-3 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.check}/></svg>
                 {:else}
-                  <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                  <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.copy}/></svg>
                 {/if}
               </button>
             </div>
@@ -912,7 +914,7 @@
         <!-- End-of-history marker now sits at the BOTTOM: with newest first,
              the oldest log is the last row on the page. -->
         {#if !win.hiddenBelow && !store.hasMore && !store.pruned}
-          <div data-end-marker class="h-8 flex items-center justify-center text-center text-[11px] text-text-dim select-none">
+          <div data-end-marker class="h-8 flex items-center justify-center text-center text-2xs text-text-dim select-none">
             — End of logs —
           </div>
         {/if}
@@ -932,7 +934,9 @@
   show={confirmPurge}
   title="Purge All Logs"
   message="This will permanently delete all activity log entries. This action cannot be undone."
-  confirmLabel={purging ? 'Purging...' : 'Purge All'}
+  confirmLabel="Purge All"
+  busy={purging}
+  busyLabel="Purging…"
   variant="danger"
   onconfirm={handlePurge}
   oncancel={() => confirmPurge = false}

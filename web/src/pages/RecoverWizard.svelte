@@ -9,6 +9,8 @@
   import StorageForm from '../components/StorageForm.svelte'
   import Toast from '../components/Toast.svelte'
   import InlineSpinner from '../components/InlineSpinner.svelte'
+  import { ICONS } from '../lib/icons.js'
+  import { cardClass } from '../lib/selectable.js'
 
   const STEPS = [
     { n: 1, label: 'Connect storage' },
@@ -203,7 +205,7 @@
       <div class="flex items-center gap-2" aria-current={s.n === step ? 'step' : undefined}>
         <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n <= step ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted'}">
           {#if s.n < step}
-            <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+            <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check}/></svg>
           {:else}
             {s.n}
           {/if}
@@ -287,7 +289,7 @@
         <legend class="sr-only">Backups found on your storage</legend>
         {#each backups as b (b.path)}
           <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors
-            {selected === b ? 'border-vault bg-vault/10' : 'border-border bg-surface-3 hover:border-border-hover'}">
+            {cardClass(selected === b)}">
             <input type="radio" name="recover-snapshot" class="accent-vault mt-1" value={b} bind:group={selected} />
             <span class="min-w-0">
               <span class="block text-sm font-medium text-text">{b.is_latest ? 'Most recent backup' : fmtWhen(b.timestamp)}</span>
@@ -433,7 +435,8 @@
   source={replaceSummary.source}
   consequences={replaceSummary.consequences}
   confirmWord="REPLACE"
-  confirmLabel={restoring ? "Replacing…" : "Replace Database"}
+  confirmLabel="Replace Database"
+  busyLabel="Replacing…"
   busy={restoring}
   onconfirm={doRestore}
   oncancel={() => (confirmRestore = false)}

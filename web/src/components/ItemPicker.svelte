@@ -5,6 +5,7 @@
   import { itemDisplayLabel } from '../lib/utils.js'
   import Spinner from './Spinner.svelte'
   import PathBrowser from './PathBrowser.svelte'
+  import { ICONS } from '../lib/icons.js'
 
   /** @type {{ items: Array<{item_type: string, item_name: string, item_id: string, settings: string, sort_order?: number}>, allowedTypes?: string[], onchange?: (items: any[]) => void }} */
   let { items = $bindable([]), allowedTypes = null, onchange = () => {} } = $props()
@@ -406,7 +407,7 @@
       <span class="ml-2 text-sm text-text-muted">Discovering items...</span>
     </div>
   {:else if error}
-    <div class="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-danger">
+    <div class="px-4 py-3 bg-danger/10 border border-danger/30 rounded-lg text-sm text-danger">
       Failed to discover items: {error}
       <button onclick={discover} class="ml-2 underline hover:no-underline">Retry</button>
     </div>
@@ -563,7 +564,7 @@
           stroke-linecap="round"
           stroke-linejoin="round"
           stroke-width="2"
-          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+          d={ICONS.search}
         /></svg
       >
       <input
@@ -609,7 +610,7 @@
                       stroke-linecap="round"
                       stroke-linejoin="round"
                       stroke-width="3"
-                      d="M5 13l4 4L19 7"
+                      d={ICONS.check}
                     /></svg
                   >
                 {/if}
@@ -622,8 +623,8 @@
               </div>
               <span
                 class="text-xs px-2 py-0.5 rounded-full shrink-0 {container.settings?.state === 'running'
-                  ? 'bg-green-500/15 text-success'
-                  : 'bg-yellow-500/15 text-warning'}"
+                  ? 'bg-success/15 text-success'
+                  : 'bg-warning/15 text-warning'}"
               >
                 {container.settings?.state || 'unknown'}
               </span>
@@ -667,7 +668,7 @@
                       stroke-linecap="round"
                       stroke-linejoin="round"
                       stroke-width="3"
-                      d="M5 13l4 4L19 7"
+                      d={ICONS.check}
                     /></svg
                   >
                 {/if}
@@ -678,8 +679,8 @@
               </div>
               <span
                 class="text-xs px-2 py-0.5 rounded-full shrink-0 {vm.settings?.state === 'running'
-                  ? 'bg-green-500/15 text-success'
-                  : 'bg-gray-500/15 text-text-muted'}"
+                  ? 'bg-success/15 text-success'
+                  : 'bg-surface-3 text-text-muted'}"
               >
                 {vm.settings?.state || 'shutoff'}
               </span>
@@ -710,7 +711,7 @@
           onclick={() => (showAddFolder = !showAddFolder)}
           class="text-xs text-vault-text hover:underline transition-colors flex items-center gap-1"
         >
-          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.plus}/></svg>
           Add Custom Folder
         </button>
       </div>
@@ -744,7 +745,7 @@
               >
                 {#if sel}
                   <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
+                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check} /></svg
                   >
                 {/if}
               </div>
@@ -753,7 +754,7 @@
                 <div class="text-xs text-text-muted truncate" title={folder.settings?.path || ''}>{folder.settings?.path || ''}</div>
               </div>
               {#if folder.settings?.preset}
-                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-500/15 text-hue-amber">{folder.settings.preset}</span>
+                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-hue-amber-bg/15 text-hue-amber">{folder.settings.preset}</span>
               {/if}
             </button>
           {/each}
@@ -797,7 +798,7 @@
               >
                 {#if sel}
                   <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
+                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check} /></svg
                   >
                 {/if}
               </div>
@@ -805,7 +806,7 @@
                 <div class="text-sm font-medium text-text truncate">{flash.name}</div>
                 <div class="text-xs text-text-muted truncate">{flash.settings?.path || '/boot'}</div>
               </div>
-              <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-500/15 text-hue-amber">USB boot drive</span>
+              <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-hue-amber-bg/15 text-hue-amber">USB boot drive</span>
             </button>
           {/each}
         </div>
@@ -842,7 +843,7 @@
               >
                 {#if sel}
                   <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
+                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check} /></svg
                   >
                 {/if}
               </div>
@@ -851,7 +852,7 @@
                 <div class="text-xs text-text-muted">Unraid Plugin</div>
               </div>
               {#if plugin.settings?.has_config}
-                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-blue-500/15 text-hue-blue">config</span>
+                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-hue-blue-bg/15 text-hue-blue">config</span>
               {/if}
             </button>
           {/each}
@@ -889,7 +890,7 @@
               >
                 {#if sel}
                   <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
+                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check} /></svg
                   >
                 {/if}
               </div>
@@ -903,7 +904,7 @@
                 </div>
               </div>
               {#if dataset.settings?.used}
-                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-blue-500/15 text-hue-blue">
+                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-hue-blue-bg/15 text-hue-blue">
                   {dataset.settings.used}
                 </span>
               {/if}
@@ -931,7 +932,7 @@
           {#each selectedArray as [key, item], idx (key)}
             {@const stale = !loading && isStaleItem(key)}
             <div
-              class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-3/50 border text-sm {stale ? 'border-yellow-500/40' : 'border-border'} {dragIndex === idx ? 'opacity-50' : ''}"
+              class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-3/50 border text-sm {stale ? 'border-warning/40' : 'border-border'} {dragIndex === idx ? 'opacity-50' : ''}"
               draggable="true"
               ondragstart={() => (dragIndex = idx)}
               ondragover={(e) => e.preventDefault()}
@@ -944,7 +945,7 @@
               <span class="text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
               {#if stale}
                 <span class="flex items-center gap-1 text-xs text-warning shrink-0" title="This item no longer exists on the system">
-                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
                   Not found
                 </span>
               {/if}
@@ -957,7 +958,7 @@
                     class="hit-target text-text-dim hover:text-text disabled:opacity-30"
                     aria-label="Move up"
                   >
-                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronUp}/></svg>
                   </button>
                   <button
                     type="button"
@@ -966,7 +967,7 @@
                     class="hit-target text-text-dim hover:text-text disabled:opacity-30"
                     aria-label="Move down"
                   >
-                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronDown}/></svg>
                   </button>
                 {/if}
                 <button
@@ -976,7 +977,7 @@
                   aria-label="Remove {itemDisplayLabel(item)}"
                   title="Remove from backup job"
                 >
-                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/></svg>
                 </button>
               </div>
             </div>

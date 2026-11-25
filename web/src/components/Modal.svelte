@@ -1,5 +1,6 @@
 <script>
   import { closeOnBackdropClick, modalDialog } from '../lib/dialog.js'
+  import { ICONS } from '../lib/icons.js'
 
   // The only dialog implementation: everything modal composes this component.
   // With a `title` it renders the standard header and padded body. Without one,
@@ -56,7 +57,7 @@
         <div class="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 id={titleId} class="text-lg font-semibold text-text">{title}</h2>
           <button type="button" onclick={() => onclose()} class="text-text-muted hover:text-text transition-colors p-1 rounded-lg hover:bg-surface-3" aria-label="Close">
-            <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/></svg>
           </button>
         </div>
       {/if}

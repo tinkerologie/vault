@@ -21,7 +21,7 @@
   })
 
   let view = $derived(describeItemProgress(item?.detail, runType, now))
-  let textSize = $derived(size === 'md' ? 'text-xs' : 'text-[11px]')
+  let textSize = $derived(size === 'md' ? 'text-xs' : 'text-2xs')
 </script>
 
 {#if view}

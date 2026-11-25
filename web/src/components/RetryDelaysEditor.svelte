@@ -1,4 +1,5 @@
 <script>
+  import { ICONS } from '../lib/icons.js'
   /**
    * RetryDelaysEditor – friendly editor for a JSON-array-of-seconds retry
    * delays string. Lets users pick a preset, edit per-row values with a unit
@@ -222,7 +223,7 @@
             class="ml-auto text-text-muted hover:text-danger disabled:opacity-30 disabled:cursor-not-allowed p-1 rounded focus:outline-none focus:ring-2 focus:ring-vault/50"
           >
             <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              <path stroke-linecap="round" stroke-linejoin="round" d={ICONS.close} />
             </svg>
           </button>
         </li>
@@ -235,7 +236,7 @@
       class="inline-flex items-center gap-1 min-h-[24px] text-xs font-medium text-vault-text hover:text-vault-hover focus:outline-none focus:ring-2 focus:ring-vault/50 rounded px-1"
     >
       <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+        <path stroke-linecap="round" stroke-linejoin="round" d={ICONS.plus} />
       </svg>
       Add retry
     </button>

@@ -22,6 +22,8 @@
   import { deleteRestorePointSummary, restoreTargetFor, clearingRestoreSummary } from '../lib/restore-confirm.js'
   import FileTree from './FileTree.svelte'
   import PasswordInput from './PasswordInput.svelte'
+  import InlineSpinner from './InlineSpinner.svelte'
+  import { ICONS, ITEM_TYPE_ICONS } from '../lib/icons.js'
 
   let { jobs = [], onrestore = () => {}, initialJobId = null, initialType = null, initialName = null, onmount = null } = $props()
 
@@ -1366,7 +1368,7 @@
         class="flex items-center gap-2">
         <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n < step ? 'bg-vault text-on-vault' : s.n === step ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted'}">
           {#if s.n < step}
-            <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+            <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check}/></svg>
           {:else}
             {s.n}
           {/if}
@@ -1383,7 +1385,7 @@
   <h2 data-step-heading tabindex="-1" class="text-base font-semibold text-text mb-4 outline-none">Step {step} of 3: {STEP_HEADINGS[step]}</h2>
 
   <!-- Says what a change reset (#702). The region stays mounted so updates are announced. -->
-  <div role="status" aria-live="polite" class="empty:hidden mb-4">{#if stateNotice && step > 1}<p data-testid="restore-state-notice" class="flex items-start gap-2 rounded-xl border border-info/30 bg-info/10 p-3 text-xs text-text"><svg aria-hidden="true" class="w-4 h-4 text-info shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/></svg><span>{stateNotice}</span></p>{/if}</div>
+  <div role="status" aria-live="polite" class="empty:hidden mb-4">{#if stateNotice && step > 1}<p data-testid="restore-state-notice" class="flex items-start gap-2 rounded-xl border border-info/30 bg-info/10 p-3 text-xs text-text"><svg aria-hidden="true" class="w-4 h-4 text-info shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.info}/></svg><span>{stateNotice}</span></p>{/if}</div>
 
   <!-- Step 1: What to restore (multi-select) -->
   {#if step === 1}
@@ -1391,7 +1393,7 @@
       <Spinner text="Loading backed-up items..." />
     {:else if allItems.length === 0}
       <div class="text-center py-12">
-        <div class="mb-3 opacity-30"><svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg></div>
+        <div class="mb-3 opacity-30"><svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ITEM_TYPE_ICONS.container}/></svg></div>
         <p class="text-sm text-text-muted">No backed-up items found. Run a backup first.</p>
       </div>
     {:else}
@@ -1431,7 +1433,7 @@
         <div class="flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap">
           <div class="relative flex-1 min-w-[200px]">
             <svg aria-hidden="true" class="w-4 h-4 text-text-dim absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.search}/>
             </svg>
             <input
               type="text"
@@ -1448,7 +1450,7 @@
                 title="Clear search"
               >
                 <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/>
                 </svg>
               </button>
             {/if}
@@ -1486,7 +1488,7 @@
                 <div class="w-4.5 h-4.5 rounded border-2 flex items-center justify-center shrink-0 transition-colors
                   {selected ? 'bg-vault border-vault' : 'border-border group-hover:border-vault/40'}">
                   {#if selected}
-                    <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                    <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check}/></svg>
                   {/if}
                 </div>
                 <div class="w-7 h-7 rounded-lg bg-surface-3 flex items-center justify-center shrink-0 group-hover:bg-vault/10 transition-colors">
@@ -1502,7 +1504,7 @@
               {#if item.historical}
                 <p class="text-xs text-text-muted truncate pl-7">No longer in a job · restore points in {item.jobs.map(j => j.name).join(', ')}</p>
               {:else}
-                <p class="text-[11px] text-text-dim truncate pl-7">In {item.jobs.length} job{item.jobs.length !== 1 ? 's' : ''}: {item.jobs.map(j => j.name).join(', ')}</p>
+                <p class="text-2xs text-text-dim truncate pl-7">In {item.jobs.length} job{item.jobs.length !== 1 ? 's' : ''}: {item.jobs.map(j => j.name).join(', ')}</p>
               {/if}
             </button>
           {/each}
@@ -1524,7 +1526,7 @@
         <button type="button" onclick={proceedToStep2} disabled={selectedCount === 0}
           class="px-5 py-2 text-sm font-semibold text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer">
           Next
-          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
         </button>
       </div>
     {/if}
@@ -1534,7 +1536,7 @@
     <div class="mb-4">
       <button type="button" onclick={goBack}
         class="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors cursor-pointer">
-        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronLeft}/></svg>
         Back to items
       </button>
       <div class="flex items-center gap-3 mt-2 flex-wrap">
@@ -1579,11 +1581,11 @@
           </div>
           {#if planComplete}
             <span class="text-xs px-2.5 py-1 rounded-full bg-success/15 text-success font-medium flex items-center gap-1.5">
-              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+              <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d={ICONS.check}/></svg>
               Plan complete
             </span>
           {:else}
-            <span class="text-xs px-2.5 py-1 rounded-full bg-amber-500/15 text-hue-amber font-medium">
+            <span class="text-xs px-2.5 py-1 rounded-full bg-hue-amber-bg/15 text-hue-amber font-medium">
               {restorePlan.uncovered.length} item{restorePlan.uncovered.length === 1 ? '' : 's'} not covered yet
             </span>
           {/if}
@@ -1632,7 +1634,7 @@
         <span class="text-danger">{deleteError}</span>
         <button type="button" onclick={() => { deleteError = '' }} aria-label="Dismiss error"
           class="hit-target shrink-0 rounded text-text-dim hover:text-text cursor-pointer">
-          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/></svg>
         </button>
       </div>
     {/if}
@@ -1641,7 +1643,7 @@
       <Spinner text="Loading restore points..." />
     {:else if restorePoints.length === 0}
       <div class="text-center py-12 bg-surface-2 border border-border rounded-xl">
-        <div class="mb-3 opacity-30"><svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
+        <div class="mb-3 opacity-30"><svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ICONS.clock}/></svg></div>
         <p class="text-sm text-text-muted">No restore points found covering the selected items.</p>
         <p class="text-xs text-text-dim mt-1">Checked jobs: {relevantJobs.map(j => j.name).join(', ')}</p>
       </div>
@@ -1676,7 +1678,7 @@
               aria-describedby={planComplete ? undefined : 'rw-continue-hint'}
               class="px-5 py-2 text-sm font-semibold text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer">
               Continue
-              <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
             </button>
           </span>
         {/if}
@@ -1688,7 +1690,7 @@
     <div class="mb-4">
       <button type="button" onclick={goBack}
         class="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors cursor-pointer">
-        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronLeft}/></svg>
         Back to restore points
       </button>
     </div>
@@ -1740,7 +1742,7 @@
                   <span>{unit.jobName}</span>
                   <span class="{chainHealthTone(unit.point)}">{chainHealthLabel(unit.point)}</span>
                 </div>
-                <div class="text-text-dim text-[11px]">
+                <div class="text-text-dim text-2xs">
                   {unit.items.length} item{unit.items.length !== 1 ? 's' : ''} · {formatDate(unit.point.created_at)} ({formatBytes(selectedRestoreSize(unit.point, unit.items))})
                 </div>
               </div>
@@ -1795,7 +1797,7 @@
         {:else if chainDependencies(unit.point) > 0}
           <div class="bg-info/10 border border-info/30 rounded-xl p-4 flex items-start gap-3">
             <svg aria-hidden="true" class="w-5 h-5 text-info shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.info}/>
             </svg>
             <div>
               <p class="text-sm font-medium text-info">Restore will replay the full chain</p>
@@ -1810,7 +1812,7 @@
         {#if unit.point?.retention_preserved}
           <div class="bg-warning/10 border border-warning/30 rounded-xl p-4 flex items-start gap-3">
             <svg aria-hidden="true" class="w-5 h-5 text-warning shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.clock}/>
             </svg>
             <div>
               <p class="text-sm font-medium text-warning">Retention is preserving this restore point</p>
@@ -1889,7 +1891,7 @@
                 {/if}
                 {#if clears}
                   <span class="mt-1 flex items-center gap-1 text-danger font-medium">
-                    <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                    <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
                     Files here that are not in the backup will be deleted
                   </span>
                 {:else}
@@ -1986,7 +1988,7 @@
                 <summary class="flex items-center justify-between gap-3 cursor-pointer select-none p-3 text-sm"
                   onclick={(e) => { e.preventDefault(); togglePickerOpen(item) }}>
                   <span class="flex items-center gap-2 min-w-0">
-                    <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                    <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
                     <span class="font-medium text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
                     <span class="text-xs text-text-dim shrink-0">({itemTypeSingularLabel(item.type)})</span>
                   </span>
@@ -2089,7 +2091,7 @@
             <button type="button" onclick={() => runPreflight(unit)} disabled={checking || (needsAgePassphrase && !s.passphrase)}
               class="text-xs px-3 py-1.5 rounded-lg border border-border text-text-muted hover:text-text hover:border-vault/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer inline-flex items-center gap-1.5 shrink-0">
               {#if checking}
-                <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                <InlineSpinner size="xs" />
                 Checking…
               {:else}
                 {preflight && fresh ? 'Re-check' : 'Run checks'}
@@ -2104,11 +2106,11 @@
                 <li class="flex items-start gap-2 text-xs">
                   <span class="mt-0.5 shrink-0 {c.status === 'ok' ? 'text-success' : c.status === 'fail' ? 'text-danger' : c.status === 'warn' ? 'text-warning' : 'text-text-dim'}">
                     {#if c.status === 'ok'}
-                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="passed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="passed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check}/></svg>
                     {:else if c.status === 'fail'}
-                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="failed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="failed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d={ICONS.close}/></svg>
                     {:else if c.status === 'warn'}
-                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="warning"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="warning"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
                     {:else}
                       <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="skipped"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 12H6"/></svg>
                     {/if}
@@ -2129,7 +2131,7 @@
     <!-- Warning banner: says plainly what the current clearing setting does (#700). -->
     <div class="bg-warning/10 border border-warning/30 rounded-xl p-4 mb-6 flex items-start gap-3" data-testid="restore-warning">
       <svg aria-hidden="true" class="w-5 h-5 text-warning shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/>
       </svg>
       <div>
         {#if clearingUnits.length > 0}
@@ -2157,10 +2159,10 @@
         disabled={!canStartRestore}
         class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer">
         {#if isRestoreRunning}
-          <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          <InlineSpinner size="sm" />
           Restoring...
         {:else}
-          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.refresh}/></svg>
           Start Restore {restoreUnits.length > 1 ? `(${restoreUnits.length} Jobs)` : ''}
         {/if}
       </button>
@@ -2169,10 +2171,10 @@
         <button type="button" onclick={() => doMount(restoreUnits[0])} disabled={mounting || isRestoreRunning || !!mountedSession}
           class="w-full sm:w-auto px-4 py-2.5 text-sm font-medium text-text bg-surface-3 hover:bg-surface-4 border border-border rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer">
           {#if mounting}
-            <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            <InlineSpinner size="sm" />
             Mounting…
           {:else}
-            <svg aria-hidden="true" class="w-4 h-4 text-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+            <svg aria-hidden="true" class="w-4 h-4 text-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.folder}/></svg>
             Mount as Filesystem
           {/if}
         </button>
@@ -2194,10 +2196,10 @@
     </div>
 
     {#if mountedSession}
-      <div class="bg-surface-2 border border-emerald-500/40 rounded-xl p-4 mt-4 flex items-start justify-between gap-3">
+      <div class="bg-surface-2 border border-hue-emerald-bg/40 rounded-xl p-4 mt-4 flex items-start justify-between gap-3">
         <div class="flex items-start gap-3">
           <svg aria-hidden="true" class="w-5 h-5 text-hue-emerald shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.check}/>
           </svg>
           <div>
             <p class="text-sm font-medium text-text">Backup mounted read-only</p>
@@ -2308,7 +2310,7 @@
         <div class="flex items-start gap-3">
           {#if restoreOutcome.status === 'completed'}
             <svg aria-hidden="true" class="w-5 h-5 text-success shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.check}/>
             </svg>
             <div>
               <p class="text-sm font-semibold text-success">Restore completed successfully</p>
@@ -2316,7 +2318,7 @@
             </div>
           {:else if restoreOutcome.status === 'partial' || restoreOutcome.status === 'cancelled'}
             <svg aria-hidden="true" class="w-5 h-5 text-warning shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/>
             </svg>
             <div>
               {#if restoreOutcome.status === 'cancelled'}
@@ -2329,7 +2331,7 @@
             </div>
           {:else}
             <svg aria-hidden="true" class="w-5 h-5 text-danger shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/>
             </svg>
             <div>
               <p class="text-sm font-semibold text-danger">Restore failed</p>
@@ -2358,7 +2360,7 @@
           <button type="button" onclick={() => { restoreOutcome = null }}
             title="Dismiss notification" aria-label="Dismiss notification"
             class="p-1 text-text-dim hover:text-text rounded transition-colors cursor-pointer">
-            <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/></svg>
           </button>
         </div>
       </div>
@@ -2370,15 +2372,15 @@
         <div class="flex items-center justify-between mb-2.5 flex-wrap gap-2">
           <div class="flex items-center gap-2">
             <svg aria-hidden="true" class="w-4 h-4 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ICONS.terminal}/>
             </svg>
             <span class="text-xs font-semibold text-text">Restore Log</span>
             {#if restoreLogs.length > 0}
-              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-3 text-text-muted font-medium tabular-nums">{restoreLogs.length}</span>
+              <span class="text-2xs px-1.5 py-0.5 rounded-full bg-surface-3 text-text-muted font-medium tabular-nums">{restoreLogs.length}</span>
             {/if}
           </div>
           {#if isRestoreRunning}
-            <span class="flex items-center gap-1.5 text-[11px] text-vault-text font-medium">
+            <span class="flex items-center gap-1.5 text-2xs text-vault-text font-medium">
               <span class="w-1.5 h-1.5 rounded-full bg-vault animate-ping"></span>
               Live
             </span>
@@ -2388,7 +2390,7 @@
         {#if retryError}<p role="alert" class="text-xs text-danger mb-2">{retryError}</p>{/if}
         {#if restoreUnits.length > 1 && Array.from(unitRuns.values()).some(u => u.runId)}
           <div class="flex items-center gap-1.5 mb-3 flex-wrap border-b border-border/50 pb-2">
-            <span class="text-[11px] text-text-dim mr-1">Log source:</span>
+            <span class="text-2xs text-text-dim mr-1">Log source:</span>
             {#each Array.from(unitRuns.values()).filter(u => u.runId) as u (u.jobId)}
               <button type="button" onclick={() => switchLogUnit(u)}
                 class="text-xs px-2.5 py-1 rounded-lg transition-colors cursor-pointer {selectedLogUnitJobId === u.jobId ? 'bg-vault text-on-vault font-medium' : 'bg-surface-3 text-text-muted hover:text-text'}">
@@ -2404,8 +2406,8 @@
           {:else}
             {#each restoreLogs as entry (entry.id)}
               <div class="flex items-baseline gap-2">
-                <span class="text-text-dim text-[10px] shrink-0 tabular-nums">{timeOnly(entry.ts)}</span>
-                <span class="text-[10px] px-1 py-0.5 rounded uppercase font-semibold shrink-0 {entry.level === 'error' ? 'bg-danger/20 text-danger' : entry.level === 'warn' ? 'bg-warning/20 text-warning' : 'bg-surface-3 text-text-muted'}">{entry.level}</span>
+                <span class="text-text-dim text-2xs shrink-0 tabular-nums">{timeOnly(entry.ts)}</span>
+                <span class="text-2xs px-1 py-0.5 rounded uppercase font-semibold shrink-0 {entry.level === 'error' ? 'bg-danger/20 text-danger' : entry.level === 'warn' ? 'bg-warning/20 text-warning' : 'bg-surface-3 text-text-muted'}">{entry.level}</span>
                 <span class="text-text-muted break-all flex-1 {entry.level === 'error' ? 'text-danger' : ''}">{entry.message}</span>
               </div>
             {/each}

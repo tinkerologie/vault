@@ -100,7 +100,7 @@
           <span aria-hidden="true" class="text-text-muted text-xs w-5">{isExpanded ? '▾' : '▸'}</span>
           <span class="font-semibold text-text">{r.version}</span>
           {#if isLatest}
-            <span class="text-xs px-2 py-0.5 rounded bg-emerald-500/15 text-hue-emerald">Latest</span>
+            <span class="text-xs px-2 py-0.5 rounded bg-hue-emerald-bg/15 text-hue-emerald">Latest</span>
           {/if}
           {#if isCurrent}
             <span class="text-xs px-2 py-0.5 rounded bg-vault/15 text-vault-text">Current</span>

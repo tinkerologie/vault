@@ -3,6 +3,8 @@
   import { getPointCoverage } from '../lib/restore-plan.js'
   import { isEmbedded } from '../lib/runtime-config.js'
   import { scrollHostTo } from '../lib/embed.js'
+  import InlineSpinner from './InlineSpinner.svelte'
+  import { ICONS } from '../lib/icons.js'
 
   let {
     points = [],
@@ -237,10 +239,10 @@
                     <span class="text-xs px-2 py-0.5 rounded-full bg-surface-3 text-text font-medium">{rp.jobName}</span>
                   {/if}
                   {#if recommended}
-                    <span class="text-xs px-1.5 py-0.5 rounded-full bg-success/15 text-success font-medium">Recommended</span>
+                    <span class="text-xs px-1.5 py-0.5 rounded-full bg-surface-3 text-text-muted font-medium">Recommended</span>
                   {/if}
                   {#if meta.verified}
-                    <span class="text-xs px-1.5 py-0.5 rounded-full bg-info/15 text-info font-medium">Verified</span>
+                    <span class="text-xs px-1.5 py-0.5 rounded-full bg-success/15 text-success font-medium">Verified</span>
                   {/if}
                   {#if rp.chain_status === 'broken'}
                     <span class="text-xs px-1.5 py-0.5 rounded-full font-medium bg-danger/15 text-danger">Broken chain</span>
@@ -304,13 +306,13 @@
                   onclick={() => onDelete(rp)}
                   disabled={deletingId === rp.id}
                   title="Delete this restore point"
-                  aria-label="Delete restore point {pointLabel(rp).replace(/^Restore point /, '')}"
+                  aria-label="{deletingId === rp.id ? 'Deleting' : 'Delete'} restore point {pointLabel(rp).replace(/^Restore point /, '')}"
                   class="hit-target inline-flex items-center justify-center w-8 h-8 rounded-lg text-text-dim hover:text-danger hover:bg-danger/10 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {#if deletingId === rp.id}
-                    <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    <InlineSpinner size="sm" />
                   {:else}
-                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.trash}/></svg>
                   {/if}
                 </button>
               </div>

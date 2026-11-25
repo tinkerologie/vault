@@ -2,6 +2,7 @@
   import { formatClockTime } from '../lib/utils.js'
   import { isCustomCron, cronError, timeSlots, serverWallClock, formatRunDate } from '../lib/cron.js'
   import { api } from '../lib/api.js'
+  import { ICONS } from '../lib/icons.js'
 
   // `allowManual` offers "Manual only", which is an empty schedule: the server
   // never runs the job by itself. Only a job's own schedule can be manual; the
@@ -398,7 +399,7 @@
   <!-- Human-readable preview, with the next runs on the server's clock -->
   <div class="px-3 py-2 bg-vault/5 border border-vault/20 rounded-lg space-y-1.5">
     <div class="flex items-center gap-2">
-      <svg aria-hidden="true" class="w-4 h-4 text-vault shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <svg aria-hidden="true" class="w-4 h-4 text-vault shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.clock}/></svg>
       <span class="text-sm text-text">{description}</span>
     </div>
     {#if upcoming.length > 0}

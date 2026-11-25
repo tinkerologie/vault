@@ -1,6 +1,7 @@
 <script>
   import { tick } from 'svelte'
   import { formatBytes } from '../lib/utils.js'
+  import { ICONS } from '../lib/icons.js'
 
   // The WAI-ARIA tree pattern over a file-tree model (#703): one Tab stop
   // (roving tabindex), arrow/Home/End navigation, aria-level/setsize/posinset,
@@ -181,7 +182,7 @@
           >
             {#if expandable}
               <span data-part="expand" aria-hidden="true" class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-text-dim hover:bg-surface-4 hover:text-text">
-                <svg class="w-3.5 h-3.5 transition-transform {open ? 'rotate-90 text-text' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                <svg aria-hidden="true" class="w-3.5 h-3.5 transition-transform {open ? 'rotate-90 text-text' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight} /></svg>
               </span>
             {:else}
               <span class="w-6 shrink-0" aria-hidden="true"></span>
@@ -192,9 +193,9 @@
               class="w-6 h-6 shrink-0 flex items-center justify-center">
               <span class="w-4 h-4 rounded border-2 flex items-center justify-center {state === 'false' ? 'border-text-dim bg-surface' : 'border-vault bg-vault text-on-vault'}">
                 {#if state === 'true'}
-                  <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
+                  <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check} /></svg>
                 {:else if state === 'mixed'}
-                  <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-width="3" d="M6 12h12" /></svg>
+                  <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-width="3" d="M6 12h12" /></svg>
                 {/if}
               </span>
             </span>

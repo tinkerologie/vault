@@ -22,6 +22,8 @@
   import PasswordInput from '../components/PasswordInput.svelte'
   import { getSubpath, navigate } from '../lib/router.svelte.js'
   import { snapshot, guardUnload, guardLinks } from '../lib/unsaved.js'
+  import { ICONS, ITEM_TYPE_ICONS } from '../lib/icons.js'
+  import Switch from '../components/Switch.svelte'
 
   let loading = $state(true)
   let health = $state(null)
@@ -267,9 +269,9 @@
 
   const aboutBadgeClass = $derived(
     aboutStatus.kind === 'ok'
-      ? 'bg-emerald-500/15 text-hue-emerald'
+      ? 'bg-hue-emerald-bg/15 text-hue-emerald'
       : aboutStatus.kind === 'update'
-        ? 'bg-orange-500/15 text-hue-orange'
+        ? 'bg-hue-orange-bg/15 text-hue-orange'
         : 'bg-surface text-text-muted',
   )
 
@@ -1126,7 +1128,7 @@
 {#snippet unsavedNote(dirty, key)}
   <span id="unsaved-{key}" role="status" class="text-xs font-medium text-warning flex items-center gap-1.5">
     {#if dirty}
-      <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.error}/></svg>
       Unsaved changes
     {/if}
   </span>
@@ -1145,7 +1147,7 @@
   {:else}
     {#if isReplicaMode()}
       <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
-        <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+        <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/></svg>
         <span>Read-only replica — secret and destructive actions are disabled on this instance.</span>
       </div>
     {/if}
@@ -1174,7 +1176,7 @@
       {#if activeTab === 'general'}
       <!-- Jump-to bar (#208 / E11) — sticky so long-tab settings stay reachable -->
       <div use:measureHeight class="sticky top-0 z-10 -mx-1 px-1 py-2 bg-surface/95 backdrop-blur border-b border-border flex flex-wrap items-center gap-2">
-        <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted shrink-0">Jump to</span>
+        <span class="text-2xs font-semibold uppercase tracking-wide text-text-muted shrink-0">Jump to</span>
         {#each generalSections.filter(s => s.id !== 'set-database' || databaseInfo) as sec (sec.id)}
           <button type="button" onclick={() => jumpToSetting(sec.id)}
             class="px-2.5 py-1 text-xs font-medium rounded-full border border-border bg-surface-3 text-text-muted hover:border-vault/40 hover:text-text transition-colors whitespace-nowrap shrink-0">
@@ -1219,7 +1221,7 @@
             <div role="group" aria-labelledby="color-mode-label" aria-describedby={getIsModeLocked() ? 'color-mode-locked' : undefined} class="grid grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-xs">
               {#each [
                 { value: 'light', label: 'Light', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z' },
-                { value: 'system', label: 'System', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
+                { value: 'system', label: 'System', icon: ITEM_TYPE_ICONS.vm },
                 { value: 'dark', label: 'Dark', icon: 'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z' },
               ] as opt (opt.value)}
                 <button
@@ -1253,72 +1255,52 @@
               <p class="text-sm font-medium text-text">Containers</p>
               <p class="text-xs text-text-muted mt-0.5">Docker containers on this server</p>
             </div>
-            <button
-              onclick={() => toggleBackupTarget('container_backup_enabled')}
+            <Switch
+              size="md"
+              checked={containerBackupOn}
+              onchange={() => toggleBackupTarget('container_backup_enabled')}
               disabled={saving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={containerBackupOn}
-              aria-label="Toggle container backup tracking"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {containerBackupOn ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {containerBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle container backup tracking"
+            />
           </div>
           <div class="px-5 py-4 flex items-center justify-between">
             <div>
               <p class="text-sm font-medium text-text">Virtual Machines</p>
               <p class="text-xs text-text-muted mt-0.5">Libvirt VMs on this server</p>
             </div>
-            <button
-              onclick={() => toggleBackupTarget('vm_backup_enabled')}
+            <Switch
+              size="md"
+              checked={vmBackupOn}
+              onchange={() => toggleBackupTarget('vm_backup_enabled')}
               disabled={saving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={vmBackupOn}
-              aria-label="Toggle VM backup tracking"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {vmBackupOn ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {vmBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle VM backup tracking"
+            />
           </div>
           <div class="px-5 py-4 flex items-center justify-between">
             <div>
               <p class="text-sm font-medium text-text">Folders & Files</p>
               <p class="text-xs text-text-muted mt-0.5">Custom folder and file path backups</p>
             </div>
-            <button
-              onclick={() => toggleBackupTarget('folder_backup_enabled')}
+            <Switch
+              size="md"
+              checked={folderBackupOn}
+              onchange={() => toggleBackupTarget('folder_backup_enabled')}
               disabled={saving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={folderBackupOn}
-              aria-label="Toggle folder backup tracking"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {folderBackupOn ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {folderBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle folder backup tracking"
+            />
           </div>
           <div class="px-5 py-4 flex items-center justify-between">
             <div>
               <p class="text-sm font-medium text-text">Flash Drive</p>
               <p class="text-xs text-text-muted mt-0.5">Unraid USB boot drive backup</p>
             </div>
-            <button
-              onclick={() => toggleBackupTarget('flash_backup_enabled')}
+            <Switch
+              size="md"
+              checked={flashBackupOn}
+              onchange={() => toggleBackupTarget('flash_backup_enabled')}
               disabled={saving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={flashBackupOn}
-              aria-label="Toggle flash drive backup tracking"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {flashBackupOn ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {flashBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle flash drive backup tracking"
+            />
           </div>
         </div>
       </div>
@@ -1335,18 +1317,13 @@
               <p class="text-sm font-medium text-text">3-2-1 Backup Rule</p>
               <p class="text-xs text-text-muted mt-0.5">Show the 3-2-1 best-practice compliance panel. Hide it if you run an intentionally simple setup.</p>
             </div>
-            <button
-              onclick={() => toggleBackupRule()}
+            <Switch
+              size="md"
+              checked={backupRuleOn}
+              onchange={() => toggleBackupRule()}
               disabled={saving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={backupRuleOn}
-              aria-label="Toggle 3-2-1 Backup Rule panel"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {backupRuleOn ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {backupRuleOn ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle 3-2-1 Backup Rule panel"
+            />
           </div>
         </div>
       </div>
@@ -1372,7 +1349,7 @@
                 bind:value={retryMax}
                 disabled={readOnly}
                 placeholder="2"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted max-lg:min-h-11"
               />
             </div>
             <div>
@@ -1409,18 +1386,13 @@
         <div class="p-5 space-y-4">
           <div class="flex items-center justify-between">
             <p class="text-sm font-medium text-text">Adaptively throttle uploads when the link is busy</p>
-            <button
-              onclick={() => { if (!readOnly) autoThrottleEnabled = !autoThrottleEnabled }}
+            <Switch
+              size="md"
+              checked={autoThrottleEnabled}
+              onchange={() => { if (!readOnly) autoThrottleEnabled = !autoThrottleEnabled }}
               disabled={readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-60"
-              role="switch"
-              aria-checked={autoThrottleEnabled}
-              aria-label="Toggle adaptive upload throttling"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {autoThrottleEnabled ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {autoThrottleEnabled ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle adaptive upload throttling"
+            />
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
@@ -1430,7 +1402,7 @@
               </div>
               <input id="throttle-link" type="number" min="1" bind:value={autoThrottleLink} disabled={readOnly}
                 placeholder="e.g. 40"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11" />
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted max-lg:min-h-11" />
             </div>
             <div>
               <div class="block text-sm font-medium text-text-muted mb-1.5">
@@ -1439,7 +1411,7 @@
               </div>
               <input id="throttle-floor" type="number" min="0" bind:value={autoThrottleFloor} disabled={readOnly}
                 placeholder="5"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11" />
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted max-lg:min-h-11" />
             </div>
           </div>
           <p class="text-xs text-text-dim">Applies to uploads to network destinations (SFTP, SMB, NFS, WebDAV, S3). Per-destination bandwidth caps still apply — the stricter limit wins. Takes effect within a few seconds of saving, no restart needed.</p>
@@ -1470,7 +1442,7 @@
             </div>
             <textarea id="global-excludes" rows="5" bind:value={globalExcludes} disabled={readOnly}
               placeholder={excludePlaceholder}
-              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted font-mono focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"></textarea>
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted font-mono"></textarea>
             <p class="text-xs text-text-dim mt-1.5">One path per line. Added to each job's own exclusions — a job can still exclude more.</p>
           </div>
           <div class="flex items-center justify-between pt-1">
@@ -1478,18 +1450,13 @@
               <p class="text-sm font-medium text-text">Honour the <code class="font-mono text-xs">vault.exclude</code> label on containers</p>
               <p class="text-xs text-text-dim mt-0.5">A container can declare its own exclusions, e.g. <code class="font-mono">vault.exclude=/config/cache,/tmp</code>. The exclusions travel with the container, so a template or compose file carries its own answer.</p>
             </div>
-            <button
-              onclick={() => { if (!readOnly) labelExclusionsEnabled = !labelExclusionsEnabled }}
+            <Switch
+              size="md"
+              checked={labelExclusionsEnabled}
+              onchange={() => { if (!readOnly) labelExclusionsEnabled = !labelExclusionsEnabled }}
               disabled={readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-60"
-              role="switch"
-              aria-checked={labelExclusionsEnabled}
-              aria-label="Toggle Docker label exclusions"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {labelExclusionsEnabled ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {labelExclusionsEnabled ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle Docker label exclusions"
+            />
           </div>
           {#if !readOnly}
           <div class="flex flex-wrap items-center justify-end gap-3">
@@ -1529,7 +1496,7 @@
                 bind:value={compactionThreshold}
                 disabled={readOnly}
                 placeholder="50"
-                class="w-24 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
+                class="w-24 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted max-lg:min-h-11"
               />
               <span class="text-sm text-text-muted">%</span>
               {#if !readOnly}
@@ -1561,18 +1528,13 @@
               <p class="text-sm font-medium text-text">Anomaly detection enabled</p>
               <p class="text-xs text-text-muted mt-0.5">Evaluate each completed backup run for statistical anomalies.</p>
             </div>
-            <button
-              onclick={() => anomalyEnabled = !anomalyEnabled}
+            <Switch
+              size="md"
+              checked={anomalyEnabled}
+              onchange={() => anomalyEnabled = !anomalyEnabled}
               disabled={readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={anomalyEnabled}
-              aria-label="Toggle anomaly detection"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {anomalyEnabled ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {anomalyEnabled ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle anomaly detection"
+            />
           </div>
           <!-- Default sensitivity -->
           <div class="px-5 py-4">
@@ -1584,7 +1546,7 @@
               id="anomaly-sensitivity"
               bind:value={anomalySensitivityDefault}
               disabled={readOnly}
-              class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
+              class="w-full max-w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text max-lg:min-h-11"
             >
               <option value="strict">Strict – flag small deviations</option>
               <option value="balanced">Balanced – moderate threshold (recommended)</option>
@@ -1601,7 +1563,7 @@
               id="anomaly-notify-severity"
               bind:value={anomalyNotifyMinSeverity}
               disabled={readOnly}
-              class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
+              class="w-full max-w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text max-lg:min-h-11"
             >
               <option value="info">Info – notify on all anomalies</option>
               <option value="warning">Warning – skip informational</option>
@@ -1641,18 +1603,13 @@
               <p class="text-sm font-medium text-text">Replication enabled</p>
               <p class="text-xs text-text-muted mt-0.5">When off, Replication is hidden from the sidebar and scheduled syncs are paused.</p>
             </div>
-            <button
-              onclick={toggleReplicationEnabled}
+            <Switch
+              size="md"
+              checked={replicationEnabledSetting}
+              onchange={() => toggleReplicationEnabled()}
               disabled={replicationSaving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-60"
-              role="switch"
-              aria-checked={replicationEnabledSetting}
-              aria-label="Toggle replication"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {replicationEnabledSetting ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {replicationEnabledSetting ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle replication"
+            />
           </div>
         </div>
       </div>
@@ -1677,7 +1634,7 @@
                 bind:value={logLevel}
                 onchange={saveLogLevel}
                 disabled={readOnly || logLevelSaving}
-                class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault disabled:opacity-60 cursor-pointer max-lg:min-h-11"
+                class="w-full max-w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text disabled:opacity-60 cursor-pointer max-lg:min-h-11"
               >
                 <option value="debug">Debug</option>
                 <option value="info">Informational</option>
@@ -1694,18 +1651,13 @@
               <p class="text-sm font-medium text-text">Verbose storage logging</p>
               <p class="text-xs text-text-muted mt-0.5">Per-operation trace in the daemon log; off by default.</p>
             </div>
-            <button
-              onclick={toggleStorageVerboseLogging}
+            <Switch
+              size="md"
+              checked={storageVerboseLogging}
+              onchange={() => toggleStorageVerboseLogging()}
               disabled={readOnly || storageVerboseSaving}
-              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-60"
-              role="switch"
-              aria-checked={storageVerboseLogging}
-              aria-label="Toggle verbose storage logging"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {storageVerboseLogging ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {storageVerboseLogging ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle verbose storage logging"
+            />
           </div>
         </div>
       </div>
@@ -1725,18 +1677,13 @@
               <p class="text-sm font-medium text-text">Unraid Notifications</p>
               <p class="text-xs text-text-muted mt-0.5">Send alerts to the Unraid notification system when backups fail, partially complete, or succeed (based on each job's "Notify On" setting).</p>
             </div>
-            <button
-              onclick={toggleNotifications}
+            <Switch
+              size="md"
+              checked={notificationsOn}
+              onchange={() => toggleNotifications()}
               disabled={saving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={notificationsOn}
-              aria-label="Toggle notifications"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {notificationsOn ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {notificationsOn ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle notifications"
+            />
           </div>
           <div class="px-5 py-3">
             <p class="text-xs text-text-dim">
@@ -1762,7 +1709,7 @@
                 bind:value={discordWebhookUrl}
                 disabled={readOnly}
                 placeholder="https://discord.com/api/webhooks/..."
-                class="flex-1 text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
+                class="flex-1 text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text placeholder:text-text-muted max-lg:min-h-11"
               />
               <button
                 onclick={testDiscord}
@@ -1787,7 +1734,7 @@
               id="discord-notify"
               bind:value={discordNotifyOn}
               disabled={readOnly}
-              class="text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
+              class="text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text max-lg:min-h-11"
             >
               <option value="always">All backups (success & failure)</option>
               <option value="failure">Failures only</option>
@@ -1811,7 +1758,7 @@
                 bind:value={discordBotUsername}
                 disabled={readOnly}
                 placeholder="Vault"
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
+                class="w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text placeholder:text-text-muted max-lg:min-h-11"
               />
             </div>
             <div>
@@ -1825,7 +1772,7 @@
                 bind:value={discordBotAvatarUrl}
                 disabled={readOnly}
                 placeholder="https://example.com/avatar.png"
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
+                class="w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text placeholder:text-text-muted max-lg:min-h-11"
               />
             </div>
           </div>
@@ -1842,7 +1789,7 @@
                 bind:value={discordMentionRoleId}
                 disabled={readOnly}
                 placeholder="123456789012345678"
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
+                class="w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text placeholder:text-text-muted max-lg:min-h-11"
               />
             </div>
             <div>
@@ -1854,7 +1801,7 @@
                 id="discord-mention-on"
                 bind:value={discordMentionOn}
                 disabled={readOnly}
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
+                class="w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text max-lg:min-h-11"
               >
                 <option value="never">Never</option>
                 <option value="failure">Failures only</option>
@@ -1904,8 +1851,8 @@
                 <p class="text-sm font-medium text-text">Download emergency kit</p>
                 <p class="text-xs text-text-muted mt-0.5">We recommend saving this encryption key somewhere secure.</p>
               </div>
-              <button onclick={downloadEmergencyKit} class="flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors shrink-0">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+              <button onclick={downloadEmergencyKit} class="flex items-center gap-2 text-sm font-medium text-vault-text hover:underline transition-colors shrink-0">
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.download} /></svg>
                 Download
               </button>
             </div>
@@ -1917,7 +1864,7 @@
                   <p class="text-sm font-medium text-text">Show my encryption key</p>
                   <p class="text-xs text-text-muted mt-0.5">Please keep your encryption key private.</p>
                 </div>
-                <button onclick={toggleShowPassphrase} disabled={loadingPassphrase} class="hit-target text-sm font-medium text-info hover:underline transition-colors shrink-0 disabled:opacity-50">
+                <button onclick={toggleShowPassphrase} disabled={loadingPassphrase} class="hit-target text-sm font-medium text-vault-text hover:underline transition-colors shrink-0 disabled:opacity-50">
                   {loadingPassphrase ? 'Loading…' : showingPassphrase ? 'Hide' : 'Show'}
                 </button>
               </div>
@@ -1949,14 +1896,14 @@
                   <p class="text-xs text-warning">Existing encrypted backups will still require the old passphrase to restore.</p>
                   <div>
                     <label for="change-pass" class="block text-xs font-medium text-text-muted mb-1">New passphrase</label>
-                    <PasswordInput id="change-pass" bind:value={changeNewPass} bind:show={showChangePassphrase} toggleLabel="Show passphrases" class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                    <PasswordInput id="change-pass" bind:value={changeNewPass} bind:show={showChangePassphrase} toggleLabel="Show passphrases" class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder:text-text-muted" />
                   </div>
                   <div>
                     <label for="change-confirm" class="block text-xs font-medium text-text-muted mb-1">Confirm new passphrase</label>
                     <PasswordInput id="change-confirm" bind:value={changeConfirmPass} bind:show={showChangePassphrase} toggleLabel="Show passphrases"
                       aria-invalid={changeMismatch ? 'true' : undefined}
                       aria-describedby={changeMismatch ? 'change-mismatch' : undefined}
-                      class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface border {changeMismatch ? 'border-danger' : 'border-border'} rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                      class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface-3 border {changeMismatch ? 'border-danger' : 'border-border'} rounded-lg text-text placeholder:text-text-muted" />
                   </div>
                   {#if changeMismatch}
                     <p id="change-mismatch" class="text-xs text-danger">Passphrases do not match</p>
@@ -1992,14 +1939,14 @@
               <div class="space-y-3 max-w-sm">
                 <div>
                   <label for="enc-pass" class="block text-xs font-medium text-text-muted mb-1">Passphrase</label>
-                  <PasswordInput id="enc-pass" bind:value={encPassphrase} bind:show={showEncPassphrase} toggleLabel="Show passphrases" class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                  <PasswordInput id="enc-pass" bind:value={encPassphrase} bind:show={showEncPassphrase} toggleLabel="Show passphrases" class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder:text-text-muted" />
                 </div>
                 <div>
                   <label for="enc-confirm" class="block text-xs font-medium text-text-muted mb-1">Confirm Passphrase</label>
                   <PasswordInput id="enc-confirm" bind:value={encConfirm} bind:show={showEncPassphrase} toggleLabel="Show passphrases"
                     aria-invalid={encMismatch ? 'true' : undefined}
                     aria-describedby={encMismatch ? 'enc-mismatch' : undefined}
-                    class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface border {encMismatch ? 'border-danger' : 'border-border'} rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                    class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface-3 border {encMismatch ? 'border-danger' : 'border-border'} rounded-lg text-text placeholder:text-text-muted" />
                 </div>
                 {#if encMismatch}
                   <p id="enc-mismatch" class="text-xs text-danger">Passphrases do not match</p>
@@ -2033,8 +1980,8 @@
             {/if}
           </div>
           {#if !isRemoteKeyClient()}
-          <button onclick={downloadServerKey} disabled={serverKeyDownloading} aria-label="Download vault.key" class="hit-target flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors shrink-0 disabled:opacity-50">
-            {#if serverKeyDownloading}<InlineSpinner />{:else}<svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>{/if}
+          <button onclick={downloadServerKey} disabled={serverKeyDownloading} aria-label="Download vault.key" class="hit-target flex items-center gap-2 text-sm font-medium text-vault-text hover:underline transition-colors shrink-0 disabled:opacity-50">
+            {#if serverKeyDownloading}<InlineSpinner />{:else}<svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.download} /></svg>{/if}
             Download
           </button>
           {/if}
@@ -2070,7 +2017,7 @@
                   <p class="text-sm font-medium text-text">Show API key</p>
                   <p class="text-xs text-text-muted mt-0.5">Reveal the key to copy it for external integrations.</p>
                 </div>
-                <button onclick={toggleApiKeyReveal} disabled={apiKeyLoading} class="hit-target text-sm font-medium text-info hover:underline transition-colors shrink-0 disabled:opacity-50">
+                <button onclick={toggleApiKeyReveal} disabled={apiKeyLoading} class="hit-target text-sm font-medium text-vault-text hover:underline transition-colors shrink-0 disabled:opacity-50">
                   {apiKeyLoading ? 'Loading…' : apiKeyShowing ? 'Hide' : 'Show'}
                 </button>
               </div>
@@ -2080,7 +2027,7 @@
                     <code class="text-sm text-text break-all select-all">{apiKeyRevealed}</code>
                   </div>
                   <button onclick={copyApiKey} class="shrink-0 p-2 text-text-muted hover:text-text transition-colors" aria-label="Copy API key">
-                    <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.copy} /></svg>
                   </button>
                 </div>
               {/if}
@@ -2244,7 +2191,7 @@
         </div>
         <div class="p-5 flex items-center gap-2">
           <select bind:value={historyRetention} disabled={readOnly} aria-labelledby="set-history-heading"
-            class="px-2.5 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer max-lg:min-h-11">
+            class="px-2.5 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text cursor-pointer max-lg:min-h-11">
             <option value="30">30 days</option>
             <option value="90">90 days</option>
             <option value="180">6 months</option>
@@ -2329,7 +2276,7 @@
                 <tr class="border-b border-border/50">
                   <td class="py-2 pr-4 font-medium">
                     Zstandard
-                    <span class="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-vault/20 text-vault-text font-semibold uppercase">recommended</span>
+                    <span class="ml-1.5 text-2xs px-1.5 py-0.5 rounded bg-vault/20 text-vault-text font-semibold uppercase">recommended</span>
                   </td>
                   <td class="py-2 pr-4">
                     <div class="flex gap-0.5">
@@ -2517,7 +2464,7 @@
         </div>
         {/if}
         {#if databaseInfo.mode === 'legacy_usb'}
-        <div class="px-5 py-3 bg-amber-500/10 border-t border-amber-500/20">
+        <div class="px-5 py-3 bg-hue-amber-bg/10 border-t border-hue-amber-bg/20">
           <p class="text-xs text-hue-amber">No cache drive detected. Database writes go directly to the USB flash drive, which may reduce its lifespan. Add a cache drive to your server, or set a custom save location above to avoid writing to the USB drive.</p>
         </div>
         {/if}
@@ -2534,7 +2481,7 @@
           <button
             onclick={refreshRuntime}
             disabled={runtimeLoading}
-            class="hit-target flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="hit-target flex items-center gap-2 text-sm font-medium text-vault-text hover:underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {#if runtimeLoading}<InlineSpinner />{/if}
             Refresh
@@ -2580,7 +2527,7 @@
                 bind:value={memoryLimitMb}
                 disabled={readOnly}
                 placeholder="0"
-                class="w-full sm:w-48 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
+                class="w-full sm:w-48 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted max-lg:min-h-11"
               />
               {#if !readOnly}
               <button
@@ -2605,7 +2552,7 @@
             </p>
             {/if}
             {#if runtimeInfo?.upload_warnings?.length}
-            <div class="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 space-y-1" data-testid="memory-upload-warnings">
+            <div class="px-3 py-2 rounded-lg bg-hue-amber-bg/10 border border-hue-amber-bg/20 space-y-1" data-testid="memory-upload-warnings">
               <p class="text-xs font-medium text-hue-amber">S3 upload buffers can exceed this limit:</p>
               <ul class="text-xs text-hue-amber list-disc pl-4">
                 {#each runtimeInfo.upload_warnings as w (w.job_id)}
@@ -2631,14 +2578,14 @@
           <button
             onclick={downloadDiagnostics}
             disabled={diagnosticsDownloading}
-            class="hit-target flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="hit-target flex items-center gap-2 text-sm font-medium text-vault-text hover:underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {#if diagnosticsDownloading}
               <InlineSpinner />
               Generating...
             {:else}
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.fileDownload} />
               </svg>
               Download diagnostics bundle
             {/if}

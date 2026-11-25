@@ -11,6 +11,7 @@
   import LoadError from '../components/LoadError.svelte'
   import { getAnomalyEnabled, getFeatureFlagsLoaded } from '../lib/settings.svelte.js'
   import { readHashFilters, writeHashFilters } from '../lib/urlFilters.js'
+  import { ICONS } from '../lib/icons.js'
 
   // --- Filter state ---
   // Filters live in the hash query (#693) so a reload, a shared link or Back
@@ -380,7 +381,7 @@
 
   {#if isReplicaMode()}
     <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
-      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/></svg>
       <span>Read-only replica — write actions are disabled on this instance.</span>
     </div>
   {/if}
@@ -477,7 +478,7 @@
     <div class="bg-surface-2 border border-border rounded-xl px-5 py-12 text-center">
       <div class="w-12 h-12 rounded-full bg-success/10 flex items-center justify-center mx-auto mb-4">
         <svg aria-hidden="true" class="w-6 h-6 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.check}/>
         </svg>
       </div>
       <p class="text-base font-semibold text-text">No anomalies found</p>
@@ -561,7 +562,7 @@
               <!-- State -->
               <span class="w-20 shrink-0 hidden md:block">
                 <span class="sr-only">State: </span>
-                <span class="text-[11px] px-2 py-0.5 rounded-full font-medium {stateBadgeClass(anomaly.state)}">
+                <span class="text-2xs px-2 py-0.5 rounded-full font-medium {stateBadgeClass(anomaly.state)}">
                   {stateLabel[anomaly.state] ?? anomaly.state}
                 </span>
               </span>
@@ -610,7 +611,7 @@
                   {#if details}
                     <details class="mt-1">
                       <summary class="cursor-pointer text-text-dim hover:text-text">Raw details</summary>
-                      <pre class="mt-1 whitespace-pre-wrap break-all text-[10px] font-mono">{JSON.stringify(details, null, 2)}</pre>
+                      <pre class="mt-1 whitespace-pre-wrap break-all text-2xs font-mono">{JSON.stringify(details, null, 2)}</pre>
                     </details>
                   {/if}
                 </div>

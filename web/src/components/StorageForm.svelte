@@ -9,6 +9,9 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { nameFieldError } from '../lib/jobForm.js'
   import { snapshot } from '../lib/unsaved.js'
+  import InlineSpinner from './InlineSpinner.svelte'
+  import { ICONS, STORAGE_TYPE_COLORS, STORAGE_TYPE_ICONS } from '../lib/icons.js'
+  import { cardClass } from '../lib/selectable.js'
 
   // The value the API returns in place of a stored secret
   // (internal/credentials RedactionMarker). Sending it back keeps the secret.
@@ -241,23 +244,8 @@
     }
   }
 
-  const storageIcons = {
-    local: 'M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z',
-    sftp: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
-    smb: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
-    nfs: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z',
-    webdav: 'M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z',
-    s3: 'M5 19a2 2 0 01-2-2V7a2 2 0 012-2h3.586a1 1 0 01.707.293l1.414 1.414A1 1 0 0011.414 7H19a2 2 0 012 2v8a2 2 0 01-2 2H5z',
-  }
-
-  const storageColors = {
-    local: 'text-hue-blue',
-    sftp: 'text-hue-emerald',
-    smb: 'text-hue-purple',
-    nfs: 'text-hue-amber',
-    webdav: 'text-hue-cyan',
-    s3: 'text-hue-orange',
-  }
+  const storageIcons = STORAGE_TYPE_ICONS
+  const storageColors = STORAGE_TYPE_COLORS
 </script>
 
 <form onsubmit={(e) => { e.preventDefault(); saveStorage() }} class="space-y-5">
@@ -280,7 +268,7 @@
         <button type="button" aria-pressed={form.type === t.value}
           onclick={() => applyType(t.value)}
           class="flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm text-left transition-colors
-            {form.type === t.value ? 'border-vault bg-vault/10 text-text' : 'border-border bg-surface-3 text-text-muted hover:border-border-hover hover:text-text'}">
+            {cardClass(form.type === t.value)} {form.type === t.value ? 'text-text' : 'text-text-muted hover:text-text'}">
           <svg aria-hidden="true" class="w-5 h-5 shrink-0 {storageColors[t.value] || 'text-text-muted'}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={storageIcons[t.value]}/></svg>
           <span class="font-medium truncate">{t.label}{#if t.srLabel}<span class="sr-only">{t.srLabel}</span>{/if}</span>
         </button>
@@ -659,7 +647,7 @@
   <div role="status" class="text-sm empty:hidden" data-testid="storage-test-result">
     {#if formTestResult?.success === false}
       <p class="flex items-start gap-1.5 text-danger">
-        <svg aria-hidden="true" class="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        <svg aria-hidden="true" class="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
         <span class="[overflow-wrap:anywhere]">Connection failed: {formTestResult.error || 'unknown error'}</span>
       </p>
     {:else if formTestResult?.success === true}
@@ -674,13 +662,13 @@
          : formTestResult?.success === false ? 'border-danger text-danger bg-danger/10'
          : 'border-vault/50 text-vault-text hover:bg-vault/10'}">
       {#if formTesting}
-        <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+        <InlineSpinner size="sm" />
         Testing…
       {:else if formTestResult?.success === true}
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.check}/></svg>
         Connection OK
       {:else if formTestResult?.success === false}
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/></svg>
         Failed — retry
       {:else}
         Test connection
