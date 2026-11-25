@@ -1,4 +1,5 @@
 <script>
+  import PasswordInput from '../components/PasswordInput.svelte'
   import { api } from '../lib/api.js'
   import { createStepFocus } from '../lib/dialog.js'
   import { navigate } from '../lib/router.svelte.js'
@@ -187,7 +188,9 @@
   }
 </script>
 
-<div bind:this={wizardRoot} class="max-w-3xl mx-auto p-4 sm:p-6">
+<!-- The shared page frame supplies the padding, so the heading lines up with
+     every other page (#699); only the reading width is capped here. -->
+<div bind:this={wizardRoot} class="max-w-3xl">
   <h1 class="text-2xl font-bold text-text">Recover Vault</h1>
   <p class="text-sm text-text-muted mt-1 mb-6">
     Bring back your jobs, storage and history from a backup. You'll need access to your backup storage
@@ -249,15 +252,12 @@
       </p>
       <form onsubmit={(e) => { e.preventDefault(); if (passphrase && !verifying) verifyPassword() }}>
         <label for="recover-pass" class="block text-sm font-medium text-text-muted mb-1.5">Your backup password</label>
-        <div class="flex gap-2">
-          <input id="recover-pass" type={showPass ? 'text' : 'password'} bind:value={passphrase} autocomplete="off"
-            class="flex-1 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
-          <button type="button" class="btn btn-secondary" onclick={() => (showPass = !showPass)}>
-            {showPass ? 'Hide' : 'Show'}
-          </button>
-        </div>
+        <PasswordInput id="recover-pass" bind:value={passphrase} bind:show={showPass}
+          aria-invalid={passError ? 'true' : undefined}
+          aria-describedby={passError ? 'recover-pass-error' : undefined}
+          class="w-full px-3 py-2 bg-surface-3 border {passError ? 'border-danger' : 'border-border'} rounded-lg text-sm text-text placeholder-text-muted max-lg:min-h-11" />
         {#if passError}
-          <p class="text-sm text-danger mt-2">{passError}</p>
+          <p id="recover-pass-error" class="text-sm text-danger mt-2">{passError}</p>
         {/if}
         {#if verifying}
           <p class="text-sm text-text-muted mt-2">Checking your password — this takes a few seconds by design.</p>
@@ -341,8 +341,10 @@
           </ul>
           <form class="flex items-center gap-2" onsubmit={(e) => { e.preventDefault(); if (dedupPass && !dedupUnlocking) unlockDedup(dedupPass) }}>
             <label class="sr-only" for="dedup-pass">Backup password</label>
-            <input id="dedup-pass" type="password" bind:value={dedupPass} autocomplete="off" placeholder="Backup password"
-              class="flex-1 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+            <div class="flex-1 min-w-0">
+              <PasswordInput id="dedup-pass" bind:value={dedupPass}
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text max-lg:min-h-11" />
+            </div>
             <button type="submit" class="btn btn-primary" disabled={!dedupPass || dedupUnlocking}>
               {#if dedupUnlocking}<InlineSpinner />{/if} Unlock
             </button>
@@ -385,7 +387,7 @@
               <input id={`remap-${e.kind}-${e.id}`} type="text" list="path-candidates"
                 bind:value={remapDraft[`${e.kind}-${e.id}`]}
                 placeholder="New path, e.g. /mnt/user/…"
-                class="w-full mt-2 px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" />
+                class="w-full mt-2 px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted max-lg:min-h-11" />
               {#if remapError(e)}
                 <p class="text-xs text-danger mt-1">{remapError(e)}</p>
               {/if}

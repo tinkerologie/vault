@@ -6,8 +6,10 @@
   // attribute (id, placeholder, required, aria-*, oninput…) passes through to
   // the input. Bind `show` to make two fields (a passphrase and its
   // confirmation) reveal together.
+  // No fallback for value: a config field that was never set arrives as
+  // undefined, and binding undefined to a prop with a fallback throws.
   let {
-    value = $bindable(''),
+    value = $bindable(),
     show = $bindable(false),
     id = undefined,
     class: inputClass = '',

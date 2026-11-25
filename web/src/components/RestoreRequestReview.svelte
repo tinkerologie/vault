@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import ConfirmDialog from './ConfirmDialog.svelte'
+  import PasswordInput from './PasswordInput.svelte'
   import VmRestoreEffects from './VmRestoreEffects.svelte'
   import VmReadinessResult from './VmReadinessResult.svelte'
   import { api } from '../lib/api.js'
@@ -223,6 +224,8 @@
     if (error.status === 403 || error.status === 401) return 'Operator access required to review this Restore Request.'
     return 'Could not load this Restore Request.'
   }
+  // Two passphrase fields can be on screen with other reviews: unique ids.
+  const uid = heading
 </script>
 
 <section aria-labelledby={heading} class="mb-4 rounded-xl border border-border bg-surface-2 p-4">
@@ -334,11 +337,11 @@
     {#if request.status === 'pending' && request.requires_metadata_review}
       {#if nativeApproval && request.review_digest}
         <form class="mt-4 text-sm" onsubmit={(event) => { event.preventDefault(); void reviewMetadata() }}>
-          <label class="block max-w-md text-text">
-            Backup Passphrase
-            <input type="password" bind:value={passphrase} autocomplete="off" required disabled={reviewingMetadata}
-              class="mt-1 w-full rounded-lg border border-border bg-surface-3 px-3 py-2 text-text" />
-          </label>
+          <label for="{uid}-review-pass" class="block max-w-md text-text">Backup Passphrase</label>
+          <div class="mt-1 max-w-md">
+            <PasswordInput id="{uid}-review-pass" bind:value={passphrase} required disabled={reviewingMetadata} toggleLabel="Show passphrase"
+              class="w-full rounded-lg border border-border bg-surface-3 px-3 py-2 max-lg:min-h-11 text-text" />
+          </div>
           <button type="submit" disabled={!passphrase || reviewingMetadata}
             class="mt-2 hit-target rounded-lg bg-vault px-3 py-1 font-medium text-on-vault disabled:opacity-50">
             {reviewingMetadata ? 'Reading saved configuration…' : 'Review saved configuration'}
@@ -431,11 +434,11 @@
             : [{ label: 'Restore location', value: request.resolved_path || (request.vm ? 'Reviewed VM disk and firmware paths' : '') }]}
           consequences={request.effects.map(effect => labels[effect] ?? effect)}
           onconfirm={approve} oncancel={cancelApproval}>
-          <label class="mt-4 block text-sm text-text">
-            Backup Passphrase{request.requires_passphrase ? '' : ' (if needed)'}
-            <input type="password" bind:value={passphrase} autocomplete="off" disabled={approving}
-              class="mt-1 w-full rounded-lg border border-border bg-surface-3 px-3 py-2 text-text" />
-          </label>
+          <label for="{uid}-approve-pass" class="mt-4 block text-sm text-text">Backup Passphrase{request.requires_passphrase ? '' : ' (if needed)'}</label>
+          <div class="mt-1">
+            <PasswordInput id="{uid}-approve-pass" bind:value={passphrase} disabled={approving} toggleLabel="Show passphrase"
+              class="w-full rounded-lg border border-border bg-surface-3 px-3 py-2 max-lg:min-h-11 text-text" />
+          </div>
         </ConfirmDialog>
       {:else}
         <p class="mt-4 text-sm text-text-muted">Open this request from the signed-in Unraid Vault page to approve it.</p>
