@@ -503,6 +503,11 @@ func (h *SettingsHandler) GetServerKey(w http.ResponseWriter, _ *http.Request) {
 		respondError(w, http.StatusServiceUnavailable, "server key is not configured")
 		return
 	}
+	// The Dashboard and Disaster Recovery stop warning that vault.key exists
+	// only on this server once a copy has been taken (#714).
+	if err := h.db.SetSetting(serverKeySavedSetting, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		log.Printf("settings: recording the vault.key download: %v", err)
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="vault.key"`)
 	w.Header().Set("Content-Length", strconv.Itoa(len(h.serverKey)))

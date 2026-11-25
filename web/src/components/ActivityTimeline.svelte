@@ -1,5 +1,6 @@
 <script>
   import { statusBadge, relTime, formatBytes, runSpeed, formatDurationFromDates, getFailureReason, formatDate } from '../lib/utils.js'
+  import { runStatusLabel } from '../lib/statusLabels.js'
 
   let { runs = [], maxItems = 8 } = $props()
 
@@ -28,16 +29,17 @@
     if (status === 'success' || status === 'completed') return 'bg-success'
     if (status === 'running') return 'bg-info animate-pulse'
     if (status === 'partial') return 'bg-warning'
+    // Skipped and cancelled runs didn't fail.
+    if (status === 'skipped' || status === 'cancelled') return 'bg-surface-5'
     return 'bg-danger'
   }
 
+  // Labels come from the shared helper, so every page words a status the same
+  // way (#694). A clean restore reads "Restored".
   function activityStatusLabel(run) {
-    if (run.run_type !== 'restore') return run.status
-
     const status = run.status?.toLowerCase()
-    if (status === 'success' || status === 'completed') return 'restored'
-    if (status === 'running') return 'running'
-    return run.status
+    if (run.run_type === 'restore' && (status === 'success' || status === 'completed')) return 'Restored'
+    return runStatusLabel(run.status)
   }
 
   function activityStatusClass(run) {

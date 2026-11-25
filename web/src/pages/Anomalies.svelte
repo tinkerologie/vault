@@ -8,12 +8,79 @@
   import Toast from '../components/Toast.svelte'
   import Skeleton from '../components/Skeleton.svelte'
   import Tooltip from '../components/Tooltip.svelte'
+  import LoadError from '../components/LoadError.svelte'
+  import { getAnomalyEnabled, getFeatureFlagsLoaded } from '../lib/settings.svelte.js'
+  import { readHashFilters, writeHashFilters } from '../lib/urlFilters.js'
 
   // --- Filter state ---
-  let filterState    = $state('open')
-  let filterSeverity = $state('')
-  let filterScope    = $state('')
-  let filterSince    = $state('-30d')
+  // Filters live in the hash query (#693) so a reload, a shared link or Back
+  // restores them. "All" is an empty value here, so it's spelled "all" in the
+  // URL: otherwise it couldn't be told apart from the default.
+  const ROUTE = '/anomalies'
+  const FILTER_OPTIONS = {
+    state: ['', 'open', 'acknowledged', 'resolved', 'expected'],
+    severity: ['', 'critical', 'warning', 'info'],
+    scope: ['', 'job', 'destination'],
+    since: ['-7d', '-30d', '-90d', ''],
+  }
+  const FILTER_DEFAULTS = { state: 'open', severity: '', scope: '', since: '-30d' }
+  const toUrl = (value) => value || 'all'
+
+  /** The filters in the current URL, with anything unknown at its default. */
+  function urlFilters() {
+    const params = readHashFilters(ROUTE)
+    const out = { ...FILTER_DEFAULTS }
+    if (!params) return out
+    for (const key of Object.keys(FILTER_OPTIONS)) {
+      const raw = params.get(key)
+      if (raw === null) continue
+      const value = raw === 'all' ? '' : raw
+      if (FILTER_OPTIONS[key].includes(value)) out[key] = value
+    }
+    return out
+  }
+
+  const initialFilters = urlFilters()
+  let filterState    = $state(initialFilters.state)
+  let filterSeverity = $state(initialFilters.severity)
+  let filterScope    = $state(initialFilters.scope)
+  let filterSince    = $state(initialFilters.since)
+
+  function writeFilters() {
+    writeHashFilters(ROUTE,
+      { state: toUrl(filterState), severity: toUrl(filterSeverity), scope: toUrl(filterScope), since: toUrl(filterSince) },
+      { state: toUrl(FILTER_DEFAULTS.state), severity: 'all', scope: 'all', since: toUrl(FILTER_DEFAULTS.since) })
+  }
+
+  // A link to this page with other filters arrives as a hashchange while the
+  // page is already showing.
+  function applyUrlFilters() {
+    if (readHashFilters(ROUTE) === null) return
+    const next = urlFilters()
+    if (next.state === filterState && next.severity === filterSeverity && next.scope === filterScope && next.since === filterSince) return
+    filterState = next.state
+    filterSeverity = next.severity
+    filterScope = next.scope
+    filterSince = next.since
+    loadAnomalies(true)
+  }
+
+  // With detection off the page explains why instead of redirecting (#695).
+  const detectionOff = $derived(getFeatureFlagsLoaded() && !getAnomalyEnabled())
+
+  // Job and destination names for the Scope column (#694).
+  /** @type {Record<string, Map<number, string>>} */
+  let scopeNames = $state({ job: new Map(), destination: new Map() })
+  async function loadScopeNames() {
+    const [jobs, dests] = await Promise.all([
+      Promise.resolve().then(() => api.listJobs()).catch(() => []),
+      Promise.resolve().then(() => api.listStorage()).catch(() => []),
+    ])
+    scopeNames = {
+      job: new Map((jobs || []).map((j) => [j.id, j.name])),
+      destination: new Map((dests || []).map((d) => [d.id, d.name])),
+    }
+  }
 
   // --- Data state ---
   let anomalies  = $state([])
@@ -48,6 +115,8 @@
 
   onMount(() => {
     loadAnomalies(true)
+    loadScopeNames()
+    window.addEventListener('hashchange', applyUrlFilters)
     const unsub = onWsMessage((msg) => {
       switch (msg.type) {
         case 'anomaly.raised':
@@ -63,7 +132,10 @@
           break
       }
     })
-    return unsub
+    return () => {
+      unsub()
+      window.removeEventListener('hashchange', applyUrlFilters)
+    }
   })
 
   /** Does an anomaly match the currently-active state filter? */
@@ -161,6 +233,7 @@
   // Auto-apply: reload the first page immediately when any filter changes.
   // Wired to each <select>'s onchange so filters apply without a manual click.
   function onFilterChange() {
+    writeFilters()
     loadAnomalies(true)
   }
 
@@ -271,9 +344,15 @@
   }
 
   function scopeLabel(a) {
-    if (a.scope_kind === 'job') return `Job #${a.scope_id}`
-    if (a.scope_kind === 'destination') return `Dest #${a.scope_id}`
+    if (a.scope_kind === 'job') return scopeNames.job.get(a.scope_id) || `Job #${a.scope_id}`
+    if (a.scope_kind === 'destination') return scopeNames.destination.get(a.scope_id) || `Destination #${a.scope_id}`
     return a.scope_kind || '–'
+  }
+
+  function scopeHref(a) {
+    if (a.scope_kind === 'job') return '#/jobs'
+    if (a.scope_kind === 'destination') return '#/storage'
+    return ''
   }
 
   // Names a row action after its anomaly ("Dismiss: Backup size spike (Job #3)")
@@ -284,6 +363,14 @@
 </script>
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />
+
+{#snippet scopeCell(a)}
+  {#if scopeHref(a)}
+    <a href={scopeHref(a)} class="inline-flex items-center min-h-6 text-vault-text hover:underline">{scopeLabel(a)}</a>
+  {:else}
+    {scopeLabel(a)}
+  {/if}
+{/snippet}
 
 <div>
   <div class="mb-6">
@@ -298,6 +385,13 @@
     </div>
   {/if}
 
+  {#if detectionOff}
+    <div class="bg-surface-2 border border-border rounded-xl px-5 py-10 text-center">
+      <h2 class="text-base font-semibold text-text">Anomaly detection is off</h2>
+      <p class="text-sm text-text-muted mt-1 max-w-md mx-auto">Vault isn't checking backup runs for unusual size, duration or reliability, so no new anomalies are recorded.</p>
+      <a href="#/settings" class="inline-flex items-center mt-4 min-h-[36px] px-4 py-2 text-sm font-medium text-text bg-surface-3 border border-border hover:bg-surface-4 rounded-lg transition-colors">Turn it on in Settings</a>
+    </div>
+  {:else}
   <!-- Filters -->
   <div class="bg-surface-2 border border-border rounded-xl p-4 mb-6">
     <div class="flex flex-wrap gap-3 items-end">
@@ -377,12 +471,7 @@
     <Skeleton variant="card" count={4} />
 
   {:else if error}
-    <div class="bg-danger/10 border border-danger/30 text-danger rounded-xl p-4 flex items-center gap-3">
-      <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-      </svg>
-      <span class="text-sm">{error}</span>
-    </div>
+    <LoadError title="Couldn't load anomalies" message={error} onretry={() => loadAnomalies(true)} />
 
   {:else if anomalies.length === 0}
     <div class="bg-surface-2 border border-border rounded-xl px-5 py-12 text-center">
@@ -410,18 +499,21 @@
         {/if}
         <!-- Visual column labels only: each row below is a heading with its
              fields named inline, so screen readers don't need these. -->
-        <span class="w-20 shrink-0" aria-hidden="true">Severity</span>
+        <span class="sm:w-20 shrink-0" aria-hidden="true">Severity</span>
         <span class="flex-1" aria-hidden="true">Summary</span>
         <span class="w-24 shrink-0 hidden sm:block" aria-hidden="true">Scope</span>
         <span class="w-20 shrink-0 hidden md:block" aria-hidden="true">State</span>
         <span class="w-24 shrink-0 hidden lg:block" aria-hidden="true">First seen</span>
-        <span class="w-32 shrink-0" aria-hidden="true">Actions</span>
+        <span class="w-32 shrink-0 hidden sm:block" aria-hidden="true">Actions</span>
       </div>
 
       <div class="divide-y divide-border">
         {#each anomalies as anomaly (anomaly.id)}
           <div class="hover:bg-surface-3 transition-colors {selected.has(anomaly.id) ? 'bg-vault/5' : ''}">
-            <div class="px-4 py-3 flex items-start gap-3">
+            <!-- Below sm the actions wrap under the summary and the scope, state
+                 and first-seen columns become a meta line, so the summary keeps
+                 most of the row on a phone (#697). -->
+            <div class="px-4 py-3 flex flex-wrap sm:flex-nowrap items-start gap-x-3 gap-y-2">
               <!-- Checkbox -->
               {#if !isReplicaMode()}
               <input
@@ -435,7 +527,7 @@
               {/if}
 
               <!-- Severity badge -->
-              <div class="w-20 shrink-0">
+              <div class="sm:w-20 shrink-0">
                 <span class="sr-only">Severity: {anomaly.severity}</span>
                 <span aria-hidden="true"><AnomalyBadge count={1} severity={anomaly.severity} /></span>
               </div>
@@ -444,7 +536,8 @@
                    lets screen readers jump between anomalies (#608). role=heading
                    rather than <h2> so theme heading styles (Retro) don't restyle
                    the row. -->
-              <div role="heading" aria-level="2" class="flex-1 min-w-0">
+              <div class="flex-1 min-w-0">
+              <div role="heading" aria-level="2">
                 <button
                   class="block w-full text-left"
                   onclick={() => toggleDetail(anomaly.id)}
@@ -455,9 +548,15 @@
                   <span class="block text-xs text-text-dim mt-0.5">{anomaly.detector}</span>
                 </button>
               </div>
+                <p class="lg:hidden mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-dim">
+                  <span class="sm:hidden"><span class="sr-only">Scope: </span>{@render scopeCell(anomaly)}</span>
+                  <span class="md:hidden"><span class="sr-only">State: </span><span class="text-xs px-2 py-0.5 rounded-full font-medium {stateBadgeClass(anomaly.state)}">{stateLabel[anomaly.state] ?? anomaly.state}</span></span>
+                  <span class="tabular-nums" title={anomaly.first_seen_at}>First seen {relTime(anomaly.first_seen_at)}</span>
+                </p>
+              </div>
 
               <!-- Scope -->
-              <span class="w-24 shrink-0 text-xs text-text-dim hidden sm:block"><span class="sr-only">Scope: </span>{scopeLabel(anomaly)}</span>
+              <span class="w-24 shrink-0 text-xs text-text-dim hidden sm:block break-words"><span class="sr-only">Scope: </span>{@render scopeCell(anomaly)}</span>
 
               <!-- State -->
               <span class="w-20 shrink-0 hidden md:block">
@@ -468,10 +567,10 @@
               </span>
 
               <!-- First seen -->
-              <span class="w-24 shrink-0 text-xs text-text-dim hidden lg:block"><span class="sr-only">First seen: </span>{relTime(anomaly.first_seen_at)}</span>
+              <span class="w-24 shrink-0 text-xs text-text-dim hidden lg:block tabular-nums" title={anomaly.first_seen_at}><span class="sr-only">First seen: </span>{relTime(anomaly.first_seen_at)}</span>
 
               <!-- Per-row ack actions (only for open) -->
-              <div class="w-32 shrink-0 flex items-center gap-1">
+              <div class="w-full sm:w-32 shrink-0 flex items-center gap-1">
                 {#if anomaly.state === 'open' && !isReplicaMode()}
                   <button
                     onclick={() => ackRow(anomaly, 'dismiss')}
@@ -492,7 +591,7 @@
                     Expected
                   </button>
                 {:else}
-                  <span class="text-xs text-text-dim italic">–</span>
+                  <span class="hidden sm:inline text-xs text-text-dim italic">–</span>
                 {/if}
               </div>
             </div>
@@ -534,5 +633,6 @@
         </div>
       {/if}
     </div>
+  {/if}
   {/if}
 </div>

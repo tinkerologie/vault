@@ -1,10 +1,9 @@
 <script>
   import { onMount } from 'svelte'
   import { navigate } from '../lib/router.svelte.js'
-  import { SvelteSet } from 'svelte/reactivity'
   import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { relTime, relTimeUntil, formatSpeed, formatBytes, largestBackupsByJob, formatInt, itemDisplayLabel } from '../lib/utils.js'
+  import { relTime, relTimeUntil, formatSpeed, formatBytes, largestBackupsByJob, formatInt, formatDate, itemDisplayLabel } from '../lib/utils.js'
   import { getProgress, handleProgressMessage, restoreFromStatus, syncFromStatus } from '../lib/progress.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
   import ItemProgress from '../components/ItemProgress.svelte'
@@ -14,10 +13,14 @@
   import StatusBanner from '../components/StatusBanner.svelte'
   import ActivityTimeline from '../components/ActivityTimeline.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
+  import LoadError from '../components/LoadError.svelte'
   import { getAnomalyEnabled } from '../lib/settings.svelte.js'
   import { getAnomalies, setOpenList } from '../lib/anomalies.svelte.js'
   import { createDashboardLayout, SPAN_OPTIONS } from '../lib/dashboardLayout.svelte.js'
-  import { attentionCaption, countRunOutcomes, deriveBackupStatus, healthText, healthTone, isDiscoveryIncomplete, mergeRunCounts, unhealthyStorage } from '../lib/backupStatus.js'
+  import { attentionCaption, attentionHref, countRunOutcomes, deriveBackupStatus, healthText, healthTone, isDiscoveryIncomplete, mergeRunCounts, unhealthyStorage } from '../lib/backupStatus.js'
+  import { classifyProtection, protectedPercent } from '../lib/protection.js'
+  import { progressAnnouncement } from '../lib/progressAnnouncement.js'
+  import { runStatusLabel } from '../lib/statusLabels.js'
 
   let loading = $state(true)
   let error = $state('')
@@ -28,10 +31,9 @@
   let containers = $state([])
   let vms = $state([])
   let folders = $state([])
-  let protectedItems = $state(new SvelteSet())
-  // Items configured in a job but not yet captured in any restore point
-  // (awaiting their first backup). Keyed "type:name", from the health summary.
-  let pendingItems = $state(new SvelteSet())
+  // Whether each discovery call succeeded. When one didn't, the job items in the
+  // health summary stand in for that type (lib/protection.js).
+  let discoveryAvailable = $state({ containers: false, vms: false, folders: false })
   let runningJob = $state(null)
   let runningAll = $state(false)
   let toast = $state({ message: '', type: 'info', key: 0 })
@@ -170,6 +172,7 @@
       containers = cRes.items || []
       vms = vRes.items || []
       folders = fRes.items || []
+      discoveryAvailable = { containers: cRes.available !== false, vms: vRes.available !== false, folders: fRes.available !== false }
       nextRuns = nextRunsData || {}
       healthSummary = hSummary
       replicationSources = replSources || []
@@ -177,23 +180,7 @@
 
       // Feed the anomaly tile's count from the shared store (also kept live by
       // WS). Only when anomaly detection is enabled — otherwise the tile hides.
-      if (getAnomalyEnabled()) {
-        api.listAnomalies({ state: 'open', limit: 100 }).then(r => setOpenList(r?.anomalies ?? [])).catch(() => {})
-      }
-
-      // Protection is computed server-side from actual restore-point
-      // membership (health summary's protected_keys/pending_keys), so an item
-      // counts as protected only once a backup has really captured it. Items
-      // configured in a job but not yet in any restore point are "pending"
-      // (awaiting their first backup) rather than protected. A disabled
-      // schedule does not flip already-backed-up items back — the backend
-      // keys reflect restore points, not schedule state.
-      const pSet = new SvelteSet()
-      for (const key of hSummary?.protected_keys || []) pSet.add(key)
-      protectedItems = pSet
-      const pendSet = new SvelteSet()
-      for (const key of hSummary?.pending_keys || []) pendSet.add(key)
-      pendingItems = pendSet
+      if (getAnomalyEnabled()) loadAnomalyCount()
 
       let historyFailed = false
       const runPromises = jobs.slice(0, 10).map(async (job) => {
@@ -217,12 +204,30 @@
       // both of which reload the dashboard — drop the cache so the $effect below
       // re-fetches instead of showing stale prunable counts until remount.
       retentionSummary = null
+      retentionError = false
       error = ''
     } catch (e) {
       error = e.message || 'Failed to load dashboard'
     } finally {
       loading = false
     }
+  }
+
+  // A failed count is unknown, never a green 0 (#681).
+  let anomaliesError = $state(false)
+  let anomaliesRetrying = $state(false)
+  async function loadAnomalyCount() {
+    try {
+      const r = await api.listAnomalies({ state: 'open', limit: 100 })
+      setOpenList(r?.anomalies ?? [])
+      anomaliesError = false
+    } catch {
+      anomaliesError = true
+    }
+  }
+  async function retryAnomalies() {
+    anomaliesRetrying = true
+    try { await loadAnomalyCount() } finally { anomaliesRetrying = false }
   }
 
   async function cancelActiveRun() {
@@ -304,38 +309,32 @@
     }
   }
 
-  const trackedContainers = $derived(containerBackupOn ? containers : [])
-  const trackedVMs = $derived(vmBackupOn ? vms : [])
-  const trackedFolders = $derived(folderBackupOn ? folders.filter(f => f.settings?.preset !== 'flash') : [])
-  const trackedFlash = $derived(flashBackupOn ? folders.filter(f => f.settings?.preset === 'flash') : [])
-
-  // Three-way state per item: protected (in a real restore point), pending
-  // (configured in a job but not yet backed up), or unprotected (not in any
-  // job). Pending is neither green nor red.
-  const isPending = (key) => pendingItems.has(key)
-  const protectedContainers = $derived(trackedContainers.filter(c => protectedItems.has(`container:${c.name}`)))
-  const unprotectedContainers = $derived(trackedContainers.filter(c => !protectedItems.has(`container:${c.name}`) && !isPending(`container:${c.name}`)))
-  const protectedVMs = $derived(trackedVMs.filter(v => protectedItems.has(`vm:${v.name}`)))
-  const unprotectedVMs = $derived(trackedVMs.filter(v => !protectedItems.has(`vm:${v.name}`) && !isPending(`vm:${v.name}`)))
-  const protectedFolders = $derived(trackedFolders.filter(f => protectedItems.has(`folder:${f.name}`)))
-  const protectedFlash = $derived(trackedFlash.filter(f => protectedItems.has(`folder:${f.name}`)))
-  const unprotectedFolders = $derived(trackedFolders.filter(f => !protectedItems.has(`folder:${f.name}`) && !isPending(`folder:${f.name}`)))
-  const unprotectedFlash = $derived(trackedFlash.filter(f => !protectedItems.has(`folder:${f.name}`) && !isPending(`folder:${f.name}`)))
-  const unprotectedCount = $derived(
-    unprotectedContainers.length + unprotectedVMs.length + unprotectedFolders.length + unprotectedFlash.length
-  )
+  // One classification shared with Disaster Recovery, so both pages count the
+  // same items the same way (#708): protected, out of date, pending first
+  // backup, or unprotected. Without the health summary every item is unknown.
+  const protection = $derived(classifyProtection({
+    summary: healthSummary,
+    discovered: { containers, vms, folders },
+    available: discoveryAvailable,
+    enabled: { containers: containerBackupOn, vms: vmBackupOn, folders: folderBackupOn, flash: flashBackupOn },
+  }))
+  const protectionCounts = $derived(protection.counts)
+  const unprotectedCount = $derived(protectionCounts.unprotected)
+  const outOfDateCount = $derived(protectionCounts.outOfDate)
+  const pendingCount = $derived(protectionCounts.pending)
   // Any unprotected item (not yet in a backup, of any type) → show the CTA.
   const hasUnprotectedItems = $derived(unprotectedCount > 0)
 
-  const totalItems = $derived(trackedContainers.length + trackedVMs.length + trackedFolders.length + trackedFlash.length)
-  const totalProtected = $derived(protectedContainers.length + protectedVMs.length + protectedFolders.length + protectedFlash.length)
-  const protectionPct = $derived(totalItems > 0 ? Math.round((totalProtected / totalItems) * 100) : 0)
+  const totalItems = $derived(protectionCounts.total)
+  const totalProtected = $derived(protectionCounts.protected)
+  const protectionPct = $derived(protectedPercent(protectionCounts))
   // Collapse uses exact membership, not the rounded percentage: 199/200 rounds
-  // to 100% but still has an unprotected item that must stay visible.
-  const fullyProtected = $derived(totalItems > 0 && totalProtected === totalItems)
-  // Bar goes green only when every item is truly protected — otherwise 199/200
-  // (rounds to 100%) would show a full green bar next to "1 unprotected".
-  const protectionBar = $derived(fullyProtected ? 'bg-success' : protectionPct >= 50 ? 'bg-warning' : 'bg-danger')
+  // to 100% but still has an item that must stay visible.
+  const fullyProtected = $derived(protection.known && totalItems > 0 && totalProtected === totalItems)
+  // Bar goes green only when every item is truly protected and up to date, and
+  // stays neutral while protection is unknown.
+  const protectionBar = $derived(!protection.known ? 'bg-surface-5' : fullyProtected ? 'bg-success' : protectionPct >= 50 ? 'bg-warning' : 'bg-danger')
+  const protectionText = $derived(!protection.known ? 'text-text-dim' : fullyProtected ? 'text-success' : protectionPct >= 50 ? 'text-warning' : 'text-danger')
 
   // Collapse the Protection Status panel when everything is covered (issue #211
   // / E7). Below 100% the panel is always expanded so unprotected/pending items
@@ -400,12 +399,11 @@
   // Without the health summary nothing is known to be protected, so every item
   // would look unprotected. That's unknown, not a count of problems.
   const knownUnprotected = $derived(healthSummary ? unprotectedCount : 0)
-  const otherProblems = $derived(runOutcomes.warnings + runOutcomes.skipped + runOutcomes.cancelled + unhealthyDests.length + (healthSummary?.stale_jobs?.length ?? 0))
-  const attentionCount = $derived(recentFailures + knownUnprotected + otherProblems)
-  // A replica has no discovered items to count, so it takes the server's figures.
-  const statusCounts = $derived(isReplicaMode()
-    ? { pending: pendingItems.size, protectedCount: healthSummary?.protected_items ?? 0, total: healthSummary?.total_items ?? 0 }
-    : { pending: totalItems - totalProtected - unprotectedCount, protectedCount: totalProtected, total: totalItems })
+  const serverKeyAtRisk = $derived(Boolean(healthSummary?.server_key_at_risk) && !isReplicaMode())
+  const otherProblems = $derived(runOutcomes.warnings + runOutcomes.skipped + runOutcomes.cancelled + unhealthyDests.length + (healthSummary?.stale_jobs?.length ?? 0) + (serverKeyAtRisk ? 1 : 0))
+  const attentionCount = $derived(recentFailures + knownUnprotected + outOfDateCount + otherProblems)
+  // A replica discovers nothing, so its counts come from the summary's job items.
+  const statusCounts = $derived({ pending: pendingCount, protectedCount: totalProtected + outOfDateCount, total: totalItems })
 
   const backupStatus = $derived(deriveBackupStatus({
     loading,
@@ -419,10 +417,27 @@
     cancelled: runOutcomes.cancelled,
     unhealthy: unhealthyDests,
     unprotected: unprotectedCount,
+    outOfDate: outOfDateCount,
     ...statusCounts,
     summary: healthSummary,
     incomplete: statusIncomplete,
   }))
+
+  // The progress card changes every second, so it is not a live region. Only a
+  // start, a change of phase and the finish are announced (#686). A run already
+  // under way on arrival is read in place, not announced.
+  const progressNote = $derived(progressAnnouncement({
+    activeRun: progress.activeRun, running: progress.running, phaseMessage: progress.phaseMessage, failed: progress.overallFailed,
+  }))
+  let progressAnnouncementText = $state('')
+  let lastProgressKey
+  let progressSeen = false
+  $effect(() => {
+    const key = progressNote?.key ?? null
+    if (progressSeen && key !== null && key !== lastProgressKey) progressAnnouncementText = progressNote.text
+    progressSeen = true
+    lastProgressKey = key
+  })
 
   // Storage capacity tiles derive from destinations that reported a probe.
   const storageCaps = $derived(storage.filter(s => s.capacity && s.capacity.total_bytes > 0))
@@ -457,36 +472,47 @@
   /** @type {{ points: Array<{start: string, total_bytes: number}> } | null} */
   let trendData = $state(null)
   let trendLoading = $state(false)
+  // A failed optional load says so with a Retry instead of an empty state
+  // (#681), and stops the effect below from re-requesting it in a loop.
+  let trendError = $state(false)
   async function loadTrend() {
-    if (trendLoading || trendData) return
+    if (trendLoading || trendData || trendError) return
     trendLoading = true
-    try { trendData = await api.getHistoryTrend('30d') } catch { /* ignore */ } finally { trendLoading = false }
+    try { trendData = await api.getHistoryTrend('30d') } catch { trendError = true } finally { trendLoading = false }
   }
+  function retryTrend() { trendError = false; loadTrend() }
 
   /** @type {{ ratio: number, logical: number, physical: number } | null} */
   let dedupSummary = $state(null)
   let dedupLoading = $state(false)
+  let dedupError = $state(false)
   async function loadDedup() {
-    if (dedupLoading || dedupSummary) return
+    if (dedupLoading || dedupSummary || dedupError) return
     dedupLoading = true
     try {
       const dests = storage.filter(s => s.dedup_enabled)
       const stats = await Promise.all(dests.map(d => api.dedupStats(d.id).catch(() => null)))
+      // Partial figures would understate the savings, so any failure is an error.
+      if (stats.some(st => st === null)) { dedupError = true; return }
       let logical = 0, physical = 0
-      for (const st of stats) { if (st) { logical += st.logical_bytes || 0; physical += st.physical_bytes || 0 } }
+      for (const st of stats) { logical += st.logical_bytes || 0; physical += st.physical_bytes || 0 }
       dedupSummary = physical > 0 ? { ratio: logical / physical, logical, physical } : null
-    } catch { /* ignore */ } finally { dedupLoading = false }
+    } catch { dedupError = true } finally { dedupLoading = false }
   }
+  function retryDedup() { dedupError = false; loadDedup() }
 
   /** @type {{ name: string, days: number, perDay: number } | null} */
   let forecastSummary = $state(null)
   let forecastLoading = $state(false)
+  let forecastError = $state(false)
   async function loadForecast() {
-    if (forecastLoading || forecastSummary) return
+    if (forecastLoading || forecastSummary || forecastError) return
     forecastLoading = true
     try {
       const dests = storage.filter(s => s.capacity && s.capacity.total_bytes > 0)
       const trajectories = await Promise.all(dests.map(d => api.getCapacityTrajectory(d.id).then(t => ({ d, t })).catch(() => null)))
+      // A destination we couldn't read might be the one filling up first.
+      if (trajectories.some(entry => entry === null)) { forecastError = true; return }
       let soonest = null
       for (const entry of trajectories) {
         if (!entry) continue
@@ -501,8 +527,9 @@
         if (!soonest || daysToFull < soonest.days) soonest = { name: entry.d.name, days: Math.round(daysToFull), perDay }
       }
       forecastSummary = soonest
-    } catch { /* ignore */ } finally { forecastLoading = false }
+    } catch { forecastError = true } finally { forecastLoading = false }
   }
+  function retryForecast() { forecastError = false; loadForecast() }
 
   // Jobs with any Long-Term Retention policy set — these get pruned on their next
   // run, so they drive the Retention tile. keep_* come with the jobs list.
@@ -526,8 +553,9 @@
   /** @type {{ prunable: number, total: number } | null} */
   let retentionSummary = $state(null)
   let retentionLoading = $state(false)
+  let retentionError = $state(false)
   async function loadRetention() {
-    if (retentionLoading || retentionSummary) return
+    if (retentionLoading || retentionSummary || retentionError) return
     retentionLoading = true
     try {
       // Ask each policied job what its own policy would prune right now. The
@@ -538,11 +566,13 @@
           keep_latest: j.keep_latest, keep_daily: j.keep_daily, keep_weekly: j.keep_weekly,
           keep_monthly: j.keep_monthly, keep_yearly: j.keep_yearly,
         }).catch(() => null)))
+      if (results.some(r => r === null)) { retentionError = true; return }
       let prunable = 0, total = 0
-      for (const r of results) { if (r) { prunable += r.would_delete?.length || 0; total += r.total_restore_points || 0 } }
+      for (const r of results) { prunable += r.would_delete?.length || 0; total += r.total_restore_points || 0 }
       retentionSummary = { prunable, total }
-    } catch { /* ignore */ } finally { retentionLoading = false }
+    } catch { retentionError = true } finally { retentionLoading = false }
   }
+  function retryRetention() { retentionError = false; loadRetention() }
 
   // Offsite replication rollup for the Replication-status tile. replicationSources
   // is already loaded; no separate fetch. No lag field exists server-side, so we
@@ -639,7 +669,7 @@
   })
 
   const healthScore = $derived(healthSummary?.health_score ?? 0)
-  const healthCounts = $derived({ failures: recentFailures, unprotected: knownUnprotected, pending: statusCounts.pending, warnings: runOutcomes.warnings, skipped: runOutcomes.skipped, cancelled: runOutcomes.cancelled, unhealthy: unhealthyDests.length, incomplete: statusIncomplete })
+  const healthCounts = $derived({ failures: recentFailures, unprotected: knownUnprotected, outOfDate: outOfDateCount, pending: statusCounts.pending, warnings: runOutcomes.warnings, skipped: runOutcomes.skipped, cancelled: runOutcomes.cancelled, unhealthy: unhealthyDests.length, incomplete: statusIncomplete })
   const HEALTH_COLORS = { success: 'var(--color-success)', warning: 'var(--color-warning)', danger: 'var(--color-danger)', unknown: 'var(--color-surface-4)' }
   const healthColor = $derived(HEALTH_COLORS[healthTone(healthSummary, healthCounts)])
   const healthSummaryText = $derived(healthText(healthSummary, healthCounts))
@@ -649,7 +679,7 @@
   // span = 12-col width. `bare` tiles render their own card (they reuse a
   // self-carding component/panel); the rest get the shared card shell.
   const CATALOG = {
-    health:       { name: 'Health score',       span: 3, maxSpan: 6, icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z' },
+    health:       { name: 'Job health',         span: 3, maxSpan: 6, icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z' },
     protected:    { name: 'Protected items',    span: 3, maxSpan: 6, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
     nextrun:      { name: 'Next run',           span: 3, maxSpan: 6, icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
     lastbackup:   { name: 'Last backup',        span: 3, maxSpan: 6, icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
@@ -657,7 +687,7 @@
     progress:     { name: 'Backup in progress', span: 6, bare: true, icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
     activity:     { name: 'Recent activity',    span: 6, bare: true, icon: 'M4 6h16M4 10h16M4 14h16M4 18h16' },
     jobs:         { name: 'Backup jobs',        span: 6, bare: true, icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' },
-    protection:   { name: 'Protection status',  span: 6, bare: true, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
+    protection:   { name: 'Protection status',  span: 12, bare: true, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
     storageCombined:  { name: 'Storage — combined',  span: 4, maxSpan: 6, icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
     storagePerTarget: { name: 'Storage — per target', span: 6, icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
     recovery:     { name: 'Recovery readiness', span: 4, maxSpan: 6, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
@@ -821,7 +851,7 @@
 <Toast message={toast.message} type={toast.type} key={toast.key} />
 
 {#snippet pendingBadge()}
-  <span class="ml-auto inline-flex items-center gap-1 text-[11px] text-hue-amber shrink-0 whitespace-nowrap" title="In a backup job but not captured in a restore point yet — it will be backed up on the next scheduled run">
+  <span class="ml-auto inline-flex items-center gap-1 text-[11px] text-info shrink-0 whitespace-nowrap" title="In a backup job but not captured in a restore point yet — it will be backed up on the next scheduled run">
     <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
     pending first backup
   </span>
@@ -848,8 +878,8 @@
 {/snippet}
 
 {#snippet tHealth()}
-  <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" title="View backup history">
-    {@render mHead(CATALOG.health.icon, 'Health score')}
+  <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" title="Scored from items in backup jobs and recent runs. View backup history">
+    {@render mHead(CATALOG.health.icon, 'Job health')}
     <div class="flex items-center gap-3 mt-auto">
       <div class="relative w-12 h-12 shrink-0">
         <svg aria-hidden="true" viewBox="0 0 36 36" class="w-full h-full -rotate-90">
@@ -870,22 +900,22 @@
 {#snippet tProtected()}
   <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
     {@render mHead(CATALOG.protected.icon, 'Protected')}
-    <p class="text-[26px] leading-none font-bold text-text tabular-nums">{totalProtected}<span class="text-base text-text-dim font-semibold">/{totalItems}</span></p>
+    <p class="text-[26px] leading-none font-bold text-text tabular-nums">{protection.known ? formatInt(totalProtected) : '–'}<span class="text-base text-text-dim font-semibold">/{formatInt(totalItems)}</span></p>
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5">
-      <div class="h-full {protectionBar} transition-all duration-500" style="width: {protectionPct}%"></div>
+      <div class="h-full {protectionBar} transition-all duration-500" style="width: {protection.known ? protectionPct : 0}%"></div>
     </div>
-    {#if !healthSummary}
+    {#if !protection.known}
       <p class="text-[11px] text-text-dim mt-1.5 font-medium">Protection status unavailable</p>
-    {:else if hasUnprotectedItems}
-      <a href="#/jobs" class="self-start text-[11px] text-vault-text hover:underline font-medium mt-1.5">{unprotectedCount} unprotected →</a>
     {:else if fullyProtected}
-      <p class="text-[11px] text-success mt-1.5 font-medium">All items covered</p>
+      <p class="text-[11px] text-success mt-1.5 font-medium">All items protected</p>
     {:else}
-      <!-- Every item is in a job but none has a restore point yet (fresh install,
-           first backup still running). unprotectedCount excludes pending items, so
-           without this branch the tile claimed "All items covered" in success-green
-           beside a red 0/N bar. Mirrors the Protection panel's fullyProtected gate. -->
-      <p class="text-[11px] text-text-dim mt-1.5 font-medium">{totalItems - totalProtected} pending first backup</p>
+      <!-- Protected means a recent enough Restore Point (#708). Each other state
+           is named, so a short count never reads as "all covered". -->
+      <p class="text-[11px] mt-1.5 font-medium flex flex-wrap gap-x-2 tabular-nums">
+        {#if hasUnprotectedItems}<a href="#/jobs" class="text-vault-text hover:underline">{formatInt(unprotectedCount)} unprotected →</a>{/if}
+        {#if outOfDateCount > 0}<a href="#/recovery" class="text-warning hover:underline">{formatInt(outOfDateCount)} out of date →</a>{/if}
+        {#if pendingCount > 0}<span class="text-text-dim">{formatInt(pendingCount)} pending first backup</span>{/if}
+      </p>
     {/if}
   </div>
 {/snippet}
@@ -910,9 +940,12 @@
       {@const ok = lastBackup.status === 'completed' || lastBackup.status === 'success'}
       {@const running = lastBackup.status === 'running'}
       {@const partial = lastBackup.status === 'partial'}
-      <p class="text-base font-bold flex items-center gap-1.5 {ok ? 'text-success' : running ? 'text-info' : partial ? 'text-warning' : 'text-danger'}">
-        <span class="w-2 h-2 rounded-full shrink-0 {ok ? 'bg-success' : running ? 'bg-info' : partial ? 'bg-warning' : 'bg-danger'}"></span>
-        {ok ? 'Success' : running ? 'Running' : partial ? 'Partial' : 'Failed'}
+      <!-- A skipped or cancelled run didn't fail: it's neutral, and its label
+           comes from the shared helper like every other page's (#694). -->
+      {@const neutral = lastBackup.status === 'skipped' || lastBackup.status === 'cancelled'}
+      <p class="text-base font-bold flex items-center gap-1.5 {ok ? 'text-success' : running ? 'text-info' : partial ? 'text-warning' : neutral ? 'text-text-muted' : 'text-danger'}">
+        <span class="w-2 h-2 rounded-full shrink-0 {ok ? 'bg-success' : running ? 'bg-info' : partial ? 'bg-warning' : neutral ? 'bg-surface-5' : 'bg-danger'}"></span>
+        {runStatusLabel(lastBackup.status)}
       </p>
       <p class="text-[11px] text-text-muted mt-1 truncate">{lastBackup.jobName} · {relTime(lastBackup.started_at)}</p>
       {#if lastBackup.size_bytes || lastBackup.duration_seconds}
@@ -928,7 +961,13 @@
   {#if jobs.length > 0 && backupRuleOn}
     <ComplianceBadge {storage} {jobs} {replicationSources} ondismiss={isReplicaMode() ? undefined : dismissBackupRule} goalSetting={settings.backup_rule_goal || ''} onGoalChange={isReplicaMode() ? undefined : setBackupRuleGoal} protectedCount={healthSummary?.protected_items ?? null} />
   {:else}
-    <div class="bg-surface-2 border border-border rounded-xl p-4 text-sm text-text-dim">3-2-1 rule unavailable — add a job to compute it.</div>
+    <div class="bg-surface-2 border border-border rounded-xl p-4 text-sm text-text-dim">
+      {#if jobs.length === 0}
+        3-2-1 rule unavailable — add a job to compute it.
+      {:else}
+        3-2-1 check is turned off. <a href="#/settings" class="text-vault-text hover:underline font-medium">Turn it on in Settings › Dashboard</a>
+      {/if}
+    </div>
   {/if}
 {/snippet}
 
@@ -939,7 +978,9 @@
     {@const overallPct = progress.overallTotal > 0 ? Math.min(100, Math.round((((progress.overallDone + progress.overallFailed) + (activeItemPct / 100)) / progress.overallTotal) * 100)) : activeItemPct}
     {@const elapsedStr = progress.elapsedSec >= 3600 ? `${Math.floor(progress.elapsedSec / 3600)}h ${Math.floor((progress.elapsedSec % 3600) / 60)}m` : progress.elapsedSec >= 60 ? `${Math.floor(progress.elapsedSec / 60)}m ${progress.elapsedSec % 60}s` : `${progress.elapsedSec}s`}
     {@const activeRunLabel = progress.activeRun.run_type === 'restore' ? 'Restore in progress' : 'Backup in progress'}
-    <div class="bg-surface-2 border border-vault/30 rounded-xl p-3.5" role="status" aria-live="polite">
+    <!-- Not a live region: the timer and counts change every second (#686). The
+         page's progress announcer speaks for start, phase and finish. -->
+    <div class="bg-surface-2 border border-vault/30 rounded-xl p-3.5">
       <div class="flex items-center gap-2 mb-2.5">
         <div class="w-2.5 h-2.5 rounded-full bg-vault animate-pulse shrink-0"></div>
         <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{activeRunLabel}</span>
@@ -1025,43 +1066,74 @@
   </div>
 {/snippet}
 
-{#snippet protItemRow(type, key, itemOrName, restoreType)}
-  {@const isProtected = protectedItems.has(key)}
-  {@const pending = isPending(key)}
-  {@const itemName = typeof itemOrName === 'object' && itemOrName !== null ? (itemOrName.item_name || itemOrName.name || '') : String(itemOrName || '')}
-  {@const itemObj = typeof itemOrName === 'object' && itemOrName !== null ? { item_type: type, item_name: itemName, ...itemOrName } : { item_type: type, item_name: itemName }}
-  {@const displayLabel = itemDisplayLabel(itemObj)}
-  <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {isProtected ? 'bg-success/5' : pending ? 'bg-amber-500/5' : 'bg-surface-3'} group">
-    <div class="w-2 h-2 rounded-full shrink-0 {isProtected ? 'bg-success' : pending ? 'bg-amber-500' : 'bg-surface-5'}"></div>
-    <span class="text-sm text-text truncate" title={displayLabel}>{displayLabel}</span>
-    {#if type === 'flash'}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-hue-amber font-medium shrink-0">USB boot drive</span>{/if}
-    {#if isProtected}
-      {#if !isReplicaMode()}
-        <a href="#/restore?type={restoreType}&name={encodeURIComponent(itemName)}" class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault-text hover:bg-vault/10 rounded transition-all" title="Restore {itemName}">
-          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-        </a>
-      {/if}
-      <svg aria-hidden="true" class="w-3.5 h-3.5 text-success shrink-0 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-    {:else if pending}
+{#snippet protItemRow(it)}
+  {@const displayLabel = itemDisplayLabel({ item_type: it.group === 'flash' ? 'flash' : it.type, item_name: it.name, ...it.source })}
+  {@const backedUp = it.state === 'protected' || it.state === 'out_of_date'}
+  <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg {it.state === 'protected' ? 'bg-success/5' : it.state === 'out_of_date' ? 'bg-warning/5' : 'bg-surface-3'} group" data-protection-state={it.state}>
+    <div class="w-2 h-2 rounded-full shrink-0 {it.state === 'protected' ? 'bg-success' : it.state === 'out_of_date' ? 'bg-warning' : it.state === 'pending' ? 'bg-info' : 'bg-surface-5'}"></div>
+    <!-- The name wraps rather than truncating, and the USB badge drops below it
+         when the row is narrow (#715). -->
+    <div class="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+      <span class="text-sm text-text break-words min-w-0">{displayLabel}</span>
+      {#if it.group === 'flash'}<span class="text-[11px] px-1.5 py-0.5 rounded bg-hue-amber/15 text-hue-amber font-medium whitespace-nowrap">USB boot drive</span>{/if}
+    </div>
+    {#if backedUp && !isReplicaMode()}
+      <a href="#/restore?type={it.type}&name={encodeURIComponent(it.name)}" class="opacity-40 hover:opacity-100 focus-visible:opacity-100 p-1 text-vault-text hover:bg-vault/10 rounded transition-all shrink-0" title="Restore {it.name}" aria-label="Restore: {it.name}">
+        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+      </a>
+    {/if}
+    {#if it.state === 'protected'}
+      <span class="inline-flex items-center gap-1 text-[11px] text-success shrink-0 whitespace-nowrap">
+        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        <span class="sr-only">Protected</span>
+      </span>
+    {:else if it.state === 'out_of_date'}
+      <span class="inline-flex items-center gap-1 text-[11px] text-warning shrink-0 whitespace-nowrap tabular-nums" title={it.lastBackupAt ? `Last backup ${formatDate(it.lastBackupAt)}` : 'Out of date'}>
+        <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        {it.lastBackupAt ? `Last backup ${relTime(it.lastBackupAt)}` : 'Out of date'}
+      </span>
+    {:else if it.state === 'pending'}
       {@render pendingBadge()}
+    {:else if it.state === 'unknown'}
+      <span class="text-[11px] text-text-dim shrink-0">status unknown</span>
     {:else}
-      <span class="text-[11px] text-text-dim ml-auto">unprotected</span>
+      <span class="text-[11px] text-text-dim shrink-0">unprotected</span>
     {/if}
   </div>
+{/snippet}
+
+{#snippet protGroup(label, iconClass, iconPath, items)}
+  {#if items.length > 0}
+    <div>
+      <div class="flex items-center gap-2 mb-3">
+        <svg aria-hidden="true" class="w-4 h-4 {iconClass}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={iconPath}/></svg>
+        <h3 class="text-sm font-medium text-text">{label}</h3>
+        <span class="text-xs text-text-dim ml-auto tabular-nums">{protection.known ? formatInt(items.filter(it => it.state === 'protected').length) : '–'}/{formatInt(items.length)}</span>
+      </div>
+      <!-- Items flow into as many columns as fit, so a long list doesn't leave
+           the rest of the page empty beside it (#715). -->
+      <div class="prot-item-grid grid gap-1.5">{#each items as it (it.key)}{@render protItemRow(it)}{/each}</div>
+    </div>
+  {/if}
 {/snippet}
 
 {#snippet tProtection()}
   {#if totalItems > 0}
     <div class="bg-surface-2 border border-border rounded-xl">
-      <div class="px-4 py-3 flex items-center justify-between gap-2 {protectionExpanded ? 'border-b border-border' : ''}">
-        <div class="flex items-center gap-2 min-w-0">
+      <div class="px-4 py-3 flex items-center justify-between gap-2 flex-wrap {protectionExpanded ? 'border-b border-border' : ''}">
+        <div class="flex items-center gap-2 min-w-0 flex-wrap">
           <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.protection.icon}/></svg></span>
           <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Protection</span>
-          <span class="text-xs px-2 py-0.5 rounded-full font-medium tabular-nums shrink-0 {fullyProtected ? 'bg-success/15 text-success' : protectionPct >= 50 ? 'bg-warning/15 text-warning' : 'bg-danger/15 text-danger'}">
-            {totalProtected}/{totalItems} · {protectionPct}%
-          </span>
+          {#if protection.known}
+            <span class="text-xs px-2 py-0.5 rounded-full font-medium tabular-nums shrink-0 {fullyProtected ? 'bg-success/15 text-success' : protectionPct >= 50 ? 'bg-warning/15 text-warning' : 'bg-danger/15 text-danger'}">
+              {formatInt(totalProtected)}/{formatInt(totalItems)} protected · {protectionPct}%
+            </span>
+            {#if outOfDateCount > 0}<span class="text-xs px-2 py-0.5 rounded-full font-medium tabular-nums shrink-0 bg-warning/15 text-warning">{formatInt(outOfDateCount)} out of date</span>{/if}
+          {:else}
+            <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0 bg-surface-3 text-text-muted">Status unknown</span>
+          {/if}
         </div>
-        {#if hasUnprotectedItems}
+        {#if hasUnprotectedItems && !isReplicaMode()}
           <a href="#/jobs" class="text-xs text-vault-text hover:underline transition-colors font-medium">+ Add to Backup</a>
         {:else if fullyProtected}
           <button onclick={toggleProtection} aria-expanded={protectionExpanded} class="flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text transition-colors">
@@ -1073,49 +1145,13 @@
       {#if protectionExpanded}
         <div class="p-5">
           <div class="w-full h-2 bg-surface-4 rounded-full overflow-hidden mb-5">
-            <div class="h-full rounded-full transition-all duration-500 {protectionBar}" style="width: {protectionPct}%"></div>
+            <div class="h-full rounded-full transition-all duration-500 {protectionBar}" style="width: {protection.known ? protectionPct : 0}%"></div>
           </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
-            {#if trackedContainers.length > 0}
-              <div>
-                <div class="flex items-center gap-2 mb-3">
-                  <svg aria-hidden="true" class="w-4 h-4 text-hue-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
-                  <h3 class="text-sm font-medium text-text">Containers</h3>
-                  <span class="text-xs text-text-dim ml-auto">{protectedContainers.length}/{trackedContainers.length}</span>
-                </div>
-                <div class="space-y-1.5">{#each trackedContainers as c (c.name)}{@render protItemRow('container', `container:${c.name}`, c, 'container')}{/each}</div>
-              </div>
-            {/if}
-            {#if trackedVMs.length > 0}
-              <div>
-                <div class="flex items-center gap-2 mb-3">
-                  <svg aria-hidden="true" class="w-4 h-4 text-hue-purple" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-                  <h3 class="text-sm font-medium text-text">Virtual Machines</h3>
-                  <span class="text-xs text-text-dim ml-auto">{protectedVMs.length}/{trackedVMs.length}</span>
-                </div>
-                <div class="space-y-1.5">{#each trackedVMs as v (v.name)}{@render protItemRow('vm', `vm:${v.name}`, v, 'vm')}{/each}</div>
-              </div>
-            {/if}
-            {#if trackedFolders.length > 0}
-              <div>
-                <div class="flex items-center gap-2 mb-3">
-                  <svg aria-hidden="true" class="w-4 h-4 text-hue-amber" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                  <h3 class="text-sm font-medium text-text">Folders</h3>
-                  <span class="text-xs text-text-dim ml-auto">{protectedFolders.length}/{trackedFolders.length}</span>
-                </div>
-                <div class="space-y-1.5">{#each trackedFolders as f (f.name)}{@render protItemRow('folder', `folder:${f.name}`, f, 'folder')}{/each}</div>
-              </div>
-            {/if}
-            {#if trackedFlash.length > 0}
-              <div>
-                <div class="flex items-center gap-2 mb-3">
-                  <svg aria-hidden="true" class="w-4 h-4 text-hue-amber" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
-                  <h3 class="text-sm font-medium text-text">Flash Drive</h3>
-                  <span class="text-xs text-text-dim ml-auto">{protectedFlash.length}/{trackedFlash.length}</span>
-                </div>
-                <div class="space-y-1.5">{#each trackedFlash as f (f.name)}{@render protItemRow('flash', `folder:${f.name}`, f, 'folder')}{/each}</div>
-              </div>
-            {/if}
+          <div class="space-y-6">
+            {@render protGroup('Containers', 'text-hue-blue', 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4', protection.groups.container)}
+            {@render protGroup('Virtual Machines', 'text-hue-purple', 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z', protection.groups.vm)}
+            {@render protGroup('Folders', 'text-hue-amber', 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z', protection.groups.folder)}
+            {@render protGroup('Flash Drive', 'text-hue-amber', 'M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2', protection.groups.flash)}
           </div>
         </div>
       {/if}
@@ -1156,17 +1192,17 @@
 {#snippet tRecovery()}
   <a href="#/recovery" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.recovery.icon, 'Recovery readiness')}
-    <p class="text-[26px] leading-none font-bold tabular-nums {fullyProtected ? 'text-success' : protectionPct >= 50 ? 'text-warning' : 'text-danger'}">{protectionPct}%</p>
-    <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {protectionBar}" style="width: {protectionPct}%"></div></div>
-    <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{totalProtected}/{totalItems} items recoverable</p>
+    <p class="text-[26px] leading-none font-bold tabular-nums {protectionText}">{protection.known ? `${protectionPct}%` : '–'}</p>
+    <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {protectionBar}" style="width: {protection.known ? protectionPct : 0}%"></div></div>
+    <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{#if protection.known}{formatInt(totalProtected)} of {formatInt(totalItems)} protected{#if outOfDateCount > 0} · {formatInt(outOfDateCount)} out of date{/if}{:else}Protection status unavailable{/if}</p>
   </a>
 {/snippet}
 
 {#snippet tAttention()}
-  <a href="#/history" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
+  <a href="#{attentionHref({ failures: recentFailures, unprotected: knownUnprotected, outOfDate: outOfDateCount, replica: isReplicaMode() })}" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.attention.icon, 'Needs attention')}
-    <p class="text-[26px] leading-none font-bold tabular-nums {attentionCount === 0 ? 'text-success' : 'text-danger'}">{attentionCount}</p>
-    <p class="text-[11px] text-text-muted mt-auto pt-1.5">{attentionCaption({ failures: recentFailures, unprotected: knownUnprotected, other: otherProblems, fullyProtected, known: !!healthSummary })}</p>
+    <p class="text-[26px] leading-none font-bold tabular-nums {attentionCount > 0 ? 'text-danger' : healthSummary ? 'text-success' : 'text-text-dim'}">{formatInt(attentionCount)}</p>
+    <p class="text-[11px] text-text-muted mt-auto pt-1.5">{attentionCaption({ failures: recentFailures, unprotected: knownUnprotected, outOfDate: outOfDateCount, other: otherProblems, fullyProtected, known: !!healthSummary })}</p>
   </a>
 {/snippet}
 
@@ -1185,7 +1221,14 @@
 {/snippet}
 
 {#snippet tAnomalies()}
-  {#if getAnomalyEnabled()}
+  {#if getAnomalyEnabled() && anomaliesError}
+    <!-- Unknown is not green: a failed count is "unavailable", never 0 (#681). -->
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
+      {@render mHead(CATALOG.anomalies.icon, 'Anomalies')}
+      <p class="text-[26px] leading-none font-bold text-text-dim">–</p>
+      <div class="mt-auto pt-1.5"><LoadError compact title="Anomalies unavailable" onretry={retryAnomalies} retrying={anomaliesRetrying} /></div>
+    </div>
+  {:else if getAnomalyEnabled()}
     <a href="#/anomalies" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
       {@render mHead(CATALOG.anomalies.icon, 'Anomalies')}
       <p class="text-[26px] leading-none font-bold tabular-nums {anomalies.openList.length === 0 ? 'text-success' : 'text-warning'}">{anomalies.openList.length}</p>
@@ -1214,6 +1257,12 @@
 {/snippet}
 
 {#snippet tSizeTrend()}
+  {#if trendError}
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5">
+      {@render mHead(CATALOG.sizeTrend.icon, 'Backup size trend')}
+      <LoadError compact title="Couldn't load the size trend" onretry={retryTrend} />
+    </div>
+  {:else}
   <a href="#/history" class="block bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors">
     <div class="flex items-center gap-2 mb-2.5">
       <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.sizeTrend.icon}/></svg></span>
@@ -1232,14 +1281,22 @@
       <p class="text-xs text-text-dim py-5 text-center">{trendLoading ? 'Loading trend…' : 'Not enough history yet'}</p>
     {/if}
   </a>
+  {/if}
 {/snippet}
 
 {#snippet tCalendar()}
-  <a href="#/history" class="block bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors">
-    {@render mHead(CATALOG.calendar.icon, 'Backup calendar')}
-    {#if calendarGrid}
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5">
+    <div class="flex items-center gap-2">
+      <div class="flex-1 min-w-0">{@render mHead(CATALOG.calendar.icon, 'Backup calendar')}</div>
+      <a href="#/history" class="text-xs text-vault-text hover:underline font-medium mb-2.5 shrink-0">View history →</a>
+    </div>
+    {#if trendError}
+      <LoadError compact title="Couldn't load the backup calendar" onretry={retryTrend} />
+    {:else if calendarGrid}
       <div class="flex items-start justify-between gap-4 flex-wrap">
-        <div class="flex gap-2">
+        <!-- The coloured grid is a picture of the table below, which carries the
+             per-day detail for screen readers (#690). -->
+        <div class="flex gap-2" aria-hidden="true">
           <div class="grid gap-1 text-[9px] leading-none text-text-dim shrink-0 items-center" style="grid-template-rows: repeat(7, 15px);">
             <span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span>
           </div>
@@ -1249,6 +1306,15 @@
             {/each}
           </div>
         </div>
+        <table class="sr-only">
+          <caption>Backups per day, last 5 weeks</caption>
+          <thead><tr><th scope="col">Day</th><th scope="col">Backed up</th></tr></thead>
+          <tbody>
+            {#each calendarGrid.days.filter(d => !d.future) as d (d.key)}
+              <tr><th scope="row">{d.label}</th><td>{d.bytes ? formatBytes(d.bytes) : 'No backup'}</td></tr>
+            {/each}
+          </tbody>
+        </table>
         {#if calendarStats}
           <div class="flex gap-5 sm:gap-6 shrink-0">
             <div>
@@ -1263,18 +1329,18 @@
         {/if}
       </div>
       <div class="flex items-center gap-1.5 mt-3 text-[10px] text-text-dim">
-        <span>Less</span>
-        <span class="w-2.5 h-2.5 rounded-[3px] bg-surface-4"></span>
-        <span class="w-2.5 h-2.5 rounded-[3px]" style="background: color-mix(in srgb, var(--color-success) 40%, transparent);"></span>
-        <span class="w-2.5 h-2.5 rounded-[3px]" style="background: color-mix(in srgb, var(--color-success) 70%, transparent);"></span>
-        <span class="w-2.5 h-2.5 rounded-[3px] bg-success"></span>
-        <span>More</span>
+        <span aria-hidden="true">Less</span>
+        <span aria-hidden="true" class="w-2.5 h-2.5 rounded-[3px] bg-surface-4"></span>
+        <span aria-hidden="true" class="w-2.5 h-2.5 rounded-[3px]" style="background: color-mix(in srgb, var(--color-success) 40%, transparent);"></span>
+        <span aria-hidden="true" class="w-2.5 h-2.5 rounded-[3px]" style="background: color-mix(in srgb, var(--color-success) 70%, transparent);"></span>
+        <span aria-hidden="true" class="w-2.5 h-2.5 rounded-[3px] bg-success"></span>
+        <span aria-hidden="true">More</span>
         <span class="ml-auto tabular-nums">{formatBytes(calendarStats?.total || 0)} in 30d</span>
       </div>
     {:else}
       <p class="text-xs text-text-dim py-6 text-center">{trendLoading ? 'Loading…' : 'No history yet'}</p>
     {/if}
-  </a>
+  </div>
 {/snippet}
 
 {#snippet tSavings()}
@@ -1287,7 +1353,11 @@
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
       {@render mHead(CATALOG.savings.icon, 'Dedup & compression')}
-      <p class="text-[11px] text-text-dim mt-auto">{dedupLoading ? 'Loading…' : 'No deduplicated destination yet'}</p>
+      {#if dedupError}
+        <div class="mt-auto"><LoadError compact title="Couldn't load dedup savings" onretry={retryDedup} /></div>
+      {:else}
+        <p class="text-[11px] text-text-dim mt-auto">{dedupLoading ? 'Loading…' : 'No deduplicated data yet'}</p>
+      {/if}
     </div>
   {/if}
 {/snippet}
@@ -1303,7 +1373,11 @@
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
       {@render mHead(CATALOG.forecast.icon, 'Storage forecast')}
-      <p class="text-[11px] text-text-dim mt-auto">{forecastLoading ? 'Loading…' : 'Not filling / not enough samples'}</p>
+      {#if forecastError}
+        <div class="mt-auto"><LoadError compact title="Couldn't load the storage forecast" onretry={retryForecast} /></div>
+      {:else}
+        <p class="text-[11px] text-text-dim mt-auto">{forecastLoading ? 'Loading…' : 'Not filling / not enough samples'}</p>
+      {/if}
     </div>
   {/if}
 {/snippet}
@@ -1328,6 +1402,12 @@
 {/snippet}
 
 {#snippet tRetention()}
+  {#if retentionError}
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
+      {@render mHead(CATALOG.retention.icon, 'Retention & cleanup')}
+      <div class="mt-auto"><LoadError compact title="Couldn't load retention" onretry={retryRetention} /></div>
+    </div>
+  {:else}
   <a href="#/jobs" class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors">
     {@render mHead(CATALOG.retention.icon, 'Retention & cleanup')}
     {#if retentionSummary}
@@ -1337,6 +1417,7 @@
       <p class="text-[11px] text-text-dim mt-auto">{retentionLoading ? 'Loading…' : 'No retention policy set'}</p>
     {/if}
   </a>
+  {/if}
 {/snippet}
 
 {#snippet tReplicationStatus()}
@@ -1404,7 +1485,9 @@
       </div>
     </div>
     {#if !loading && !error && storage.length > 0 && jobs.length > 0}
-      <div class="dash-head-actions flex gap-2 w-full sm:w-auto">
+      <!-- On phones Customize sits below the status banner, so the verdict is the
+           first thing under the heading (#699). -->
+      <div class="dash-head-actions {layout.editMode ? 'flex' : 'hidden sm:flex'} gap-2 w-full sm:w-auto">
         {#if layout.editMode}
           <button onclick={layout.reset} class="flex-1 sm:flex-none min-h-[44px] px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-2 border border-border hover:bg-surface-3 rounded-lg transition-colors">Reset</button>
           <button onclick={layout.toggleEdit} class="flex-1 sm:flex-none min-h-[44px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-semibold text-on-status bg-success hover:bg-success/90 rounded-lg transition-colors">
@@ -1427,15 +1510,21 @@
   {/if}
 
   <StatusBanner status={backupStatus} />
+  <p class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-progress-announcer>{progressAnnouncementText}</p>
+
+  {#if !loading && !error && storage.length > 0 && jobs.length > 0 && !layout.editMode}
+    <div class="sm:hidden flex justify-end -mt-2 mb-3">
+      <button onclick={layout.toggleEdit} class="min-h-[44px] inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors">
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Customize
+      </button>
+    </div>
+  {/if}
 
   {#if loading}
     <Skeleton variant="stats" />
     <Skeleton variant="card" count={3} />
   {:else if error}
-    <div class="bg-danger/10 border border-danger/30 text-danger rounded-xl p-4 flex items-center gap-3">
-      <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-      <span class="text-sm">{error}</span>
-    </div>
+    <LoadError title="Couldn't load the dashboard" message={error} onretry={runDashboardReload} />
   {:else if storage.length === 0 && jobs.length === 0}
     <Welcome onstart={() => navigate('/storage')} onrecover={isReplicaMode() ? undefined : () => navigate('/recover')} />
   {:else}
@@ -1506,10 +1595,12 @@
                    the tile's own click actions while customizing. (Touch scrolls
                    here and drags from the handle below instead.) -->
               <div class="absolute inset-0 z-[1] rounded-xl" style="cursor: grab;" onpointerdown={(e) => tilePointerDown(e, t.idx, false)} aria-hidden="true"></div>
-              <div class="relative z-[2] flex items-center gap-2 mb-1.5 px-1">
-                <div class="flex items-center gap-2 min-w-0 cursor-grab py-1 -my-1 touch-none" style="touch-action: none;" onpointerdown={(e) => tilePointerDown(e, t.idx, true)} aria-hidden="true" title="Drag to reorder">
+              <!-- The label keeps its full name: when the tile is narrow the controls
+                   wrap to a second line instead of squeezing it to a letter (#715). -->
+              <div class="relative z-[2] flex flex-wrap items-center gap-x-2 gap-y-1 mb-1.5 px-1">
+                <div class="flex flex-1 items-center gap-2 min-w-[7rem] cursor-grab py-1 -my-1 touch-none" style="touch-action: none;" onpointerdown={(e) => tilePointerDown(e, t.idx, true)} aria-hidden="true" title="Drag to reorder">
                   <svg class="w-4 h-4 text-text-dim shrink-0" fill="currentColor" viewBox="0 0 24 24"><circle cx="8" cy="6" r="1.4"/><circle cx="8" cy="12" r="1.4"/><circle cx="8" cy="18" r="1.4"/><circle cx="16" cy="6" r="1.4"/><circle cx="16" cy="12" r="1.4"/><circle cx="16" cy="18" r="1.4"/></svg>
-                  <span class="text-[11px] font-medium text-text-muted truncate">{t.name}</span>
+                  <span class="text-[11px] font-medium text-text-muted break-words" data-tile-label>{t.name}</span>
                 </div>
                 <div class="ml-auto flex items-center gap-1 shrink-0">
                   <span class="resize-controls flex items-center gap-1">
@@ -1582,6 +1673,7 @@
     grid-row: var(--row, auto) / span var(--span, 1);
   }
   :global(.dash-tile.is-dragging) { opacity: 0.4; }
+  .prot-item-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); }
   :global(.dash-tile.is-dragover) { outline: 2px solid var(--color-info); outline-offset: 2px; border-radius: 14px; }
   :global(.dash-tile-grid.is-edit .dash-tile) { cursor: grab; }
 

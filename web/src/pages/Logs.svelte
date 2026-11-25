@@ -19,8 +19,32 @@
   import EmptyState from '../components/EmptyState.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import LogRowDetails from '../components/LogRowDetails.svelte'
+  import LoadError from '../components/LoadError.svelte'
+  import { createArrivalAnnouncer } from '../lib/logannounce.js'
+  import { readHashFilters, writeHashFilters } from '../lib/urlFilters.js'
 
-  const store = createUnifiedLogStore()
+  // Filters live in the hash query (#693): level, category, job and search
+  // survive a reload, a shared link and Back.
+  const ROUTE = '/logs'
+  const FILTER_DEFAULTS = { level: '', category: '', job: '', q: '' }
+  function urlFilters() {
+    const params = readHashFilters(ROUTE)
+    return {
+      level: params?.get('level') ?? '',
+      category: params?.get('category') ?? '',
+      job: params?.get('job') ?? '',
+      search: params?.get('q') ?? '',
+    }
+  }
+
+  const store = createUnifiedLogStore(urlFilters())
+
+  // The console is not a live region (#686): live lines, and older rows the
+  // window renders while the reader scrolls, would all be read out. This one
+  // hidden status announces "N new log entries" for live arrivals only, at
+  // most every ten seconds.
+  let arrivalAnnouncement = $state('')
+  const arrivals = createArrivalAnnouncer({ announce: (text) => { arrivalAnnouncement = text } })
   // The console renders NEWEST FIRST, so the scroll axis is inverted relative
   // to a classic tail: the live edge is the TOP, and scrolling DOWN reaches
   // further back in history. `follow` therefore pins to scrollTop 0.
@@ -100,6 +124,7 @@
     let pollTimer = null
     // The page-level scroll's events arrive as visible-area updates.
     const unsubView = embedded ? onVisibleAreaChange(handleScroll) : null
+    window.addEventListener('hashchange', applyUrlFilters)
 
     ;(async () => {
       await store.load()
@@ -115,7 +140,7 @@
       // the search view), so scrolling reaches the true end and the
       // "— End of logs —" marker shows there (#328).
       store.loadAll()
-      unsub = store.setupWs()
+      unsub = store.setupWs((count) => arrivals.add(count))
       // Poll safety net: in poll mode the timer is the primary path (10s); in
       // live/WS mode it runs as a slower catch-up (30s) so a missed WS event
       // (e.g. a terminal summary lost across a reconnect) is still surfaced
@@ -126,6 +151,8 @@
     return () => {
       destroyed = true
       unsubView?.()
+      window.removeEventListener('hashchange', applyUrlFilters)
+      arrivals.dispose()
       if (unsub) unsub()
       if (pollTimer) clearInterval(pollTimer)
       store.dispose()
@@ -421,6 +448,30 @@
       await store.loadOlder()
       await tick()
     }
+  }
+
+  // Keep the URL in step with the filters, however they changed (a select, the
+  // Problems toggle, Reset, or a category switch dropping the job filter).
+  $effect(() => {
+    writeHashFilters(ROUTE, { level: store.levelFilter, category: store.category, job: store.jobFilter, q: store.search }, FILTER_DEFAULTS)
+  })
+
+  // A link to Logs with other filters arrives as a hashchange while the page
+  // is already showing.
+  async function applyUrlFilters() {
+    if (readHashFilters(ROUTE) === null) return
+    const next = urlFilters()
+    if (next.level === store.levelFilter && next.category === store.category && next.job === store.jobFilter && next.search === store.search) return
+    store.setLevelFilter(next.level)
+    store.setJobFilter(next.job)
+    store.setSearchFilter(next.search)
+    if (next.category !== store.category) await store.setCategory(next.category)
+    await snapToPresent()
+  }
+
+  async function retryLoad() {
+    await store.load()
+    if (!store.error) store.loadAll()
   }
 
   async function handleCategory(v) {
@@ -731,10 +782,7 @@
   {#if store.loading && !store.loaded}
     <Spinner text="Loading logs..." />
   {:else if store.error}
-    <div class="bg-danger/10 border border-danger/30 text-danger rounded-xl p-4 flex items-center gap-3">
-      <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-      <span class="text-sm">{store.error}</span>
-    </div>
+    <LoadError title="Couldn't load logs" message={store.error} onretry={retryLoad} retrying={store.loading} />
   {:else if store.search && store.filtered.length === 0 && (store.searching || store.loadingOlder || store.loading)}
     <div class="py-4 text-center text-sm text-text-dim flex items-center justify-center gap-2" aria-live="polite">
       <span aria-hidden="true" class="inline-block w-4 h-4 border border-vault/30 border-t-vault rounded-full animate-spin"></span>
@@ -797,7 +845,7 @@
       <div bind:this={box} use:rowGestures onscroll={handleScroll} oncopy={handleCopy}
         class="console-scroll bg-surface-1 border border-border rounded-xl overflow-y-auto font-mono text-xs leading-tight h-[72vh]"
         style="overflow-anchor: none;"
-        role="log"
+        role="region" aria-label="Log console" data-log-console
       >
         {#each shownRows as row (row.key)}
           {#if row.kind === 'date'}
@@ -864,7 +912,7 @@
         <!-- End-of-history marker now sits at the BOTTOM: with newest first,
              the oldest log is the last row on the page. -->
         {#if !win.hiddenBelow && !store.hasMore && !store.pruned}
-          <div data-end-marker class="h-8 flex items-center justify-center text-center text-[11px] text-text-dim select-none" aria-live="polite">
+          <div data-end-marker class="h-8 flex items-center justify-center text-center text-[11px] text-text-dim select-none">
             — End of logs —
           </div>
         {/if}
@@ -877,6 +925,8 @@
     </div>
   {/if}
 </div>
+
+<p class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-log-announcer>{arrivalAnnouncement}</p>
 
 <ConfirmDialog
   show={confirmPurge}
