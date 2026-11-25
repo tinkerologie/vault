@@ -71,6 +71,9 @@
     preflightResult: null,
     preflightRequestId: 0,
     preflightSig: '',
+    // The exact container and VM host paths (#716), fetched beside the
+    // pre-flight: { requestId, sig, status: 'loading' | 'done' | 'failed', items }.
+    writeTargets: null,
   })
 
   function getUnitSettings(jobId) {
@@ -361,6 +364,8 @@
     const payload = { items: unitItemNames(unit) }
     if (s.showDestOverride && s.restoreDestination.trim()) payload.destination = s.restoreDestination.trim()
     if (s.passphrase) payload.passphrase = s.passphrase
+    // Never awaited: a slow or failed path lookup must not hold up the checks.
+    void loadWriteTargets(unit, payload)
     let result
     try {
       result = await api.preflightRestore(unit.jobId, unit.point.id, payload)
@@ -369,6 +374,28 @@
     }
     if (!destroyed && unitSettings.get(unit.jobId)?.preflightRequestId === requestId) {
       updateUnitSetting(unit.jobId, { preflightResult: result, preflightRequestId: 0 })
+    }
+  }
+
+  // Fetches the exact host paths of a unit's containers and VMs (#716). A
+  // failure only replaces them with the fallback sentence in step 3.
+  async function loadWriteTargets(unit, payload) {
+    if (!unit.items.some(item => item.type === 'container' || item.type === 'vm')) {
+      updateUnitSetting(unit.jobId, { writeTargets: null })
+      return
+    }
+    const requestId = ++preflightRequestSeq
+    const sig = getUnitRestoreSig(unit)
+    updateUnitSetting(unit.jobId, { writeTargets: { requestId, sig, status: 'loading', items: [] } })
+    let next
+    try {
+      const res = await api.restoreWriteTargets(unit.jobId, unit.point.id, payload)
+      next = { requestId, sig, status: 'done', items: Array.isArray(res?.items) ? res.items : [] }
+    } catch {
+      next = { requestId, sig, status: 'failed', items: [] }
+    }
+    if (!destroyed && unitSettings.get(unit.jobId)?.writeTargets?.requestId === requestId) {
+      updateUnitSetting(unit.jobId, { writeTargets: next })
     }
   }
 
@@ -1276,19 +1303,26 @@
   let confirmRestoreAnyway = $state(false)
 
   // Where each item of a unit is restored, and whether clearing deletes files there (#700).
-  // A fresh pre-flight adds the exact container and VM host paths the server resolved (#716).
+  // A fresh pre-flight adds the exact container and VM host paths the server
+  // resolved (#716), from the write-targets request sent beside it.
   function unitTargets(unit) {
     const s = getUnitSettings(unit.jobId)
     const custom = s.showDestOverride ? s.restoreDestination : ''
-    const fresh = isUnitPreflightFresh(unit)
-    const previews = fresh ? (s.preflightResult?.items || []) : []
-    return unit.items.map(item => ({
-      key: itemKey(item),
-      name: itemDisplayLabel(item),
-      typeLabel: itemTypeSingularLabel(item.type),
-      awaitingPaths: !fresh && (item.type === 'container' || item.type === 'vm'),
-      ...restoreTargetFor(item, custom, previews.find(p => p.name === item.name && p.type === item.type)),
-    }))
+    const wt = isUnitPreflightFresh(unit) && s.writeTargets?.sig === getUnitRestoreSig(unit) ? s.writeTargets : null
+    return unit.items.map(item => {
+      const pathsFromServer = item.type === 'container' || item.type === 'vm'
+      let preview = null
+      if (pathsFromServer && wt?.status === 'done') preview = wt.items.find(p => p.name === item.name && p.type === item.type) || null
+      else if (pathsFromServer && wt?.status === 'failed') preview = { status: 'unavailable', reason: 'request_failed' }
+      return {
+        key: itemKey(item),
+        name: itemDisplayLabel(item),
+        typeLabel: itemTypeSingularLabel(item.type),
+        awaitingPaths: pathsFromServer && !wt,
+        loadingPaths: pathsFromServer && wt?.status === 'loading',
+        ...restoreTargetFor(item, custom, preview),
+      }
+    })
   }
 
   function unitClears(unit) {
@@ -1954,6 +1988,8 @@
                   {/if}
                   {#if t.unresolved}
                     <span class="block mt-1 text-text-muted">{t.unresolved}</span>
+                  {:else if t.loadingPaths}
+                    <span class="block mt-1 text-text-dim">Checking the exact host paths...</span>
                   {:else if t.awaitingPaths}
                     <span class="block mt-1 text-text-dim">Run the pre-flight checks to see the exact host paths.</span>
                   {/if}

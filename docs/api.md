@@ -98,6 +98,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | DELETE | `/jobs/{id}/restore-points/{rpid}`                 | Delete a specific restore point and its files                                                                                                                   |
 | GET    | `/jobs/{id}/restore-points/{rpid}/contents?item=…` | List files inside a restore point (works for classic and dedup restore points)                                                                                  |
 | POST   | `/jobs/{id}/restore-points/{rpid}/preflight`       | Check a restore before starting                                                                                                                                 |
+| POST   | `/jobs/{id}/restore-points/{rpid}/write-targets`   | List the exact host paths the selected container and VM restores write                                                                                          |
 | POST   | `/jobs/{id}/restore-points/{rpid}/verify`          | Start SHA-256 verification of a restore point                                                                                                                   |
 | GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                                                                                                      |
 | GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                                                                                            |
@@ -116,17 +117,17 @@ and the copy of each item that uses staging. For selected classic archive items,
 expansion, so sufficient recorded space alone leaves the capacity check skipped.
 A space warning is advisory and leaves `ok` true when the other checks pass.
 
-When `items` names a container or VM, the response adds an `items` array with
-one entry per selected container or VM. Each entry lists the exact host paths
-that restore writes. Vault resolves them from the Restore Point with the same
-review a Restore Request uses. A custom `destination` remaps them the way the
-restore does. Folder, plugin and ZFS items are left out, and the field is
-omitted when no container or VM is selected.
+Write targets accept the same body as preflight and validate it the same way.
+The response has an `items` array with one entry per selected container or
+VM. Each entry lists the exact host paths that restore writes. Vault resolves
+them from the Restore Point with the same review a Restore Request uses. A
+custom `destination` remaps them the way the restore does. Folder, plugin and
+ZFS items are left out, so `items` is empty when no container or VM is
+selected. The Restore wizard sends this request beside the preflight, so a
+slow review never delays the checks.
 
 ```json
 {
-  "ok": true,
-  "checks": [],
   "items": [
     {
       "name": "plex",
@@ -183,11 +184,12 @@ omitted when no container or VM is selected.
   `not_in_restore_point`, `invalid_selection`, `unsupported_item_type`,
   `unresolved`, `busy`, `cancelled`, `too_many_items`, or a Restore Request
   ineligibility reason.
-- Paths are resolved for at most 32 items, within 45 seconds per pre-flight;
-  later items report `too_many_items` or `cancelled`.
+- Paths are resolved for at most 32 items, within 8 seconds per request, so
+  the reply arrives inside the Unraid proxy's 10-second limit. Later items
+  report `too_many_items` or `cancelled`.
 
-Assistant Keys cannot call this endpoint, so these paths never reach an
-assistant response.
+Assistant Keys cannot call preflight or write targets, so these paths never
+reach an assistant response.
 
 A Restore Request run uses the [exact-run stop action](#restore-requests).
 
