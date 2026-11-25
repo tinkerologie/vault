@@ -204,10 +204,14 @@ export const api = {
   restoreJob: (id, data) => request('POST', `/jobs/${id}/restore`, data),
   // preflightRestore runs cheap pre-restore checks (storage reachable, backup
   // present, decryptable, free space) and returns { ok, checks:[{id,label,status,detail}] }.
-  // With `items`, it adds items:[{name,type,status,reason?,write_targets:[{kind,path?,mount?,name?,clearable?}]}]
-  // listing the exact host paths each selected container or VM restore writes (#716).
   preflightRestore: (jobId, rpId, data) =>
     request('POST', `/jobs/${jobId}/restore-points/${rpId}/preflight`, data),
+  // restoreWriteTargets takes the pre-flight's body and returns
+  // { items:[{name,type,status,reason?,write_targets:[{kind,path?,mount?,name?,clearable?}]}] },
+  // the exact host paths each selected container or VM restore writes (#716).
+  // The server answers within 8 s, inside the normal request timeout.
+  restoreWriteTargets: (jobId, rpId, data) =>
+    request('POST', `/jobs/${jobId}/restore-points/${rpId}/write-targets`, data),
   getNextRuns: () => request('GET', '/jobs/next-runs'),
   getNextRun: (id) => request('GET', `/jobs/${id}/next-run`),
   previewSchedule: (schedule, count = 3) => request('GET', `/jobs/schedule-preview?schedule=${encodeURIComponent(schedule)}&count=${count}`),

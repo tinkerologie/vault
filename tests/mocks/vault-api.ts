@@ -167,7 +167,7 @@ export const mockJob2Points = [
 /**
  * Tar-index listing returned for an item's restore-point contents.
  */
-// The pre-flight's per-item write targets (#716) for the mock containers and
+// The per-item write targets (#716) for the mock containers and
 // VM. A custom destination remaps each data path under it, as the server does.
 export const mockWriteTargets = (name: string, destination: string) => {
   const under = (path: string) => destination ? `${destination.replace(/\/+$/, '')}/${path.split('/').pop()}` : path;
@@ -511,18 +511,22 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       });
     }
 
-    // Restore Preflight. Scoped requests also list each selected container's
-    // and VM's exact host paths (#716), remapped under a custom destination.
-    if (path.includes('/preflight')) {
+    // Restore write targets: each selected container's and VM's exact host
+    // paths (#716), remapped under a custom destination.
+    if (/\/restore-points\/\d+\/write-targets$/.test(path)) {
       let selection: { items?: string[]; destination?: string } = {};
       try { selection = request.postDataJSON() || {}; } catch { /* empty body */ }
       const items = (selection.items || []).map(name => mockWriteTargets(name, selection.destination || '')).filter(Boolean);
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items }) });
+    }
+
+    // Restore Preflight: the checks only.
+    if (path.includes('/preflight')) {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
           ok: true,
-          ...(items.length ? { items } : {}),
           checks: [
             { id: 'reachable', label: 'Storage reachable', status: 'ok', detail: 'Main Storage' },
             { id: 'present', label: 'Backup present on storage', status: 'ok', detail: '1 file' },

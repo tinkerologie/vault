@@ -82,6 +82,7 @@ const routes = [
   ['listStorageFiles prefix', () => api.listStorageFiles(4, 'a/b'), 'GET', '/api/v1/storage/4/list?prefix=a%2Fb'],
   ['restoreJob', () => api.restoreJob(2, { rp: 1 }), 'POST', '/api/v1/jobs/2/restore', { rp: 1 }],
   ['preflightRestore', () => api.preflightRestore(2, 9, { x: 1 }), 'POST', '/api/v1/jobs/2/restore-points/9/preflight', { x: 1 }],
+  ['restoreWriteTargets', () => api.restoreWriteTargets(2, 9, { x: 1 }), 'POST', '/api/v1/jobs/2/restore-points/9/write-targets', { x: 1 }],
   ['getNextRuns', () => api.getNextRuns(), 'GET', '/api/v1/jobs/next-runs'],
   ['getNextRun', () => api.getNextRun(2), 'GET', '/api/v1/jobs/2/next-run'],
   ['previewSchedule', () => api.previewSchedule('15 2 * * 1,3', 5), 'GET', '/api/v1/jobs/schedule-preview?schedule=15%202%20*%20*%201%2C3&count=5'],

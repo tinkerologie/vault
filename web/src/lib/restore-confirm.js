@@ -31,7 +31,7 @@ const UNRESOLVED_REASONS = {
 
 /**
  * The exact host paths the server resolved for one container or VM restore
- * (pre-flight `items[].write_targets`, #716). `effect` is `clearable` for a
+ * (write-targets `items[].write_targets`, #716). `effect` is `clearable` for a
  * volume that clearing empties first, `merge` for a volume too shallow to
  * clear, and `overwrite` for a file replaced with the backed-up copy.
  *
@@ -60,11 +60,11 @@ function serverTargets(preview, fallback) {
  * Where one item is restored to. An exact path when the wizard knows it; when
  * the path is only read from the backup at restore time, `path` is null and
  * `description` says so rather than guessing (#700). For a container or VM,
- * a resolved pre-flight preview supplies the exact `paths` (#716).
+ * a resolved write-targets preview supplies the exact `paths` (#716).
  *
  * @param {{ type?: string, item_type?: string, name?: string, item_name?: string, settings?: any }} item
  * @param {string} [customDestination] the unit's custom destination, if chosen
- * @param {object} [preview] the pre-flight's write targets for this item
+ * @param {object} [preview] the server's write targets for this item
  * @returns {{ path: string | null, description: string, paths?: { path: string, label: string, effect: string }[], domain?: string, unresolved?: string }}
  */
 export function restoreTargetFor(item, customDestination = '', preview = null) {
