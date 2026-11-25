@@ -645,7 +645,7 @@
         </svg>
         <input type="text" bind:value={searchQuery} placeholder="Search runs..."
           aria-label="Search runs"
-          class="w-full pl-9 pr-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+          class="w-full pl-9 pr-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11" />
       </div>
 
       <!-- Status filter pills -->
@@ -676,7 +676,7 @@
 
       <select bind:value={selectedJob}
         aria-label="Filter by job"
-        class="px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text">
+        class="px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text max-lg:min-h-11">
         <option value={0}>All Jobs</option>
         {#each jobs as job (job.id)}
           <option value={job.id}>{job.name}</option>
@@ -706,7 +706,7 @@
         {/if}
         <input type="text" bind:value={acknowledgeReason} disabled={acknowledging}
           aria-label="Acknowledgement reason (optional)" placeholder="Reason (optional)"
-          class="flex-1 min-w-[10rem] max-w-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+          class="flex-1 min-w-[10rem] max-w-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text max-lg:min-h-11" />
         <button type="button" class="btn btn-primary" onclick={() => acknowledgeRuns([...selectedRunIds])}
           disabled={acknowledging}>
           Acknowledge selected
@@ -723,7 +723,7 @@
         <div class="relative">
           <select value={trendMetric} onchange={(e) => selectTrendMetric(e.currentTarget.value)}
             aria-label="Trend metric"
-            class="appearance-none pl-3 pr-9 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text cursor-pointer">
+            class="appearance-none pl-3 pr-9 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text cursor-pointer max-lg:min-h-11">
             <option value="size">Backup size</option>
             <option value="duration">Job duration</option>
           </select>

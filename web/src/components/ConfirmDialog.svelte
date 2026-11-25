@@ -102,7 +102,7 @@
             autocapitalize="off"
             spellcheck="false"
             onkeydown={onWordKeydown}
-            class="mt-1.5 w-full px-3 py-2 text-base sm:text-sm font-mono bg-surface-3 border border-border rounded-lg text-text focus:outline-none focus:border-vault aria-disabled:opacity-50"
+            class="mt-1.5 w-full px-3 py-2 text-base sm:text-sm font-mono bg-surface-3 border border-border rounded-lg text-text focus:outline-none focus:border-vault aria-disabled:opacity-50 max-lg:min-h-11"
           />
         </label>
       {/if}

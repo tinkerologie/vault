@@ -1440,7 +1440,7 @@
               bind:value={searchQuery}
               placeholder="Search items or jobs..."
               aria-label="Search items or jobs"
-              class="w-full pl-9 pr-8 py-1.5 text-xs bg-surface-2 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault"
+              class="w-full pl-9 pr-8 py-1.5 text-xs bg-surface-2 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault max-lg:min-h-11"
             />
             {#if searchQuery}
               <button
@@ -1461,7 +1461,7 @@
             <select
               id="rw-sort"
               bind:value={sortBy}
-              class="bg-surface-2 border border-border rounded-lg px-2.5 py-1.5 text-xs text-text focus:outline-none focus:border-vault cursor-pointer"
+              class="bg-surface-2 border border-border rounded-lg px-2.5 py-1.5 text-xs text-text focus:outline-none focus:border-vault cursor-pointer max-lg:min-h-11"
             >
               <option value="alpha-asc">Name (A → Z)</option>
               <option value="alpha-desc">Name (Z → A)</option>
@@ -2042,7 +2042,7 @@
                     {:else}
                       <div class="flex flex-wrap items-center gap-2">
                         <input type="text" placeholder="Filter by path…" value={entry.searchInput} oninput={(e) => onFilterInput(item, e.currentTarget.value)} aria-label="Filter paths in {itemDisplayLabel(item)}"
-                          class="flex-1 min-w-40 px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-vault" />
+                          class="flex-1 min-w-40 px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-vault max-lg:min-h-11" />
                         <button type="button" onclick={() => selectAllFiles(item)}
                           class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors cursor-pointer">Select all</button>
                         <button type="button" onclick={() => selectAllFiles(item, false)}

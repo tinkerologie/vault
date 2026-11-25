@@ -283,7 +283,7 @@
           spellcheck="false"
           bind:value={query}
           placeholder="Type a command or search..."
-          class="flex-1 bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none"
+          class="flex-1 bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none max-lg:min-h-11"
         />
         <kbd class="text-xs text-text-muted bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">Esc</kbd>
       </div>

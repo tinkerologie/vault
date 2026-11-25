@@ -464,14 +464,14 @@
       <div>
         <label for="repl-name" class="block text-sm font-medium text-text mb-1">Name</label>
         <input id="repl-name" type="text" required bind:value={form.name} placeholder="e.g. Production Server"
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11" />
       </div>
 
       <!-- Remote Vault Fields -->
         <div>
           <label for="repl-url" class="block text-sm font-medium text-text mb-1">Remote Vault URL</label>
           <input id="repl-url" type="url" required bind:value={form.url} placeholder="http://192.168.1.100:24085"
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11" />
           <p class="text-xs text-text-dim mt-1">The base URL of the remote Vault server (include port). Only jobs created on that server are synced; jobs it replicated from other servers are skipped.</p>
           {#if form.url?.trim().toLowerCase().startsWith('http://')}
             <p class="text-xs text-warning mt-1" role="note">Plain HTTP: the API key and backup data can be read on the network. Use it only on a network you trust, or use https://.</p>

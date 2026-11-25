@@ -1390,14 +1390,14 @@
         {/each}
       </div>
       <select bind:value={storageFilter} aria-label="Filter by storage destination"
-        class="px-2.5 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
+        class="px-2.5 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer max-lg:min-h-11">
         <option value={0}>All storage</option>
         {#each storageList as s (s.id)}
           <option value={s.id}>{s.name}</option>
         {/each}
       </select>
       <select bind:value={sortBy} aria-label="Sort jobs"
-        class="px-2.5 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
+        class="px-2.5 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer max-lg:min-h-11">
         <option value="name">Name (A–Z)</option>
         <option value="next">Next run</option>
         <option value="created">Recently created</option>
@@ -1442,7 +1442,7 @@
               <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <!-- Bulk checkbox -->
                 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-                <label class="hit-target shrink-0 cursor-pointer" onclick={(e) => e.stopPropagation()}>
+                <label class="inline-flex items-center justify-center min-w-6 min-h-6 max-lg:min-w-11 max-lg:min-h-11 shrink-0 cursor-pointer" onclick={(e) => e.stopPropagation()}>
                   <input
                     type="checkbox"
                     checked={selectedJobs.has(job.id)}
@@ -1458,6 +1458,7 @@
                   onchange={() => toggleEnabled(job)}
                   stopPropagation
                   label="Enable {job.name}"
+                  class="justify-center max-lg:min-w-11 max-lg:min-h-11"
                 />
                 <!-- Inline editable name -->
                 {#if editingNameId === job.id}

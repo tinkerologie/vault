@@ -184,7 +184,7 @@
         id="retry-preset"
         value={preset}
         onchange={(e) => applyPreset(e.currentTarget.value)}
-        class="flex-1 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+        class="flex-1 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
       >
         {#each PRESETS as p (p.id)}
           <option value={p.id}>{p.label}</option>
@@ -202,13 +202,13 @@
             value={row.value}
             oninput={(e) => updateRowValue(idx, e.currentTarget.value)}
             aria-label={`Retry ${idx + 1} value`}
-            class="w-20 px-2 py-1.5 bg-surface-3 border border-border rounded text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+            class="w-20 px-2 py-1.5 max-lg:min-h-11 bg-surface-3 border border-border rounded text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
           />
           <select
             value={row.unit}
             onchange={(e) => updateRowUnit(idx, e.currentTarget.value)}
             aria-label={`Retry ${idx + 1} unit`}
-            class="px-2 py-1.5 bg-surface-3 border border-border rounded text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+            class="px-2 py-1.5 max-lg:min-h-11 bg-surface-3 border border-border rounded text-sm text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
           >
             {#each UNITS as u (u.id)}
               <option value={u.id}>{u.label}</option>

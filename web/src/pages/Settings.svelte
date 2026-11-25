@@ -1442,7 +1442,7 @@
             </div>
             <textarea id="global-excludes" rows="5" bind:value={globalExcludes} disabled={readOnly}
               placeholder={excludePlaceholder}
-              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted font-mono"></textarea>
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted font-mono max-lg:min-h-11"></textarea>
             <p class="text-xs text-text-dim mt-1.5">One path per line. Added to each job's own exclusions — a job can still exclude more.</p>
           </div>
           <div class="flex items-center justify-between pt-1">

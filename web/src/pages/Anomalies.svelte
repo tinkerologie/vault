@@ -398,7 +398,7 @@
     <div class="flex flex-wrap gap-3 items-end">
       <div>
         <label for="filter-state" class="block text-xs font-medium text-text-muted mb-1">State</label>
-        <select id="filter-state" bind:value={filterState} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+        <select id="filter-state" bind:value={filterState} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text max-lg:min-h-11">
           <option value="">All</option>
           <option value="open">Open</option>
           <option value="acknowledged">Acknowledged</option>
@@ -408,7 +408,7 @@
       </div>
       <div>
         <label for="filter-severity" class="block text-xs font-medium text-text-muted mb-1">Severity</label>
-        <select id="filter-severity" bind:value={filterSeverity} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+        <select id="filter-severity" bind:value={filterSeverity} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text max-lg:min-h-11">
           <option value="">All</option>
           <option value="critical">Critical</option>
           <option value="warning">Warning</option>
@@ -417,7 +417,7 @@
       </div>
       <div>
         <label for="filter-scope" class="block text-xs font-medium text-text-muted mb-1">Scope</label>
-        <select id="filter-scope" bind:value={filterScope} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+        <select id="filter-scope" bind:value={filterScope} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text max-lg:min-h-11">
           <option value="">All</option>
           <option value="job">Job</option>
           <option value="destination">Destination</option>
@@ -425,7 +425,7 @@
       </div>
       <div>
         <label for="filter-since" class="block text-xs font-medium text-text-muted mb-1">Since</label>
-        <select id="filter-since" bind:value={filterSince} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+        <select id="filter-since" bind:value={filterSince} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text max-lg:min-h-11">
           <option value="-7d">Last 7 days</option>
           <option value="-30d">Last 30 days</option>
           <option value="-90d">Last 90 days</option>
@@ -444,7 +444,7 @@
         type="text"
         bind:value={bulkReason}
         placeholder="Reason (optional)"
-        class="px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted flex-1 min-w-[160px]"
+        class="px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted flex-1 min-w-[160px] max-lg:min-h-11"
       />
       <button
         onclick={() => bulkAck('dismiss')}

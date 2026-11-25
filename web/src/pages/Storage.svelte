@@ -891,7 +891,7 @@
         type="text"
         bind:value={importBasePath}
         placeholder="e.g. appdata-backups or appdata/ab_archives"
-        class="flex-1 px-3 py-2 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault"
+        class="flex-1 px-3 py-2 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault max-lg:min-h-11"
         onkeydown={(e) => e.key === 'Enter' && !scanning && scanStorage()}
       />
       <button

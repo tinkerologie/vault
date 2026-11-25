@@ -720,7 +720,7 @@
       <select
         value={store.levelFilter}
         onchange={(e) => handleLevel(e.target.value)}
-        class="px-2 py-1 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 {store.levelFilter ? 'border-vault text-text' : ''}"
+        class="px-2 py-1 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 {store.levelFilter ? 'border-vault text-text' : ''} max-lg:min-h-11"
       >
         {#each levels as lev (lev.value)}
           <option value={lev.value}>{lev.label}</option>
@@ -733,7 +733,7 @@
       <select
         value={store.category}
         onchange={(e) => handleCategory(e.target.value)}
-        class="px-2 py-1 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 {store.category ? 'border-vault text-text' : ''}"
+        class="px-2 py-1 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 {store.category ? 'border-vault text-text' : ''} max-lg:min-h-11"
       >
         {#each categories as cat (cat.value)}
           <option value={cat.value}>{cat.label}</option>
@@ -746,7 +746,7 @@
       <select
         value={store.jobFilter}
         onchange={(e) => handleJob(e.target.value)}
-        class="px-2 py-1 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 {store.jobFilter ? 'border-vault text-text' : ''}"
+        class="px-2 py-1 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 {store.jobFilter ? 'border-vault text-text' : ''} max-lg:min-h-11"
       >
         <option value="">All</option>
         {#each store.jobs as jobName (jobName)}
@@ -763,7 +763,7 @@
           value={store.search}
           oninput={(e) => { store.setSearchFilter(e.target.value); snapToPresent() }}
           placeholder="Filter logs…"
-          class="px-2 py-1 pr-6 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 w-44 placeholder:text-text-muted {store.search ? 'border-vault text-text' : ''}"
+          class="px-2 py-1 pr-6 max-lg:min-h-11 text-xs rounded-md bg-surface-3 border border-border text-text-muted focus:outline-none focus:ring-1 focus:ring-vault/50 w-44 placeholder:text-text-muted {store.search ? 'border-vault text-text' : ''}"
         />
         {#if store.search}
           <button type="button" onclick={() => { store.setSearchFilter(''); snapToPresent() }}
