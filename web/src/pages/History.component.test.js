@@ -197,7 +197,7 @@ describe('labels and error hints (#694, #711)', () => {
     render(History)
     expect(await screen.findByText("The Docker socket can't be backed up.")).toBeTruthy()
     expect(screen.getByText(/Exclude \/var\/run\/docker.sock/)).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Edit VM Backups' }).getAttribute('href')).toBe('#/jobs')
+    expect(screen.getByRole('link', { name: 'Edit VM Backups' }).getAttribute('href')).toBe('#/jobs?edit=1&item=portainer')
     const details = /** @type {HTMLDetailsElement} */ (screen.getByText('Details').closest('details'))
     expect(details.open).toBe(false)
     expect(within(details).getByText(raw)).toBeTruthy()

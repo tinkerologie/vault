@@ -337,10 +337,11 @@ for (const viewport of VIEWPORTS) {
       await scrollParentBy(page, (await log.boundingBox())!.y + 1500);
       const present = frame.getByTitle('Jump to present');
       await expect(present).toBeVisible();
-      await page.waitForTimeout(100);
-      // The day header and Oldest stick just below the menu, not under it.
-      const day = await log.locator('.sticky').first().boundingBox();
-      expect(Math.abs(day!.y - PINNED_MENU)).toBeLessThanOrEqual(1);
+      // The day header and Oldest stick just below the menu, not under it. The
+      // sticky offset follows the host's visible-area message, so wait for it
+      // to settle rather than sampling after a fixed delay.
+      const day = log.locator('.sticky').first();
+      await expect.poll(async () => Math.abs((await day.boundingBox())!.y - PINNED_MENU)).toBeLessThanOrEqual(1);
       const oldest = await frame.getByRole('button', { name: 'Jump to oldest log' }).boundingBox();
       expect(oldest!.y).toBeGreaterThanOrEqual(PINNED_MENU);
       await expectInParentViewport(page, oldest);

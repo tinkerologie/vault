@@ -36,7 +36,8 @@ func PreviewRuns(spec string, from time.Time, n int) ([]time.Time, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing schedule: %w", err)
 	}
-	runs := make([]time.Time, 0, n)
+	// Sized by the constant cap, not the caller's count (already clamped above).
+	runs := make([]time.Time, 0, MaxPreviewRuns)
 	t := from
 	for i := 0; len(runs) < n && i < maxLastDayCandidates; i++ {
 		t = sched.Next(t)
