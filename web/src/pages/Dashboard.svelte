@@ -20,6 +20,7 @@
   import { attentionCaption, attentionHref, countRunOutcomes, deriveBackupStatus, healthText, healthTone, isDiscoveryIncomplete, mergeRunCounts, unhealthyStorage } from '../lib/backupStatus.js'
   import { classifyProtection, protectedPercent } from '../lib/protection.js'
   import { progressAnnouncement } from '../lib/progressAnnouncement.js'
+  import { runStatusLabel } from '../lib/statusLabels.js'
 
   let loading = $state(true)
   let error = $state('')
@@ -939,9 +940,12 @@
       {@const ok = lastBackup.status === 'completed' || lastBackup.status === 'success'}
       {@const running = lastBackup.status === 'running'}
       {@const partial = lastBackup.status === 'partial'}
-      <p class="text-base font-bold flex items-center gap-1.5 {ok ? 'text-success' : running ? 'text-info' : partial ? 'text-warning' : 'text-danger'}">
-        <span class="w-2 h-2 rounded-full shrink-0 {ok ? 'bg-success' : running ? 'bg-info' : partial ? 'bg-warning' : 'bg-danger'}"></span>
-        {ok ? 'Success' : running ? 'Running' : partial ? 'Partial' : 'Failed'}
+      <!-- A skipped or cancelled run didn't fail: it's neutral, and its label
+           comes from the shared helper like every other page's (#694). -->
+      {@const neutral = lastBackup.status === 'skipped' || lastBackup.status === 'cancelled'}
+      <p class="text-base font-bold flex items-center gap-1.5 {ok ? 'text-success' : running ? 'text-info' : partial ? 'text-warning' : neutral ? 'text-text-muted' : 'text-danger'}">
+        <span class="w-2 h-2 rounded-full shrink-0 {ok ? 'bg-success' : running ? 'bg-info' : partial ? 'bg-warning' : neutral ? 'bg-surface-5' : 'bg-danger'}"></span>
+        {runStatusLabel(lastBackup.status)}
       </p>
       <p class="text-[11px] text-text-muted mt-1 truncate">{lastBackup.jobName} · {relTime(lastBackup.started_at)}</p>
       {#if lastBackup.size_bytes || lastBackup.duration_seconds}

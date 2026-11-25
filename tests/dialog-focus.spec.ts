@@ -89,7 +89,8 @@ const CASES: Case[] = [
     name: 'Delete Replication Target',
     hash: '#/replication',
     setup: (page) => setupVaultMockApi(page, { replicationSources: REPLICATION_SOURCES }),
-    opener: (p) => p.getByRole('button', { name: 'Delete replication target' }).first(),
+    // Row actions are named after their target (#692).
+    opener: (p) => p.getByRole('button', { name: /^Delete: / }).first(),
     dialog: 'Delete Replication Target',
   },
   {
