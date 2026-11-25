@@ -1,4 +1,4 @@
-package handlers
+package health
 
 import (
 	"sort"
@@ -7,7 +7,7 @@ import (
 	"github.com/tinkerologie/vault/internal/db"
 )
 
-// protectionClassifier sorts every Job Item into one protection state, once, so
+// ProtectionClassifier sorts every Job Item into one protection state, once, so
 // the health summary (Dashboard, MCP, Home Assistant) and the recovery plan
 // (Disaster Recovery) agree on which items are protected (#708, #694):
 //
@@ -19,7 +19,7 @@ import (
 //
 // Items are keyed "type:name" and counted once however many jobs cover them. An
 // item is protected if any job covering it has a recent enough Restore Point.
-type protectionClassifier struct {
+type ProtectionClassifier struct {
 	now     time.Time
 	all     map[string]struct{}
 	backed  map[string]struct{}
@@ -27,8 +27,10 @@ type protectionClassifier struct {
 	newest  map[string]time.Time
 }
 
-func newProtectionClassifier(now time.Time) *protectionClassifier {
-	return &protectionClassifier{
+// NewProtectionClassifier returns an empty classifier that judges staleness
+// as of now.
+func NewProtectionClassifier(now time.Time) *ProtectionClassifier {
+	return &ProtectionClassifier{
 		now:     now,
 		all:     map[string]struct{}{},
 		backed:  map[string]struct{}{},
@@ -37,9 +39,9 @@ func newProtectionClassifier(now time.Time) *protectionClassifier {
 	}
 }
 
-// addJob records one job's items and its Restore Points, newest first as
+// AddJob records one job's items and its Restore Points, newest first as
 // ListRestorePoints returns them.
-func (c *protectionClassifier) addJob(job db.Job, items []db.JobItem, rps []db.RestorePoint) {
+func (c *ProtectionClassifier) AddJob(job db.Job, items []db.JobItem, rps []db.RestorePoint) {
 	newestByName := newestRestorePointPerItem(items, rps)
 	for _, item := range items {
 		key := item.ItemType + ":" + item.ItemName
@@ -84,27 +86,27 @@ func newestRestorePointPerItem(items []db.JobItem, rps []db.RestorePoint) map[st
 	return newest
 }
 
-// isBacked reports whether any Restore Point contains the item.
-func (c *protectionClassifier) isBacked(key string) bool {
+// IsBacked reports whether any Restore Point contains the item.
+func (c *ProtectionClassifier) IsBacked(key string) bool {
 	_, ok := c.backed[key]
 	return ok
 }
 
-// isOutOfDate reports whether the item has Restore Points, all too old.
-func (c *protectionClassifier) isOutOfDate(key string) bool {
+// IsOutOfDate reports whether the item has Restore Points, all too old.
+func (c *ProtectionClassifier) IsOutOfDate(key string) bool {
 	_, current := c.current[key]
-	return c.isBacked(key) && !current
+	return c.IsBacked(key) && !current
 }
 
-// newestBackup is the newest Restore Point holding the item, if any.
-func (c *protectionClassifier) newestBackup(key string) (time.Time, bool) {
+// NewestBackup is the newest Restore Point holding the item, if any.
+func (c *ProtectionClassifier) NewestBackup(key string) (time.Time, bool) {
 	at, ok := c.newest[key]
 	return at, ok
 }
 
 // newestBackups maps each backed-up item to its newest Restore Point, so a
 // page can say "Last backup 9 days ago" for an out-of-date item.
-func (c *protectionClassifier) newestBackups() map[string]time.Time {
+func (c *ProtectionClassifier) newestBackups() map[string]time.Time {
 	out := make(map[string]time.Time, len(c.newest))
 	for key, at := range c.newest {
 		out[key] = at.UTC()
@@ -113,7 +115,7 @@ func (c *protectionClassifier) newestBackups() map[string]time.Time {
 }
 
 // keys returns the sorted keys of every item in the given state.
-func (c *protectionClassifier) keys(include func(key string) bool) []string {
+func (c *ProtectionClassifier) keys(include func(key string) bool) []string {
 	out := []string{}
 	for key := range c.all {
 		if include(key) {
@@ -124,10 +126,10 @@ func (c *protectionClassifier) keys(include func(key string) bool) []string {
 	return out
 }
 
-func (c *protectionClassifier) backedKeys() []string { return c.keys(c.isBacked) }
+func (c *ProtectionClassifier) backedKeys() []string { return c.keys(c.IsBacked) }
 
-func (c *protectionClassifier) outOfDateKeys() []string { return c.keys(c.isOutOfDate) }
+func (c *ProtectionClassifier) outOfDateKeys() []string { return c.keys(c.IsOutOfDate) }
 
-func (c *protectionClassifier) pendingKeys() []string {
-	return c.keys(func(key string) bool { return !c.isBacked(key) })
+func (c *ProtectionClassifier) pendingKeys() []string {
+	return c.keys(func(key string) bool { return !c.IsBacked(key) })
 }

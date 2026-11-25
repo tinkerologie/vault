@@ -1,5 +1,7 @@
 /** Minimal hash-based SPA router for Svelte 5 */
 
+import { createNavigationGuard } from './unsaved.js'
+
 let rawHash = $state(readRawHash())
 let current = $derived(routePath(rawHash))
 
@@ -24,21 +26,25 @@ function subPath(raw) {
   return slash === -1 ? '' : path.slice(slash + 1)
 }
 
-function handleHashChange() {
-  rawHash = readRawHash()
-}
+// Every route change goes through one guard (#719): navigate(), in-app links,
+// Back/Forward and typed URLs. A page with unsaved work can ask before the
+// route leaves it with onBeforeLeave().
+const nav = typeof window === 'undefined'
+  ? null
+  : createNavigationGuard({
+      current: () => rawHash,
+      commit: (raw) => { rawHash = raw },
+      pageOf: routePath,
+    })
 
-if (typeof window !== 'undefined') {
-  // Under HMR the module is re-evaluated and `handleHashChange` closes over a
-  // fresh `current` $state. Remove the previously registered handler (if any)
-  // before adding the new one so exactly one active listener – bound to the
-  // *current* module evaluation – is registered at all times.
+if (nav) {
+  // Under HMR the module is re-evaluated with a fresh `rawHash` $state.
+  // Stop the previous evaluation's listeners (if any) before starting this
+  // one, so exactly one guard – bound to the *current* module – listens.
   const w = /** @type {any} */ (window)
-  if (typeof w.__vaultRouterHandler === 'function') {
-    window.removeEventListener('hashchange', w.__vaultRouterHandler)
-  }
-  window.addEventListener('hashchange', handleHashChange)
-  w.__vaultRouterHandler = handleHashChange
+  if (typeof w.__vaultRouterStop === 'function') w.__vaultRouterStop()
+  nav.start()
+  w.__vaultRouterStop = nav.stop
 
   // Bind `import.meta.hot` to a local before use. A statement that *starts*
   // with `import` is parsed as an import declaration by CodeQL's JavaScript
@@ -51,16 +57,34 @@ if (typeof window !== 'undefined') {
   const hot = import.meta.hot
   if (hot) {
     hot.dispose(() => {
-      window.removeEventListener('hashchange', handleHashChange)
-      if (w.__vaultRouterHandler === handleHashChange) {
-        w.__vaultRouterHandler = null
-      }
+      nav.stop()
+      if (w.__vaultRouterStop === nav.stop) w.__vaultRouterStop = null
     })
   }
 }
 
-export function navigate(path) {
-  window.location.hash = '#' + path
+/**
+ * Go to a route. Waits for the page's leave guard (if any) when the route
+ * would leave the page. `replace` swaps the current history entry instead of
+ * adding one; it is meant for sub-routes of the current page and never asks.
+ * @param {string} path e.g. '/jobs' or '/settings/security'
+ * @param {{ replace?: boolean }} [opts]
+ * @returns {Promise<void>}
+ */
+export function navigate(path, opts) {
+  return nav ? nav.navigate(path, opts) : Promise.resolve()
+}
+
+/**
+ * Ask fn(to, from) before the route leaves the current page by any means
+ * (links, the command palette, Back/Forward). fn returns, or resolves to,
+ * true to leave; on false the page stays and the URL returns to it without
+ * a new history entry. Moving between the page's own sub-routes never asks.
+ * Returns a function that removes the guard.
+ * @param {(to: string, from: string) => boolean | Promise<boolean>} fn
+ */
+export function onBeforeLeave(fn) {
+  return nav ? nav.setGuard(fn) : () => {}
 }
 
 export function getRoute() {

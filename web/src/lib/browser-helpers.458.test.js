@@ -98,6 +98,13 @@ describe('hash router', () => {
     const listeners = {}
     const win = {
       location: { hash },
+      history: {
+        state: null,
+        replaceState: vi.fn((state, _title, url) => {
+          win.history.state = state
+          if (url) win.location.hash = url
+        }),
+      },
       addEventListener: vi.fn((type, fn) => { listeners[type] = fn }),
       removeEventListener: vi.fn((type, fn) => {
         if (listeners[type] === fn) delete listeners[type]
@@ -145,11 +152,36 @@ describe('hash router', () => {
   it('replaces a previously registered handler on re-evaluation (HMR)', async () => {
     const win = fakeWindow('#/')
     await import('./router.svelte.js')
-    const first = win.__vaultRouterHandler
+    const first = win.listeners.hashchange
     expect(typeof first).toBe('function')
+    expect(typeof win.__vaultRouterStop).toBe('function')
     vi.resetModules()
     await import('./router.svelte.js')
     expect(win.removeEventListener).toHaveBeenCalledWith('hashchange', first)
-    expect(win.__vaultRouterHandler).not.toBe(first)
+    expect(win.removeEventListener).toHaveBeenCalledWith('popstate', first)
+    expect(win.listeners.hashchange).not.toBe(first)
+  })
+
+  it('swaps the current entry for a replace navigation (#719)', async () => {
+    const win = fakeWindow('#/settings/general')
+    const router = await import('./router.svelte.js')
+    router.navigate('/settings/security', { replace: true })
+    expect(win.location.hash).toBe('#/settings/security')
+    expect(router.getSubpath()).toBe('security')
+  })
+
+  it('lets a page guard leaving and remove the guard again (#719)', async () => {
+    const win = fakeWindow('#/settings')
+    vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    const router = await import('./router.svelte.js')
+    const guard = vi.fn(() => false)
+    const remove = router.onBeforeLeave(guard)
+    await router.navigate('/jobs')
+    expect(guard).toHaveBeenCalledWith('/jobs', '/settings')
+    expect(win.location.hash).toBe('#/settings')
+    remove()
+    await router.navigate('/jobs')
+    expect(win.location.hash).toBe('#/jobs')
+    expect(router.getRoute()).toBe('/jobs')
   })
 })

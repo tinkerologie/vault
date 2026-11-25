@@ -152,3 +152,147 @@ export function guardUnload(isDirtyNow, win = globalThis.window) {
   win.addEventListener('beforeunload', onBeforeUnload)
   return () => win.removeEventListener('beforeunload', onBeforeUnload)
 }
+
+/**
+ * Route changes for the hash router, with one optional leave guard (#719).
+ *
+ * A page with unsaved work registers a guard. Before the route moves to
+ * another page, whichever way it moves, the guard is asked and the page stays
+ * mounted until it answers:
+ * - navigate() (the command palette and other code) waits before touching the
+ *   URL;
+ * - in-app links are held with guardLinks() and then go through navigate();
+ * - Back, Forward and a typed URL have already changed the URL when we hear
+ *   about them, so the new location is not committed while the guard is
+ *   asked, and a refusal walks history back to the page's own entry.
+ *
+ * Each entry carries a `vaultIdx` in history.state, so a refusal knows how far
+ * to walk (history.go) and the page returns to its own entry: nothing is
+ * added to history and Forward stays intact. Moving between sub-routes of the
+ * same page (#/settings/general to #/settings/security) never asks, because
+ * the page stays mounted and keeps its state.
+ *
+ * @param {{
+ *   win?: Window,
+ *   doc?: Document,
+ *   current: () => string,
+ *   commit: (raw: string) => void,
+ *   pageOf: (raw: string) => string,
+ * }} opts current() is the committed raw hash ('/settings/security'),
+ *   commit(raw) makes a new one current, pageOf(raw) is its page ('/settings').
+ */
+export function createNavigationGuard({ win = globalThis.window, doc = globalThis.document, current, commit, pageOf }) {
+  /** @type {((to: string, from: string) => boolean | Promise<boolean>) | null} */
+  let guard = null
+  let stopLinks = null
+  let asking = false
+  let committedIdx = 0
+
+  const readRaw = () => win.location.hash.slice(1) || '/'
+  const idxOf = (state) => (state && typeof state === 'object' && typeof state.vaultIdx === 'number' ? state.vaultIdx : null)
+
+  // Give the current entry an index if it has none: a fresh entry sits one
+  // past the committed one.
+  function stamp(next) {
+    const state = win.history.state
+    const idx = idxOf(state)
+    if (idx !== null) return idx
+    win.history.replaceState({ ...(state && typeof state === 'object' ? state : {}), vaultIdx: next }, '')
+    return next
+  }
+
+  function settle(raw) {
+    committedIdx = idxOf(win.history.state) ?? committedIdx
+    commit(raw)
+  }
+
+  const leavesPage = (raw) => guard !== null && pageOf(raw) !== pageOf(current())
+
+  async function allowed(to) {
+    asking = true
+    try {
+      return !!(await guard?.(to, current()))
+    } catch {
+      return false
+    } finally {
+      asking = false
+    }
+  }
+
+  // popstate and hashchange both land here, often twice for one change.
+  async function onLocationChange() {
+    stamp(committedIdx + 1)
+    const raw = readRaw()
+    if (raw === current() || asking) return
+    if (!leavesPage(raw)) {
+      settle(raw)
+      return
+    }
+    const ok = await allowed(raw)
+    const now = readRaw()
+    if (now === current()) return
+    if (ok) {
+      settle(now)
+      return
+    }
+    const idx = idxOf(win.history.state)
+    if (idx !== null && idx !== committedIdx) win.history.go(committedIdx - idx)
+    else win.history.replaceState(win.history.state, '', '#' + current())
+  }
+
+  /**
+   * @param {string} path e.g. '/jobs' or '/restore?job=3'
+   * @param {{ replace?: boolean }} [opts] replace: swap the current entry
+   *   (no Back step); used for sub-route changes, so it never asks.
+   */
+  async function navigate(path, { replace = false } = {}) {
+    const raw = path || '/'
+    if (replace) {
+      win.history.replaceState(win.history.state, '', '#' + raw)
+      commit(raw)
+      return
+    }
+    if (raw === readRaw()) return
+    if (leavesPage(raw)) {
+      if (asking || !(await allowed(raw))) return
+    }
+    win.location.hash = '#' + raw
+    stamp(committedIdx + 1)
+    settle(raw)
+  }
+
+  function setLinks() {
+    stopLinks?.()
+    stopLinks = guard
+      ? guardLinks(pageOf(current()), () => guard !== null, (hash) => { navigate(hash.slice(1)) }, doc)
+      : null
+  }
+
+  return {
+    navigate,
+    /**
+     * Ask fn(to, from) before the route leaves the current page; it returns
+     * (or resolves to) true to leave. Returns a function that removes it.
+     */
+    setGuard(fn) {
+      guard = fn
+      setLinks()
+      return () => {
+        if (guard !== fn) return
+        guard = null
+        setLinks()
+      }
+    },
+    start() {
+      committedIdx = stamp(0)
+      win.addEventListener('popstate', onLocationChange)
+      win.addEventListener('hashchange', onLocationChange)
+    },
+    stop() {
+      win.removeEventListener('popstate', onLocationChange)
+      win.removeEventListener('hashchange', onLocationChange)
+      guard = null
+      setLinks()
+    },
+  }
+}
