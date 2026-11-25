@@ -490,7 +490,8 @@ for (const viewport of VIEWPORTS) {
       await settledFrameHeight(page);
       await page.evaluate(() => window.scrollTo(0, 250));
       await frame.getByRole('button', { name: /run backup now/i }).first().click();
-      const toast = frame.getByRole('alert');
+      // A queued run is good news: a polite status toast (#685).
+      const toast = frame.getByRole('status').filter({ has: frame.locator('[data-toast-icon]') });
       await expect(toast).toBeVisible();
       await expectInParentViewport(page, await toast.boundingBox());
     });

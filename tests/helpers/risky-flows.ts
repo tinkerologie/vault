@@ -92,7 +92,7 @@ export const RISKY_FLOWS: RiskyFlow[] = [
     actionUrl: /\/storage\/\d+\/restore-db$/,
     afterConfirm: async (page) => {
       await expect(page.getByRole('dialog')).toHaveCount(0);
-      await expect(page.getByRole('alert').filter({ hasText: /restored successfully/i })).toBeVisible();
+      await expect(page.getByRole('status').filter({ hasText: /restored successfully/i })).toBeVisible();
     },
   },
   {

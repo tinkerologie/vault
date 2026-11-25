@@ -28,9 +28,10 @@ test.describe('Restore Run outcomes (#654)', () => {
   }
 
   for (const outcome of [
-    { status: 'completed', done: 1, failed: 0, total: 1, banner: 'Restore completed successfully', toast: /1\/1 items restored/ },
-    { status: 'failed', done: 0, failed: 1, total: 1, banner: 'Restore failed', toast: /1 items failed/ },
-    { status: 'partial', done: 1, failed: 1, total: 2, banner: 'Restore completed with errors', toast: /1\/2 restored, 1 failed/ },
+    // Success toasts are polite status messages; failures interrupt as alerts (#685).
+    { status: 'completed', done: 1, failed: 0, total: 1, banner: 'Restore completed successfully', toast: /1\/1 items restored/, role: 'status' as const },
+    { status: 'failed', done: 0, failed: 1, total: 1, banner: 'Restore failed', toast: /1 items failed/, role: 'alert' as const },
+    { status: 'partial', done: 1, failed: 1, total: 2, banner: 'Restore completed with errors', toast: /1\/2 restored, 1 failed/, role: 'alert' as const },
   ]) {
     test(`uses the recorded ${outcome.status} outcome in the wizard and toast`, async ({ page }) => {
       const setStatus = await startRestore(page, () => ({
@@ -38,7 +39,7 @@ test.describe('Restore Run outcomes (#654)', () => {
       }));
       setStatus(idle);
       await expect(page.getByText(outcome.banner, { exact: true })).toBeVisible();
-      await expect(page.getByRole('alert').filter({ hasText: outcome.toast })).toBeVisible();
+      await expect(page.getByRole(outcome.role).filter({ hasText: outcome.toast })).toBeVisible();
     });
   }
 
@@ -52,7 +53,7 @@ test.describe('Restore Run outcomes (#654)', () => {
     await expect(page.getByText(/Restore (failed|completed successfully)/)).toHaveCount(0);
     available = true;
     await expect(page.getByText('Restore completed successfully', { exact: true })).toBeVisible();
-    await expect(page.getByRole('alert').filter({ hasText: /1\/1 items restored/ })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: /1\/1 items restored/ })).toBeVisible();
   });
 
   test('ignores a late outcome after a newer run starts for the same job', async ({ page }) => {
@@ -89,7 +90,7 @@ test.describe('Restore Run outcomes (#654)', () => {
     await expect(page.getByText('Restore Log', { exact: true })).toBeVisible();
     socket!.send(JSON.stringify({ ...run, type: 'job_run_completed', run_id: 7 }));
     await expect(page.getByText('Restore completed successfully', { exact: true })).toBeVisible();
-    await expect(page.getByRole('alert').filter({ hasText: /1\/1 items restored/ })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: /1\/1 items restored/ })).toBeVisible();
     expect(lookups).toBe(0);
   });
 
@@ -116,7 +117,7 @@ test.describe('Restore Run outcomes (#654)', () => {
 
     available = true;
     await expect(page.getByText('Restore completed successfully', { exact: true })).toBeVisible();
-    await expect(page.getByRole('alert').filter({ hasText: /1\/1 items restored/ })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: /1\/1 items restored/ })).toBeVisible();
     expect(sockets).toHaveLength(2);
   });
 });
