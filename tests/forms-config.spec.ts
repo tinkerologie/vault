@@ -180,9 +180,9 @@ test.describe('unsaved changes (#687)', () => {
     await section.getByRole('switch', { name: 'Toggle adaptive upload throttling' }).click();
     await expect(section.getByText('Unsaved changes')).toBeVisible();
     await page.getByRole('navigation').getByRole('link', { name: 'Jobs' }).first().click();
-    const leave = page.getByRole('dialog', { name: 'Leave without saving?' });
+    const leave = page.getByRole('dialog', { name: 'Discard changes?' });
     await expect(leave).toContainText('Upload Throttling');
-    await leave.getByRole('button', { name: 'Stay' }).click();
+    await leave.getByRole('button', { name: 'Keep editing' }).click();
     await expect(page).toHaveURL(/#\/settings/);
     await section.getByRole('switch', { name: 'Toggle adaptive upload throttling' }).click();
     await expect(section.getByText('Unsaved changes')).toHaveCount(0);

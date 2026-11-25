@@ -20,8 +20,8 @@
   import ChangelogModal from '../components/ChangelogModal.svelte'
   import { setAnomalyEnabled, setReplicationEnabled } from '../lib/settings.svelte.js'
   import PasswordInput from '../components/PasswordInput.svelte'
-  import { getSubpath, navigate } from '../lib/router.svelte.js'
-  import { snapshot, guardUnload, guardLinks } from '../lib/unsaved.js'
+  import { getSubpath, navigate, onBeforeLeave } from '../lib/router.svelte.js'
+  import { snapshot, guardUnload } from '../lib/unsaved.js'
   import { ICONS, ITEM_TYPE_ICONS } from '../lib/icons.js'
   import Switch from '../components/Switch.svelte'
 
@@ -52,8 +52,7 @@
   // list with the keyboard doesn't fill Back with every tab passed.
   function selectTab(id, { replace = false } = {}) {
     if (id === activeTab && getSubpath() === id) return
-    if (replace) window.location.replace(`#/settings/${id}`)
-    else navigate(`/settings/${id}`)
+    navigate(`/settings/${id}`, { replace })
   }
 
   // Jump-list for the long General tab (issue #208 / E11). Everyday settings up
@@ -325,9 +324,6 @@
       anomalyEnabled = s?.anomaly_detection_enabled !== 'false'
       anomalySensitivityDefault = s?.anomaly_sensitivity_default || 'balanced'
       anomalyNotifyMinSeverity = s?.anomaly_notify_min_severity || 'critical'
-      savedThrottle = throttleSnap()
-      savedExclusions = exclusionsSnap()
-      savedAnomaly = anomalySnap()
       // Replication enable (mirrors settings.svelte.js derive).
       if (s?.replication_enabled === 'true') {
         replicationEnabledSetting = true
@@ -349,6 +345,7 @@
           compactionThreshold = String(Math.round(f * 100))
         }
       }
+      markSaved(...Object.keys(sections))
       currentVersion = (h && h.version) || 'dev'
       releases = changelog
       latest = latestRelease
@@ -420,6 +417,7 @@
         discord_mention_role_id: discordMentionRoleId,
         discord_mention_on: discordMentionOn,
       })
+      markSaved('discord')
       showToast('Discord settings saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -451,6 +449,7 @@
     try {
       stagingInfo = await api.setStagingOverride(stagingOverrideInput)
       stagingOverrideInput = stagingInfo?.override || ''
+      markSaved('staging')
       showToast(stagingOverrideInput ? 'Staging path updated' : 'Staging reset to auto', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -465,6 +464,7 @@
     stagingSaving = true
     try {
       stagingInfo = await api.setStagingOverride('')
+      markSaved('staging')
       showToast('Staging reset to automatic cascade', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -482,6 +482,7 @@
         databaseInfo,
         snapshotPathInput ? 'Snapshot path updated' : 'Snapshot path reset to default',
       )
+      markSaved('database')
       showToast(text, tone)
     } catch (e) {
       showToast(e.message, 'error')
@@ -496,6 +497,7 @@
     try {
       databaseInfo = await api.setSnapshotPath('')
       const { text, tone } = snapshotMigrationMessage(databaseInfo, 'Snapshot path reset to default')
+      markSaved('database')
       showToast(text, tone)
     } catch (e) {
       showToast(e.message, 'error')
@@ -511,6 +513,7 @@
       const res = await api.setAppdataPath(appdataPath)
       appdataPath = res.path
       appdataDefault = res.default || appdataDefault
+      markSaved('appdata')
       showToast('Appdata path saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -525,6 +528,7 @@
     try {
       const res = await api.setAppdataPath('')
       appdataPath = res.path
+      markSaved('appdata')
       showToast('Appdata path reset to default', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -538,6 +542,7 @@
     historyRetentionSaving = true
     try {
       settings = await api.updateSettings({ history_retention_days: historyRetention })
+      markSaved('history')
       showToast('History retention saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -561,6 +566,7 @@
       encryptionEnabled = true
       encPassphrase = ''
       encConfirm = ''
+      markSaved('encryption')
       showToast('Encryption passphrase set', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -652,6 +658,7 @@
           compactionThreshold = String(Math.round(f * 100))
         }
       }
+      markSaved('dedup')
       showToast('Compaction threshold saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -681,7 +688,7 @@
         auto_throttle_link_mbps: String(link),
         auto_throttle_floor_mbps: String(floor),
       })
-      savedThrottle = throttleSnap()
+      markSaved('throttle')
       showToast('Upload throttling saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -716,7 +723,7 @@
         label_exclusions_enabled: labelExclusionsEnabled ? 'true' : 'false',
       })
       globalExcludes = parseExcludeList(settings?.global_exclude_paths)
-      savedExclusions = exclusionsSnap()
+      markSaved('exclusions')
       showToast('Exclusions saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -754,6 +761,7 @@
       settings = await api.updateSettings(payload)
       retryMax = settings?.retry_max_default ?? retryMax
       retryDelays = settings?.retry_delays_default ?? retryDelays
+      markSaved('retry')
       showToast('Retry policy saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -811,6 +819,7 @@
     try {
       settings = await api.updateSettings({ memory_limit_mb: String(n) })
       memoryLimitMb = settings?.memory_limit_mb ?? String(n)
+      markSaved('memory')
       showToast(n === 0 ? 'Memory limit turned off' : 'Memory limit saved', 'success')
       await refreshRuntime()
     } catch (e) {
@@ -985,33 +994,59 @@
   let anomalySensitivityDefault = $state('balanced')
   let anomalyNotifyMinSeverity = $state('critical')
 
-  // Three sections hold their switch until the section's Save is pressed.
-  // Each remembers what was last loaded or saved, so a pending edit shows as
-  // unsaved and leaving the page asks first (#687). The other switches save
-  // as soon as they're flipped.
-  const throttleSnap = () => snapshot([autoThrottleEnabled, String(autoThrottleLink ?? ''), String(autoThrottleFloor ?? '')])
-  const exclusionsSnap = () => snapshot([globalExcludes, labelExclusionsEnabled])
-  const anomalySnap = () => snapshot([anomalyEnabled, anomalySensitivityDefault, anomalyNotifyMinSeverity])
-  let savedThrottle = $state(null)
-  let savedExclusions = $state(null)
-  let savedAnomaly = $state(null)
-  let throttleDirty = $derived(savedThrottle !== null && throttleSnap() !== savedThrottle)
-  let exclusionsDirty = $derived(savedExclusions !== null && exclusionsSnap() !== savedExclusions)
-  let anomalyDirty = $derived(savedAnomaly !== null && anomalySnap() !== savedAnomaly)
-  let anyUnsaved = $derived(!readOnly && (throttleDirty || exclusionsDirty || anomalyDirty))
-  let unsavedSections = $derived([
-    throttleDirty && 'Upload Throttling',
-    exclusionsDirty && 'Backup Exclusions',
-    anomalyDirty && 'Anomaly Detection',
-  ].filter(Boolean))
+  // Every section with its own Save or Apply remembers what was last loaded
+  // or saved, so a pending edit shows as unsaved and leaving the page by any
+  // route (links, the command palette, Back/Forward, closing the tab) asks
+  // first (#687, #719). Switching Settings tabs keeps the edits, so it never
+  // asks. Switches and selects that save as soon as they change aren't here.
+  const text = (v) => String(v ?? '')
+  const sections = {
+    // RetryDelaysEditor fills an empty value with one 15-minute row when it
+    // first shows, which isn't an edit.
+    retry: { label: 'Retry Policy', value: () => [text(retryMax), text(retryDelays).trim() || JSON.stringify([15 * 60])] },
+    throttle: { label: 'Upload Throttling', value: () => [autoThrottleEnabled, text(autoThrottleLink), text(autoThrottleFloor)] },
+    exclusions: { label: 'Backup Exclusions', value: () => [globalExcludes, labelExclusionsEnabled] },
+    dedup: { label: 'Dedup', value: () => [text(compactionThreshold)] },
+    anomaly: { label: 'Anomaly Detection', value: () => [anomalyEnabled, anomalySensitivityDefault, anomalyNotifyMinSeverity] },
+    appdata: { label: 'Appdata Path', value: () => [text(appdataPath)] },
+    staging: { label: 'Staging', value: () => [text(stagingOverrideInput)] },
+    history: { label: 'History Retention', value: () => [text(historyRetention)] },
+    database: { label: 'Database', value: () => [text(snapshotPathInput)] },
+    memory: { label: 'Memory', value: () => [text(memoryLimitMb)] },
+    discord: {
+      label: 'Discord',
+      value: () => [discordWebhookUrl, discordNotifyOn, discordBotUsername, discordBotAvatarUrl, discordMentionRoleId, discordMentionOn],
+    },
+    // Passphrase fields start empty and are cleared once saved or cancelled.
+    encryption: {
+      label: 'Encryption',
+      value: () => [encPassphrase, encConfirm, changingPassphrase ? changeNewPass : '', changingPassphrase ? changeConfirmPass : ''],
+    },
+  }
+  /** @type {Record<string, string>} */
+  let saved = $state({})
+  /** Take the current values of these sections as their saved baseline. */
+  function markSaved(...keys) {
+    for (const k of keys) saved[k] = snapshot(sections[k].value())
+  }
+  /** @type {Record<string, boolean>} */
+  let dirty = $derived(Object.fromEntries(
+    Object.keys(sections).map((k) => [k, saved[k] != null && snapshot(sections[k].value()) !== saved[k]]),
+  ))
+  let unsavedSections = $derived(readOnly ? [] : Object.keys(sections).filter((k) => dirty[k]).map((k) => sections[k].label))
+  let anyUnsaved = $derived(unsavedSections.length > 0)
 
-  // Where a held link was going, while "Leave without saving?" is open.
-  let leaveTarget = $state('')
-  function leaveSettings() {
-    const target = leaveTarget
-    leaveTarget = ''
-    savedThrottle = savedExclusions = savedAnomaly = null
-    window.location.hash = target
+  // Answers the router's leave guard while "Discard changes?" is open.
+  /** @type {((leave: boolean) => void) | null} */
+  let answerLeave = $state(null)
+  function confirmLeave() {
+    if (!anyUnsaved) return true
+    return new Promise((resolve) => {
+      answerLeave = (leave) => {
+        answerLeave = null
+        resolve(leave)
+      }
+    })
   }
   let anomalySaving = $state(false)
 
@@ -1057,7 +1092,7 @@
         anomaly_sensitivity_default: anomalySensitivityDefault,
         anomaly_notify_min_severity: anomalyNotifyMinSeverity,
       })
-      savedAnomaly = anomalySnap()
+      markSaved('anomaly')
       showToast('Anomaly detection settings saved', 'success')
       setAnomalyEnabled(anomalyEnabled)
     } catch (e) {
@@ -1120,13 +1155,13 @@
 
   $effect(() => {
     const stopUnload = guardUnload(() => anyUnsaved)
-    const stopLinks = guardLinks('/settings', () => anyUnsaved, (hash) => { leaveTarget = hash })
-    return () => { stopUnload(); stopLinks() }
+    const stopLeave = onBeforeLeave(confirmLeave)
+    return () => { stopUnload(); stopLeave() }
   })
 </script>
 
-{#snippet unsavedNote(dirty, key)}
-  <span id="unsaved-{key}" role="status" class="text-xs font-medium text-warning flex items-center gap-1.5">
+{#snippet unsavedNote(dirty, key, extra = '')}
+  <span id="unsaved-{key}" role="status" class="text-xs font-medium text-warning flex items-center gap-1.5 {dirty ? extra : ''}">
     {#if dirty}
       <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.error}/></svg>
       Unsaved changes
@@ -1363,10 +1398,12 @@
             </div>
           </div>
           {#if !readOnly}
-          <div class="flex justify-end">
+          <div class="flex flex-wrap items-center justify-end gap-3">
+            {@render unsavedNote(dirty.retry, 'retry')}
             <button
               onclick={saveRetryPolicy}
               disabled={retrySaving}
+              aria-describedby={dirty.retry ? 'unsaved-retry' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if retrySaving}<InlineSpinner />{/if}
@@ -1417,8 +1454,8 @@
           <p class="text-xs text-text-dim">Applies to uploads to network destinations (SFTP, SMB, NFS, WebDAV, S3). Per-destination bandwidth caps still apply — the stricter limit wins. Takes effect within a few seconds of saving, no restart needed.</p>
           {#if !readOnly}
           <div class="flex flex-wrap items-center justify-end gap-3">
-            {@render unsavedNote(throttleDirty, 'throttle')}
-            <button onclick={saveAutoThrottle} disabled={autoThrottleSaving} aria-describedby={throttleDirty ? 'unsaved-throttle' : undefined}
+            {@render unsavedNote(dirty.throttle, 'throttle')}
+            <button onclick={saveAutoThrottle} disabled={autoThrottleSaving} aria-describedby={dirty.throttle ? 'unsaved-throttle' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
               {#if autoThrottleSaving}<InlineSpinner />{/if}
               Save Upload Throttling
@@ -1460,8 +1497,8 @@
           </div>
           {#if !readOnly}
           <div class="flex flex-wrap items-center justify-end gap-3">
-            {@render unsavedNote(exclusionsDirty, 'exclusions')}
-            <button onclick={saveExclusions} disabled={exclusionsSaving} aria-describedby={exclusionsDirty ? 'unsaved-exclusions' : undefined}
+            {@render unsavedNote(dirty.exclusions, 'exclusions')}
+            <button onclick={saveExclusions} disabled={exclusionsSaving} aria-describedby={dirty.exclusions ? 'unsaved-exclusions' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
               {#if exclusionsSaving}<InlineSpinner />{/if}
               Save Exclusions
@@ -1504,11 +1541,13 @@
                 type="button"
                 onclick={saveCompactionThreshold}
                 disabled={compactionSaving}
+                aria-describedby={dirty.dedup ? 'unsaved-dedup' : undefined}
                 class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {#if compactionSaving}<InlineSpinner />{/if}
                 {compactionSaving ? 'Saving…' : 'Save'}
               </button>
+              {@render unsavedNote(dirty.dedup, 'dedup')}
               {/if}
             </div>
           </div>
@@ -1573,11 +1612,11 @@
           <!-- Save button -->
           {#if !readOnly}
           <div class="px-5 py-3 flex flex-wrap items-center justify-end gap-3">
-            {@render unsavedNote(anomalyDirty, 'anomaly')}
+            {@render unsavedNote(dirty.anomaly, 'anomaly')}
             <button
               onclick={saveAnomalySettings}
               disabled={anomalySaving}
-              aria-describedby={anomalyDirty ? 'unsaved-anomaly' : undefined}
+              aria-describedby={dirty.anomaly ? 'unsaved-anomaly' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if anomalySaving}
@@ -1810,10 +1849,12 @@
             </div>
           </div>
           {#if !readOnly}
-          <div class="px-5 py-3 flex justify-end">
+          <div class="px-5 py-3 flex flex-wrap items-center justify-end gap-3">
+            {@render unsavedNote(dirty.discord, 'discord')}
             <button
               onclick={saveDiscordSettings}
               disabled={discordSaving}
+              aria-describedby={dirty.discord ? 'unsaved-discord' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if discordSaving}
@@ -1909,10 +1950,11 @@
                     <p id="change-mismatch" class="text-xs text-danger">Passphrases do not match</p>
                   {/if}
                   <div class="flex items-center gap-2">
-                    <button onclick={saveChangePassphrase} disabled={encSaving || !changeNewPass || !changeConfirmPass || changeNewPass !== changeConfirmPass} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                    <button onclick={saveChangePassphrase} aria-describedby={dirty.encryption ? 'unsaved-encryption' : undefined} disabled={encSaving || !changeNewPass || !changeConfirmPass || changeNewPass !== changeConfirmPass} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                       {#if encSaving}<InlineSpinner />{/if}
                       {encSaving ? 'Saving…' : 'Update Passphrase'}
                     </button>
+                    {@render unsavedNote(dirty.encryption, 'encryption')}
                     <button onclick={cancelChangePassphrase} class="px-4 py-2 text-sm font-medium rounded-lg text-text-muted hover:text-text transition-colors">
                       Cancel
                     </button>
@@ -1951,10 +1993,11 @@
                 {#if encMismatch}
                   <p id="enc-mismatch" class="text-xs text-danger">Passphrases do not match</p>
                 {/if}
-                <button onclick={saveEncryption} disabled={encSaving || !encPassphrase || !encConfirm || encPassphrase !== encConfirm} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                <button onclick={saveEncryption} aria-describedby={dirty.encryption ? 'unsaved-encryption' : undefined} disabled={encSaving || !encPassphrase || !encConfirm || encPassphrase !== encConfirm} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                   {#if encSaving}<InlineSpinner />{/if}
                   {encSaving ? 'Saving…' : 'Set Passphrase'}
                 </button>
+                {@render unsavedNote(dirty.encryption, 'encryption')}
               </div>
               {/if}
             </div>
@@ -2108,12 +2151,13 @@
                 <PathBrowser bind:value={appdataPath} includeZfs={true} />
               </div>
               {#if !readOnly}
-              <button onclick={saveAppdataPath} disabled={appdataSaving || !appdataPath} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
+              <button onclick={saveAppdataPath} aria-describedby={dirty.appdata ? 'unsaved-appdata' : undefined} disabled={appdataSaving || !appdataPath} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
                 {#if appdataSaving}<InlineSpinner />{/if}
                 Apply
               </button>
               {/if}
             </div>
+            {@render unsavedNote(dirty.appdata, 'appdata', 'mt-2')}
             {#if appdataPath !== appdataDefault && !readOnly}
               <button onclick={resetAppdataPath} disabled={appdataSaving} class="mt-2 text-xs text-vault-text hover:underline">
                 Reset to default ({appdataDefault})
@@ -2165,12 +2209,13 @@
                 <PathBrowser bind:value={stagingOverrideInput} includeZfs={true} />
               </div>
               {#if !readOnly}
-              <button onclick={saveStagingOverride} disabled={stagingSaving || !stagingOverrideInput} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
+              <button onclick={saveStagingOverride} aria-describedby={dirty.staging ? 'unsaved-staging' : undefined} disabled={stagingSaving || !stagingOverrideInput} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
                 {#if stagingSaving}<InlineSpinner />{/if}
                 Apply
               </button>
               {/if}
             </div>
+            {@render unsavedNote(dirty.staging, 'staging', 'mt-2')}
             {#if stagingInfo.override && !readOnly}
               <button onclick={resetStagingOverride} disabled={stagingSaving} class="mt-2 text-xs text-vault-text hover:underline">
                 Reset to automatic
@@ -2189,7 +2234,7 @@
           <h2 id="set-history-heading" class="text-base font-semibold text-text">History Retention</h2>
           <p class="text-xs text-text-muted mt-0.5">How long to keep backup/restore run history. Recoverable backups are not affected - they follow each job's own retention.</p>
         </div>
-        <div class="p-5 flex items-center gap-2">
+        <div class="p-5 flex flex-wrap items-center gap-2">
           <select bind:value={historyRetention} disabled={readOnly} aria-labelledby="set-history-heading"
             class="px-2.5 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text cursor-pointer max-lg:min-h-11">
             <option value="30">30 days</option>
@@ -2201,10 +2246,12 @@
           </select>
           {#if !readOnly}
           <button type="button" onclick={saveHistoryRetention} disabled={historyRetentionSaving}
+            aria-describedby={dirty.history ? 'unsaved-history' : undefined}
             class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
             {#if historyRetentionSaving}<InlineSpinner />{/if}
             Save
           </button>
+          {@render unsavedNote(dirty.history, 'history')}
           {/if}
         </div>
       </div>
@@ -2451,11 +2498,12 @@
                    click rather than a side effect of confirming a folder. -->
               <PathBrowser bind:value={snapshotPathInput} includeZfs={true} />
             </div>
-            <button onclick={saveSnapshotPath} disabled={snapshotPathSaving || !snapshotPathInput} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
+            <button onclick={saveSnapshotPath} aria-describedby={dirty.database ? 'unsaved-database' : undefined} disabled={snapshotPathSaving || !snapshotPathInput} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
               {#if snapshotPathSaving}<InlineSpinner />{/if}
               Apply
             </button>
           </div>
+          {@render unsavedNote(dirty.database, 'database', 'mt-2')}
           {#if databaseInfo.snapshot_path_override}
             <button onclick={resetSnapshotPath} disabled={snapshotPathSaving} class="mt-2 text-xs text-vault-text hover:underline">
               Reset to default
@@ -2533,11 +2581,13 @@
               <button
                 onclick={saveMemoryLimit}
                 disabled={memoryLimitSaving}
+                aria-describedby={dirty.memory ? 'unsaved-memory' : undefined}
                 class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {#if memoryLimitSaving}<InlineSpinner />{/if}
                 Save Memory Limit
               </button>
+              {@render unsavedNote(dirty.memory, 'memory')}
               {/if}
             </div>
             <p class="text-xs text-text-muted">
@@ -2664,14 +2714,13 @@
 />
 
 <ConfirmDialog
-  show={!!leaveTarget}
-  title="Leave without saving?"
+  show={answerLeave !== null}
+  title="Discard changes?"
   message={`Unsaved changes in ${unsavedSections.join(', ')} will be lost.`}
-  confirmLabel="Leave"
-  cancelLabel="Stay"
-  variant="warning"
-  onconfirm={leaveSettings}
-  oncancel={() => { leaveTarget = '' }}
+  confirmLabel="Discard"
+  cancelLabel="Keep editing"
+  onconfirm={() => answerLeave?.(true)}
+  oncancel={() => answerLeave?.(false)}
 />
 
 <style>
