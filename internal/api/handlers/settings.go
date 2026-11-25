@@ -19,6 +19,7 @@ import (
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/diagnostics"
 	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/health"
 	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/notify"
 	"github.com/tinkerologie/vault/internal/safepath"
@@ -317,7 +318,7 @@ var protectedSettingKeys = map[string]bool{
 	"appdata_path":           true,
 	// The vault.key copy record and the loaded key's fingerprint are written
 	// only by the download, the acknowledge endpoint and daemon start-up (#714).
-	serverKeySavedSetting:          true,
+	health.ServerKeySavedSetting:   true,
 	db.ServerKeyFingerprintSetting: true,
 }
 
@@ -518,7 +519,7 @@ func (h *SettingsHandler) GetServerKey(w http.ResponseWriter, _ *http.Request) {
 	// The Dashboard and Disaster Recovery stop warning that vault.key exists
 	// only on this server once a copy has been sent (#714). A download that
 	// never reached the client doesn't count.
-	if err := recordServerKeyCopy(h.db, h.serverKey, time.Now()); err != nil {
+	if err := health.RecordServerKeyCopy(h.db, h.serverKey, time.Now()); err != nil {
 		log.Printf("settings: recording the vault.key download: %v", err)
 	}
 }
@@ -533,7 +534,7 @@ func (h *SettingsHandler) AcknowledgeServerKey(w http.ResponseWriter, _ *http.Re
 		respondError(w, http.StatusServiceUnavailable, "server key is not configured")
 		return
 	}
-	if err := recordServerKeyCopy(h.db, h.serverKey, time.Now()); err != nil {
+	if err := health.RecordServerKeyCopy(h.db, h.serverKey, time.Now()); err != nil {
 		respondInternalError(w, fmt.Errorf("recording the vault.key copy: %w", err))
 		return
 	}

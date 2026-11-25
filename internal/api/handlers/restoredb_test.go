@@ -15,6 +15,7 @@ import (
 
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/health"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/ws"
 )
@@ -280,7 +281,7 @@ func TestRestoreDBReopensAndReseals(t *testing.T) {
 		if err := fd.SetSetting(db.ServerKeyFingerprintSetting, "0123456789abcdef"); err != nil {
 			t.Fatal(err)
 		}
-		if err := fd.SetSetting(serverKeySavedSetting, "2026-11-01T00:00:00Z 0123456789abcdef"); err != nil {
+		if err := fd.SetSetting(health.ServerKeySavedSetting, "2026-11-01T00:00:00Z 0123456789abcdef"); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -315,7 +316,7 @@ func TestRestoreDBReopensAndReseals(t *testing.T) {
 	if fp, _ := h.db.GetSetting(db.ServerKeyFingerprintSetting, ""); fp != crypto.ServerKeyFingerprint(serverKey) {
 		t.Fatalf("fingerprint after restore = %q, want the running key's", fp)
 	}
-	if serverKeyCopyRecorded(h.db) {
+	if health.ServerKeyCopyRecorded(h.db) {
 		t.Fatal("the old server's saved-copy record still counts after restore")
 	}
 

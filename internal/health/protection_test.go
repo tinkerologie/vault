@@ -1,4 +1,4 @@
-package handlers
+package health
 
 import (
 	"slices"
@@ -89,9 +89,9 @@ func TestProtectionClassifier(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := newProtectionClassifier(now)
+			c := NewProtectionClassifier(now)
 			for i, job := range tc.jobs {
-				c.addJob(job, tc.items[i], tc.rps[i])
+				c.AddJob(job, tc.items[i], tc.rps[i])
 			}
 			check := func(label string, got, want []string) {
 				t.Helper()
@@ -112,14 +112,14 @@ func TestProtectionClassifier(t *testing.T) {
 func TestProtectionClassifier_NewestBackup(t *testing.T) {
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
 	older, newer := now.Add(-48*time.Hour), now.Add(-time.Hour)
-	c := newProtectionClassifier(now)
+	c := NewProtectionClassifier(now)
 	job := db.Job{ID: 1, Enabled: true, Schedule: "0 2 * * *"}
-	c.addJob(job, protectionItems(1, "plex"), []db.RestorePoint{protectionRP(older, "")})
-	c.addJob(db.Job{ID: 2}, protectionItems(2, "plex"), []db.RestorePoint{protectionRP(newer, "")})
-	if at, ok := c.newestBackup("container:plex"); !ok || !at.Equal(newer) {
+	c.AddJob(job, protectionItems(1, "plex"), []db.RestorePoint{protectionRP(older, "")})
+	c.AddJob(db.Job{ID: 2}, protectionItems(2, "plex"), []db.RestorePoint{protectionRP(newer, "")})
+	if at, ok := c.NewestBackup("container:plex"); !ok || !at.Equal(newer) {
 		t.Errorf("newestBackup = %v, %v; want %v", at, ok, newer)
 	}
-	if _, ok := c.newestBackup("container:none"); ok {
+	if _, ok := c.NewestBackup("container:none"); ok {
 		t.Error("newestBackup reported a backup for an unknown item")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/health"
 )
 
 // seedProtectedItem adds an item to the job and a Restore Point of the given
@@ -177,7 +178,7 @@ func TestHealthSummary_ServerKeyAtRisk(t *testing.T) {
 				}
 			}
 			if tc.saved != "" {
-				if err := d.SetSetting(serverKeySavedSetting, tc.saved); err != nil {
+				if err := d.SetSetting(health.ServerKeySavedSetting, tc.saved); err != nil {
 					t.Fatal(err)
 				}
 			}
