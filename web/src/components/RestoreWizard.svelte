@@ -10,7 +10,8 @@
   import { matchesJobId, outcomeFromCompletion, outcomeFromRun, shouldClearOnSnapshot, waitForRestoreOutcome } from '../lib/restore-sync.js'
   import { getPointCoverage, assignItemsToChosenPoints } from '../lib/restore-plan.js'
   import { jobItemSignatures, reconcileJobState } from '../lib/restore-wizard-state.js'
-  import { formatDate, formatBytes, itemDisplayLabel, itemTypeIcon, itemTypeColor, itemTypeLabel, itemTypeSingularLabel, effectiveItemType, commonItemType, buildFileTree } from '../lib/utils.js'
+  import { formatDate, formatBytes, itemDisplayLabel, itemTypeIcon, itemTypeColor, itemTypeLabel, itemTypeSingularLabel, effectiveItemType, commonItemType } from '../lib/utils.js'
+  import { createFileTreeModel } from '../lib/file-tree-model.js'
   import PathBrowser from './PathBrowser.svelte'
   import ItemProgress from './ItemProgress.svelte'
   import Spinner from './Spinner.svelte'
@@ -379,14 +380,17 @@
     if (!picker.has(key)) {
       picker.set(key, {
         contents: null,
-        tree: null,
+        // A file-tree model (#703): selection, counts and expansion live in
+        // it, and `rev` is bumped whenever it changes so the UI re-reads it.
+        model: null,
+        rev: 0,
+        selectedCount: 0,
         totalFiles: 0,
-        selected: new SvelteSet(),
-        expandedPaths: new SvelteSet(),
         loading: false,
         error: '',
         errorStatus: 0,
         loadId: 0,
+        searchInput: '',
         search: '',
         open: false,
       })
@@ -437,137 +441,47 @@
       if (!point) throw new Error('No restore point found for item')
       const contents = await api.getRestorePointContents(point.jobId, point.id, item.name)
       if (!isCurrent()) return
-      const files = contents?.files || []
-      const tree = buildFileTree(files)
-      const totalFiles = tree.reduce((sum, n) => sum + (n.descendantLeafCount || 0), 0)
-      const selected = new SvelteSet()
-      for (const root of tree) {
-        for (const p of root.descendantLeafPaths) {
-          selected.add(p)
-        }
-      }
-      updateEntry(item, { contents, tree, totalFiles, selected, loading: false })
+      const model = createFileTreeModel(contents?.files || [])
+      updateEntry(item, { contents, model, totalFiles: model.totalLeaves, selectedCount: model.selectedCount(), loading: false })
     } catch (e) {
       if (!isCurrent()) return
       updateEntry(item, { error: e?.message || 'failed to load file list', errorStatus: e?.status || 0, loading: false })
     }
   }
 
-  function toggleNodePicked(item, node) {
-    const key = itemKey(item)
-    const entry = picker.get(key)
-    if (!entry) return
-    if (!node.isDir) {
-      if (entry.selected.has(node.path)) entry.selected.delete(node.path)
-      else entry.selected.add(node.path)
-    } else {
-      const paths = node.descendantLeafPaths || []
-      const allSelected = paths.length > 0 && paths.every(p => entry.selected.has(p))
-      if (allSelected) {
-        for (const p of paths) entry.selected.delete(p)
-      } else {
-        for (const p of paths) entry.selected.add(p)
-      }
-    }
-    updateEntry(item, {})
+  // Re-reads the model after it changed, so counts and the tree update.
+  function touchModel(item) {
+    const entry = picker.get(itemKey(item))
+    if (!entry?.model) return
+    updateEntry(item, { rev: entry.rev + 1, selectedCount: entry.model.selectedCount() })
   }
 
-  function toggleFolderExpanded(item, dirPath) {
-    const key = itemKey(item)
-    const entry = picker.get(key)
-    if (!entry) return
-    if (!entry.expandedPaths) entry.expandedPaths = new SvelteSet()
-    if (entry.expandedPaths.has(dirPath)) {
-      entry.expandedPaths.delete(dirPath)
-    } else {
-      entry.expandedPaths.add(dirPath)
-    }
-    updateEntry(item, {})
+  function selectAllFiles(item, value = true) {
+    const entry = picker.get(itemKey(item))
+    if (!entry?.model) return
+    entry.model.setMatching(entry.search, value)
+    touchModel(item)
   }
 
-  function selectAllFiles(item) {
-    const key = itemKey(item)
-    const entry = picker.get(key)
-    if (!entry?.tree) return
-    const q = entry.search.trim().toLowerCase()
-    if (!q) {
-      for (const root of entry.tree) {
-        for (const p of root.descendantLeafPaths) {
-          entry.selected.add(p)
-        }
-      }
-    } else {
-      function selectMatching(nodes) {
-        for (const n of nodes) {
-          if (!n.isDir) {
-            if (n.name.toLowerCase().includes(q) || n.path.toLowerCase().includes(q)) {
-              entry.selected.add(n.path)
-            }
-          } else {
-            if (n.name.toLowerCase().includes(q) || n.path.toLowerCase().includes(q)) {
-              for (const p of n.descendantLeafPaths) entry.selected.add(p)
-            } else if (n.children) {
-              selectMatching(n.children)
-            }
-          }
-        }
-      }
-      selectMatching(entry.tree)
-    }
-    updateEntry(item, {})
+  function expandAllFolders(item, open = true) {
+    const entry = picker.get(itemKey(item))
+    if (!entry?.model) return
+    if (open) entry.model.expandAll()
+    else entry.model.collapseAll()
+    touchModel(item)
   }
 
-  function deselectAllFiles(item) {
+  // The filter applies after typing pauses, so each keystroke stays cheap (#703).
+  const FILTER_DEBOUNCE_MS = 150
+  const filterTimers = {}
+  function onFilterInput(item, value) {
     const key = itemKey(item)
-    const entry = picker.get(key)
-    if (!entry?.tree) return
-    const q = entry.search.trim().toLowerCase()
-    if (!q) {
-      entry.selected.clear()
-    } else {
-      function deselectMatching(nodes) {
-        for (const n of nodes) {
-          if (!n.isDir) {
-            if (n.name.toLowerCase().includes(q) || n.path.toLowerCase().includes(q)) {
-              entry.selected.delete(n.path)
-            }
-          } else {
-            if (n.name.toLowerCase().includes(q) || n.path.toLowerCase().includes(q)) {
-              for (const p of n.descendantLeafPaths) entry.selected.delete(p)
-            } else if (n.children) {
-              deselectMatching(n.children)
-            }
-          }
-        }
-      }
-      deselectMatching(entry.tree)
-    }
-    updateEntry(item, {})
-  }
-
-  function expandAllFolders(item) {
-    const key = itemKey(item)
-    const entry = picker.get(key)
-    if (!entry?.tree) return
-    if (!entry.expandedPaths) entry.expandedPaths = new SvelteSet()
-    function collectDirs(nodes) {
-      for (const n of nodes) {
-        if (n.isDir) {
-          entry.expandedPaths.add(n.path)
-          if (n.children) collectDirs(n.children)
-        }
-      }
-    }
-    collectDirs(entry.tree)
-    updateEntry(item, {})
-  }
-
-  function collapseAllFolders(item) {
-    const key = itemKey(item)
-    const entry = picker.get(key)
-    if (!entry?.expandedPaths) return
-    entry.expandedPaths.clear()
-    updateEntry(item, {})
+    updateEntry(item, { searchInput: value })
+    clearTimeout(filterTimers[key])
+    filterTimers[key] = setTimeout(() => {
+      delete filterTimers[key]
+      if (picker.has(key)) updateEntry(item, { search: value })
+    }, FILTER_DEBOUNCE_MS)
   }
 
   function switchLogUnit(unitRun) {
@@ -1051,16 +965,14 @@
   function unitHasPartialSelection(unit) {
     return unit.items.some(item => {
       const entry = picker.get(itemKey(item))
-      const total = entry?.totalFiles ?? (entry?.contents?.files?.length || 0)
-      return entry?.selected && entry.selected.size > 0 && entry.selected.size < total
+      return !!entry?.model && entry.selectedCount > 0 && entry.selectedCount < entry.totalFiles
     })
   }
 
   function unitHasEmptySelection(unit) {
     return unit.items.some(item => {
       const entry = picker.get(itemKey(item))
-      const total = entry?.totalFiles ?? (entry?.contents?.files?.length || 0)
-      return entry?.contents && total > 0 && entry.selected.size === 0
+      return !!entry?.model && entry.totalFiles > 0 && entry.selectedCount === 0
     })
   }
 
@@ -1200,11 +1112,8 @@
       const filePaths = {}
       for (const item of unit.items) {
         const entry = picker.get(itemKey(item))
-        if (entry?.contents && entry?.selected) {
-          const total = entry.totalFiles ?? (entry.contents.files?.length || 0)
-          if (entry.selected.size > 0 && entry.selected.size < total) {
-            filePaths[item.name] = Array.from(entry.selected)
-          }
+        if (entry?.model && entry.selectedCount > 0 && entry.selectedCount < entry.totalFiles) {
+          filePaths[item.name] = entry.model.selectedPaths()
         }
       }
       if (Object.keys(filePaths).length > 0) {
@@ -2055,8 +1964,8 @@
         <div class="space-y-3 pt-2">
           {#each unit.items as item (itemKey(item))}
             {@const entry = picker.get(itemKey(item))}
-            {@const sel = entry?.selected?.size || 0}
-            {@const total = entry?.totalFiles ?? (entry?.contents?.files?.length || 0)}
+            {@const sel = entry?.selectedCount || 0}
+            {@const total = entry?.totalFiles || 0}
             {@const emptyContents = !!entry?.contents && total === 0}
             {#if !supportsFilePicker(item.type)}
               <div class="bg-surface-1 border border-border rounded-xl p-3 text-sm flex items-center justify-between gap-3">
@@ -2080,11 +1989,11 @@
                   <span class="text-xs text-text-muted">
                     {#if total > 0}
                       {#if sel === total}
-                        <span class="text-hue-emerald font-medium">All {total} files selected</span>
+                        <span class="text-hue-emerald font-medium">All {total.toLocaleString()} files selected</span>
                       {:else if sel > 0}
-                        <span class="text-hue-amber font-medium">{sel} of {total} files selected</span>
+                        <span class="text-hue-amber font-medium">{sel.toLocaleString()} of {total.toLocaleString()} files selected</span>
                       {:else}
-                        <span class="text-danger font-medium">0 of {total} files selected (none)</span>
+                        <span class="text-danger font-medium">0 of {total.toLocaleString()} files selected (none)</span>
                       {/if}
                     {:else if entry?.error}
                       <span class="text-danger">{entry.error}</span>
@@ -2126,33 +2035,28 @@
                       <p class="text-xs text-text-muted">This backup captured no restorable files for this item.</p>
                     {:else}
                       <div class="flex flex-wrap items-center gap-2">
-                        <input type="text" placeholder="Filter by path…" bind:value={entry.search} aria-label="Filter paths in {itemDisplayLabel(item)}"
+                        <input type="text" placeholder="Filter by path…" value={entry.searchInput} oninput={(e) => onFilterInput(item, e.currentTarget.value)} aria-label="Filter paths in {itemDisplayLabel(item)}"
                           class="flex-1 min-w-40 px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-vault" />
                         <button type="button" onclick={() => selectAllFiles(item)}
                           class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors cursor-pointer">Select all</button>
-                        <button type="button" onclick={() => deselectAllFiles(item)}
+                        <button type="button" onclick={() => selectAllFiles(item, false)}
                           class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors cursor-pointer">Deselect all</button>
                         <button type="button" onclick={() => expandAllFolders(item)} title="Expand all folders"
                           class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors cursor-pointer">Expand all</button>
-                        <button type="button" onclick={() => collapseAllFolders(item)} title="Collapse all folders"
+                        <button type="button" onclick={() => expandAllFolders(item, false)} title="Collapse all folders"
                           class="text-xs px-2.5 py-1.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors cursor-pointer">Collapse all</button>
                       </div>
-                      <div class="max-h-72 overflow-y-auto border border-border rounded-lg bg-surface-3/30 p-1">
-                        {#if entry.tree && entry.tree.length > 0}
-                          <FileTree
-                            nodes={entry.tree}
-                            selected={entry.selected}
-                            expandedPaths={entry.expandedPaths}
-                            search={entry.search}
-                            ontoggle={(node) => toggleNodePicked(item, node)}
-                            ontoggleexpand={(dirPath) => toggleFolderExpanded(item, dirPath)}
-                          />
-                        {/if}
-                      </div>
+                      <FileTree
+                        model={entry.model}
+                        rev={entry.rev}
+                        search={entry.search}
+                        label="Files in {itemDisplayLabel(item)}"
+                        onchange={() => touchModel(item)}
+                      />
                       {#if sel === total && total > 0}
-                        <p class="text-xs text-text-muted">All {total} files selected. Entire backup will be restored.</p>
+                        <p class="text-xs text-text-muted">All {total.toLocaleString()} files selected. Entire backup will be restored.</p>
                       {:else if sel > 0 && sel < total}
-                        <p class="text-xs text-info">Partial restore: restoring {sel} of {total} selected files.</p>
+                        <p class="text-xs text-info">Partial restore: restoring {sel.toLocaleString()} of {total.toLocaleString()} selected files.</p>
                       {:else if sel === 0 && total > 0}
                         <p class="text-xs text-danger font-medium">No files selected. You must select at least one file to restore, or remove {item.name} from the restore in Step 1.</p>
                       {/if}

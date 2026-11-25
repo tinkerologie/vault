@@ -195,6 +195,7 @@ test.describe('Stopping a restore and next steps (#701)', () => {
     await dockerPoint(page).click();
     await page.getByRole('checkbox', { name: /Clear the destination first/ }).uncheck();
     await page.getByRole('button', { name: 'Run checks', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Start Restore', exact: true })).toBeEnabled();
     await page.getByRole('button', { name: 'Start Restore', exact: true }).focus();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('heading', { name: 'Restore in progress' })).toBeFocused();
@@ -266,4 +267,10 @@ test.describe('Items only restore points still hold (#669)', () => {
     await page.getByRole('button', { name: 'Start Restore', exact: true }).click();
     expect((await restore).postDataJSON()).toMatchObject({ restore_point_id: 1001, items: ['sonarr'] });
   });
+});
+
+test('View run opens that run in History (#701)', async ({ page }) => {
+  await setupVaultMockApi(page);
+  await page.goto('/#/history?run=901');
+  await expect(page.locator('#run-901').getByRole('button', { expanded: true })).toBeVisible();
 });

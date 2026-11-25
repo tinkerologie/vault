@@ -468,7 +468,7 @@ test.describe('Restore Wizard partial-restore file picker (#449)', () => {
     await expect(page.getByText('Loading file list…')).toBeVisible();
 
     release();
-    await expect(page.getByLabel('Select config')).toBeVisible();
+    await expect(page.getByRole('treeitem', { name: /^config / })).toBeVisible();
     await expect(page.getByText('All 2 files selected').first()).toBeVisible();
   });
 
@@ -492,12 +492,13 @@ test.describe('Restore Wizard partial-restore file picker (#449)', () => {
     await expect(page.getByText(/whole-archive|whole item is restored/i)).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Retry', exact: true }).click();
-    await expect(page.getByLabel('Select config')).toBeVisible();
+    await expect(page.getByRole('treeitem', { name: /^config / })).toBeVisible();
     expect(calls).toBe(2);
 
     // Deselect one file; the remaining one is submitted as a partial restore.
-    await page.getByRole('button', { name: 'Expand config' }).click();
-    await page.getByLabel('Select database.db').uncheck();
+    await page.getByRole('treeitem', { name: /^config / }).click();
+    await page.getByRole('treeitem', { name: /^database\.db / }).click();
+    await expect(page.getByRole('treeitem', { name: /^database\.db / })).toHaveAttribute('aria-checked', 'false');
     await expect(page.getByText('Partial restore: restoring 1 of 2 selected files.')).toBeVisible();
 
     const restoreRequests: unknown[] = [];
@@ -581,7 +582,7 @@ test.describe('Restore Wizard partial-restore file picker (#449)', () => {
     await expect.poll(() => calls).toBe(1);
     await page.waitForTimeout(250);
     await expect(summary).toContainText('Click to browse contents');
-    await expect(page.getByLabel('Select config')).toHaveCount(0);
+    await expect(page.getByRole('treeitem', { name: /^config / })).toHaveCount(0);
   });
 
   test('an unbrowsable restore point explains the whole-item fallback', async ({ page }) => {
