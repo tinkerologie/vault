@@ -408,6 +408,7 @@
   async function saveDiscordSettings() {
     if (readOnly) return
     discordSaving = true
+    const sent = sending('discord')
     try {
       settings = await api.updateSettings({
         discord_webhook_url: discordWebhookUrl,
@@ -417,7 +418,7 @@
         discord_mention_role_id: discordMentionRoleId,
         discord_mention_on: discordMentionOn,
       })
-      markSaved('discord')
+      settleSave('discord', sent)
       showToast('Discord settings saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -446,11 +447,12 @@
   async function saveStagingOverride() {
     if (readOnly) return
     stagingSaving = true
+    const sent = sending('staging')
     try {
       stagingInfo = await api.setStagingOverride(stagingOverrideInput)
-      stagingOverrideInput = stagingInfo?.override || ''
-      markSaved('staging')
-      showToast(stagingOverrideInput ? 'Staging path updated' : 'Staging reset to auto', 'success')
+      const override = stagingInfo?.override || ''
+      settleSave('staging', sent, () => { stagingOverrideInput = override })
+      showToast(override ? 'Staging path updated' : 'Staging reset to auto', 'success')
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -462,9 +464,10 @@
     if (readOnly) return
     stagingOverrideInput = ''
     stagingSaving = true
+    const sent = sending('staging')
     try {
       stagingInfo = await api.setStagingOverride('')
-      markSaved('staging')
+      settleSave('staging', sent)
       showToast('Staging reset to automatic cascade', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -475,14 +478,15 @@
 
   async function saveSnapshotPath() {
     snapshotPathSaving = true
+    const sent = sending('database')
     try {
       databaseInfo = await api.setSnapshotPath(snapshotPathInput)
-      snapshotPathInput = databaseInfo?.snapshot_path_override || ''
+      const override = databaseInfo?.snapshot_path_override || ''
       const { text, tone } = snapshotMigrationMessage(
         databaseInfo,
-        snapshotPathInput ? 'Snapshot path updated' : 'Snapshot path reset to default',
+        override ? 'Snapshot path updated' : 'Snapshot path reset to default',
       )
-      markSaved('database')
+      settleSave('database', sent, () => { snapshotPathInput = override })
       showToast(text, tone)
     } catch (e) {
       showToast(e.message, 'error')
@@ -494,10 +498,11 @@
   async function resetSnapshotPath() {
     snapshotPathInput = ''
     snapshotPathSaving = true
+    const sent = sending('database')
     try {
       databaseInfo = await api.setSnapshotPath('')
       const { text, tone } = snapshotMigrationMessage(databaseInfo, 'Snapshot path reset to default')
-      markSaved('database')
+      settleSave('database', sent)
       showToast(text, tone)
     } catch (e) {
       showToast(e.message, 'error')
@@ -509,11 +514,11 @@
   async function saveAppdataPath() {
     if (readOnly) return
     appdataSaving = true
+    const sent = sending('appdata')
     try {
       const res = await api.setAppdataPath(appdataPath)
-      appdataPath = res.path
       appdataDefault = res.default || appdataDefault
-      markSaved('appdata')
+      settleSave('appdata', sent, () => { appdataPath = res.path })
       showToast('Appdata path saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -525,10 +530,10 @@
   async function resetAppdataPath() {
     if (readOnly) return
     appdataSaving = true
+    const sent = sending('appdata')
     try {
       const res = await api.setAppdataPath('')
-      appdataPath = res.path
-      markSaved('appdata')
+      settleSave('appdata', sent, () => { appdataPath = res.path })
       showToast('Appdata path reset to default', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -540,9 +545,10 @@
   async function saveHistoryRetention() {
     if (readOnly) return
     historyRetentionSaving = true
+    const sent = sending('history')
     try {
       settings = await api.updateSettings({ history_retention_days: historyRetention })
-      markSaved('history')
+      settleSave('history', sent)
       showToast('History retention saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -650,15 +656,14 @@
         return
       }
       const value = (n / 100).toFixed(2) // "0.50"
+      const sent = sending('dedup')
       settings = await api.updateSettings({ dedup_compaction_min_dead_ratio: value })
       const rawRatio = settings?.dedup_compaction_min_dead_ratio
-      if (rawRatio !== undefined && rawRatio !== null && rawRatio !== '') {
+      settleSave('dedup', sent, () => {
+        if (rawRatio === undefined || rawRatio === null || rawRatio === '') return
         const f = Number.parseFloat(rawRatio)
-        if (Number.isFinite(f)) {
-          compactionThreshold = String(Math.round(f * 100))
-        }
-      }
-      markSaved('dedup')
+        if (Number.isFinite(f)) compactionThreshold = String(Math.round(f * 100))
+      })
       showToast('Compaction threshold saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -683,12 +688,13 @@
         autoThrottleSaving = false
         return
       }
+      const sent = sending('throttle')
       settings = await api.updateSettings({
         auto_throttle_enabled: autoThrottleEnabled ? 'true' : 'false',
         auto_throttle_link_mbps: String(link),
         auto_throttle_floor_mbps: String(floor),
       })
-      markSaved('throttle')
+      settleSave('throttle', sent)
       showToast('Upload throttling saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -718,12 +724,13 @@
         .split('\n')
         .map((p) => p.trim())
         .filter((p) => p !== '')
+      const sent = sending('exclusions')
       settings = await api.updateSettings({
         global_exclude_paths: JSON.stringify(paths),
         label_exclusions_enabled: labelExclusionsEnabled ? 'true' : 'false',
       })
-      globalExcludes = parseExcludeList(settings?.global_exclude_paths)
-      markSaved('exclusions')
+      const stored = parseExcludeList(settings?.global_exclude_paths)
+      settleSave('exclusions', sent, () => { globalExcludes = stored })
       showToast('Exclusions saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -758,10 +765,12 @@
         retrySaving = false
         return
       }
+      const sent = sending('retry')
       settings = await api.updateSettings(payload)
-      retryMax = settings?.retry_max_default ?? retryMax
-      retryDelays = settings?.retry_delays_default ?? retryDelays
-      markSaved('retry')
+      settleSave('retry', sent, () => {
+        retryMax = settings?.retry_max_default ?? retryMax
+        retryDelays = settings?.retry_delays_default ?? retryDelays
+      })
       showToast('Retry policy saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -816,10 +825,10 @@
       return
     }
     memoryLimitSaving = true
+    const sent = sending('memory')
     try {
       settings = await api.updateSettings({ memory_limit_mb: String(n) })
-      memoryLimitMb = settings?.memory_limit_mb ?? String(n)
-      markSaved('memory')
+      settleSave('memory', sent, () => { memoryLimitMb = settings?.memory_limit_mb ?? String(n) })
       showToast(n === 0 ? 'Memory limit turned off' : 'Memory limit saved', 'success')
       await refreshRuntime()
     } catch (e) {
@@ -1029,6 +1038,24 @@
   function markSaved(...keys) {
     for (const k of keys) saved[k] = snapshot(sections[k].value())
   }
+  /** A section's values as a save is about to send them. */
+  function sending(key) {
+    return snapshot(sections[key].value())
+  }
+  /**
+   * Records a save that succeeded. If the section is unchanged since the
+   * request went out, apply the server's normalised values and take them as
+   * the baseline. Otherwise keep the newer edits, unsaved against what the
+   * server received (#718).
+   */
+  function settleSave(key, sent, apply = () => {}) {
+    if (snapshot(sections[key].value()) !== sent) {
+      saved[key] = sent
+      return
+    }
+    apply()
+    markSaved(key)
+  }
   /** @type {Record<string, boolean>} */
   let dirty = $derived(Object.fromEntries(
     Object.keys(sections).map((k) => [k, saved[k] != null && snapshot(sections[k].value()) !== saved[k]]),
@@ -1086,15 +1113,17 @@
   async function saveAnomalySettings() {
     if (readOnly) return
     anomalySaving = true
+    const sent = sending('anomaly')
+    const enabled = anomalyEnabled
     try {
       settings = await api.updateSettings({
-        anomaly_detection_enabled: anomalyEnabled ? 'true' : 'false',
+        anomaly_detection_enabled: enabled ? 'true' : 'false',
         anomaly_sensitivity_default: anomalySensitivityDefault,
         anomaly_notify_min_severity: anomalyNotifyMinSeverity,
       })
-      markSaved('anomaly')
+      settleSave('anomaly', sent)
       showToast('Anomaly detection settings saved', 'success')
-      setAnomalyEnabled(anomalyEnabled)
+      setAnomalyEnabled(enabled)
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
