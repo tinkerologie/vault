@@ -1394,17 +1394,73 @@ func (h *JobHandler) RunnerStatus(w http.ResponseWriter, r *http.Request) {
 
 // RestorePointPreflight runs cheap pre-restore validation (storage reachable,
 // backup present, decryptable, free space) so the UI can show a go/no-go
-// checklist before a restore is started.
+// checklist before a restore is started. It returns only the checks: the
+// exact container and VM host paths come from RestorePointWriteTargets, so
+// their slower metadata review never delays these checks.
 //
 //	POST /api/v1/jobs/{id}/restore-points/{rpid}/preflight
 func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseID(w, r, "id")
+	scope, ok := h.parseRestoreScope(w, r)
 	if !ok {
 		return
 	}
-	rpID, ok := parseID(w, r, "rpid")
+	respondJSON(w, http.StatusOK, h.runner.PreflightRestore(scope.job, scope.point, scope.opts))
+}
+
+// RestorePointWriteTargets lists the exact host paths each selected
+// container and VM restore writes, resolved with the review a Restore Request
+// uses (#716). It takes the pre-flight's body and answers within
+// writeTargetsBudget; items not reviewed in time report cancelled. Assistant
+// Keys cannot reach this route, so these paths stay out of assistant
+// responses.
+//
+//	POST /api/v1/jobs/{id}/restore-points/{rpid}/write-targets
+func (h *JobHandler) RestorePointWriteTargets(w http.ResponseWriter, r *http.Request) {
+	scope, ok := h.parseRestoreScope(w, r)
 	if !ok {
 		return
+	}
+	respondJSON(w, http.StatusOK, writeTargetsResponse{
+		Items: h.previewWriteTargets(r.Context(), scope),
+	})
+}
+
+type writeTargetsResponse struct {
+	Items []restorerequest.ItemWriteTargets `json:"items"`
+}
+
+// maxWriteTargetItems bounds the bounded-metadata reviews one request runs;
+// later items report too_many_items. A var for tests.
+var maxWriteTargetItems = 32
+
+// writeTargetsBudget bounds one write-targets request. It stays well inside
+// the smallest limit on the route: the Unraid proxy's 10 s default
+// (VAULT_HTTP_TIMEOUT_DEFAULT in plugin/pages/include/api.php), then the
+// browser's 15 s and ServerWriteTimeout. A var for tests.
+var writeTargetsBudget = 8 * time.Second
+
+// previewWriteTarget reviews one item. A var so tests can slow it down.
+var previewWriteTarget = restorerequest.PreviewWriteTargets
+
+// restoreScope is a validated pre-flight or write-targets request.
+type restoreScope struct {
+	job        db.Job
+	point      db.RestorePoint
+	targets    []restoreTarget
+	opts       runner.PreflightRestoreOptions
+	passphrase string
+}
+
+// parseRestoreScope decodes and validates the body the pre-flight and
+// write-targets routes share, writing the error response when it fails.
+func (h *JobHandler) parseRestoreScope(w http.ResponseWriter, r *http.Request) (restoreScope, bool) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return restoreScope{}, false
+	}
+	rpID, ok := parseID(w, r, "rpid")
+	if !ok {
+		return restoreScope{}, false
 	}
 	var req struct {
 		Passphrase  string   `json:"passphrase"`
@@ -1419,7 +1475,7 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 	}
 	if !errors.Is(decodeErr, io.EOF) {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
-		return
+		return restoreScope{}, false
 	}
 	opts := runner.PreflightRestoreOptions{Passphrase: req.Passphrase, Destination: req.Destination, Items: req.Items}
 	// Unscoped requests still accept either kind of destination.
@@ -1428,7 +1484,7 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 		normalized, err := restoreDestinationFor(req.Destination, opts.DestinationIsZFS)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
-			return
+			return restoreScope{}, false
 		}
 		opts.Destination = normalized
 	}
@@ -1437,39 +1493,39 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "job not found")
-			return
+			return restoreScope{}, false
 		}
 		respondInternalError(w, err)
-		return
+		return restoreScope{}, false
 	}
 	rp, err := h.db.GetRestorePoint(rpID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "restore point not found")
-			return
+			return restoreScope{}, false
 		}
 		respondInternalError(w, err)
-		return
+		return restoreScope{}, false
 	}
 	if rp.JobID != id {
 		respondError(w, http.StatusNotFound, "restore point not found")
-		return
+		return restoreScope{}, false
 	}
 	var targets []restoreTarget
 	if len(req.Items) > 0 {
 		jobItems, err := h.db.GetJobItems(id)
 		if err != nil {
 			respondInternalError(w, fmt.Errorf("fetching job items: %w", err))
-			return
+			return restoreScope{}, false
 		}
 		targets, err = resolveNamedRestoreTargets(jobItems, rp, req.Items)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
-			return
+			return restoreScope{}, false
 		}
 		if err := validateRestorePointTargets(rp, targets); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
-			return
+			return restoreScope{}, false
 		}
 		opts.ItemTypes = make(map[string]string, len(targets))
 		for _, target := range targets {
@@ -1479,69 +1535,70 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 			opts.Destination, opts.DestinationIsZFS, err = restoreDestinationForTargets(req.Destination, targets)
 			if err != nil {
 				respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
-				return
+				return restoreScope{}, false
 			}
 		}
 	}
-	result := h.runner.PreflightRestore(job, rp, opts)
-	respondJSON(w, http.StatusOK, preflightResponse{
-		PreflightResult: result,
-		Items:           h.previewWriteTargets(r.Context(), job, rp, targets, opts, req.Passphrase, storageReachable(result)),
-	})
-}
-
-// preflightResponse adds the selected container and VM restores' host
-// paths to the pre-flight checks (#716). Assistant Keys cannot reach the
-// pre-flight route, so these paths stay out of assistant responses.
-type preflightResponse struct {
-	runner.PreflightResult
-	Items []restorerequest.ItemWriteTargets `json:"items,omitempty"`
-}
-
-// maxPreflightWriteTargetItems bounds the bounded-metadata reviews one
-// pre-flight runs; later items report too_many_items. A var for tests.
-var maxPreflightWriteTargetItems = 32
-
-const preflightWriteTargetBudget = 45 * time.Second
-
-func storageReachable(result runner.PreflightResult) bool {
-	for _, check := range result.Checks {
-		if check.ID == "reachable" {
-			return check.Status == "ok"
-		}
-	}
-	return false
+	return restoreScope{job: job, point: rp, targets: targets, opts: opts, passphrase: req.Passphrase}, true
 }
 
 // previewWriteTargets resolves each selected container and VM restore's host
 // paths with the review the restore itself applies. Other item types are
-// left out: the wizard already knows their location.
-func (h *JobHandler) previewWriteTargets(ctx context.Context, job db.Job, rp db.RestorePoint, targets []restoreTarget, opts runner.PreflightRestoreOptions, passphrase string, reachable bool) []restorerequest.ItemWriteTargets {
-	destination := opts.Destination
-	if opts.DestinationIsZFS {
+// left out: the wizard already knows their location. Reviews run in order on
+// one goroutine; when the budget ends the reply goes out at once, even if a
+// review ignores cancellation, and every unfinished item reports cancelled.
+func (h *JobHandler) previewWriteTargets(ctx context.Context, scope restoreScope) []restorerequest.ItemWriteTargets {
+	destination := scope.opts.Destination
+	if scope.opts.DestinationIsZFS {
 		destination = ""
 	}
-	ctx, cancel := context.WithTimeout(ctx, preflightWriteTargetBudget)
+	unavailable := func(target restoreTarget, reason string) restorerequest.ItemWriteTargets {
+		return restorerequest.ItemWriteTargets{Name: target.Name, Type: target.Type, Status: "unavailable",
+			Reason: reason, WriteTargets: []restorerequest.WriteTarget{}}
+	}
+	var selected []restoreTarget
+	for _, target := range scope.targets {
+		if target.Type == "container" || target.Type == "vm" {
+			selected = append(selected, target)
+		}
+	}
+	items := make([]restorerequest.ItemWriteTargets, len(selected))
+	reviewed := min(len(selected), maxWriteTargetItems)
+	for i, target := range selected[reviewed:] {
+		items[reviewed+i] = unavailable(target, "too_many_items")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, writeTargetsBudget)
 	defer cancel()
-	var items []restorerequest.ItemWriteTargets
-	for _, target := range targets {
-		if target.Type != "container" && target.Type != "vm" {
-			continue
+	// Buffered so the reviewing goroutine never blocks after the reply.
+	results := make(chan restorerequest.ItemWriteTargets, reviewed)
+	go func() {
+		defer close(results)
+		for _, target := range selected[:reviewed] {
+			if ctx.Err() != nil {
+				return
+			}
+			results <- previewWriteTarget(ctx, h.db, h.runner, restorerequest.Input{
+				JobID: scope.job.ID, RestorePointID: scope.point.ID, ItemName: target.Name, ItemType: target.Type, Destination: destination,
+			}, scope.passphrase)
 		}
-		unavailable := func(reason string) restorerequest.ItemWriteTargets {
-			return restorerequest.ItemWriteTargets{Name: target.Name, Type: target.Type, Status: "unavailable",
-				Reason: reason, WriteTargets: []restorerequest.WriteTarget{}}
+	}()
+	done := 0
+collect:
+	for done < reviewed {
+		select {
+		case item, ok := <-results:
+			if !ok {
+				break collect
+			}
+			items[done] = item
+			done++
+		case <-ctx.Done():
+			break collect
 		}
-		switch {
-		case !reachable:
-			items = append(items, unavailable("storage_unavailable"))
-		case len(items) >= maxPreflightWriteTargetItems:
-			items = append(items, unavailable("too_many_items"))
-		default:
-			items = append(items, restorerequest.PreviewWriteTargets(ctx, h.db, h.runner, restorerequest.Input{
-				JobID: job.ID, RestorePointID: rp.ID, ItemName: target.Name, ItemType: target.Type, Destination: destination,
-			}, passphrase))
-		}
+	}
+	for i := done; i < reviewed; i++ {
+		items[i] = unavailable(selected[i], "cancelled")
 	}
 	return items
 }

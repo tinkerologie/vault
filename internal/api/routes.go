@@ -253,6 +253,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.With(ExtendWriteDeadline(handlers.RestorePointContentsWriteTimeout)).Get("/{id}/restore-points/{rpid}/contents",
 				s.trackTimedRead(jobH.RestorePointContents, handlers.RestorePointContentsHandlerTimeout, handlers.RestorePointContentsTimeoutBody))
 			r.Post("/{id}/restore-points/{rpid}/preflight", jobH.RestorePointPreflight)
+			r.Post("/{id}/restore-points/{rpid}/write-targets", jobH.RestorePointWriteTargets)
 			r.Post("/{id}/restore-points/{rpid}/verify", jobH.VerifyRestorePoint)
 			r.Get("/{id}/restore-points/{rpid}/verify-runs", jobH.ListRestorePointVerifyRuns)
 			r.Get("/{id}/verify-runs/{vrid}", jobH.GetVerifyRun)
