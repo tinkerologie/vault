@@ -328,8 +328,10 @@ test.describe('Command palette (#528)', () => {
       await page.keyboard.press('Shift+Tab');
       expect(await focusIsInTopDialog(page), `Shift+Tab ${i + 1} left the palette`).toBe(true);
     }
+    // The options are a listbox driven from the search box (#691), so the
+    // box is the palette's one tab stop and Tab keeps focus on it.
     await page.keyboard.press('Tab');
-    await expect(search(page)).not.toBeFocused();
+    await expect(search(page)).toBeFocused();
 
     await page.keyboard.press('Escape');
     await expect(palette(page)).toHaveCount(0);
@@ -377,14 +379,16 @@ test.describe('Command palette (#528)', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Backup Jobs' })).toBeFocused();
   });
 
-  test('Enter on a tabbed-to row runs that row', async ({ page }) => {
+  test('Enter runs the option the arrow keys made active', async ({ page }) => {
     await page.goto('/#/jobs');
     await page.keyboard.press('Control+k');
     await expect(search(page)).toBeFocused();
-    await page.keyboard.press('Tab');
-    await page.keyboard.press('Tab');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('option', { name: /Go to Storage/, selected: true })).toBeVisible();
+    await expect(search(page)).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL(/#\/jobs/);
+    await expect(page).toHaveURL(/#\/storage/);
     await expect(palette(page)).toHaveCount(0);
   });
 

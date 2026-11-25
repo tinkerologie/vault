@@ -65,3 +65,56 @@ test.describe('connection-lost banner (#686)', () => {
     await expect(banner(page)).toHaveCount(0);
   });
 });
+
+test.describe('command palette (#691)', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page);
+  });
+
+  const search = (page: Page) => page.getByRole('combobox', { name: 'Search commands' });
+
+  test('the active option follows the arrow keys and stays in view', async ({ page }) => {
+    await page.goto('/#/jobs');
+    await page.keyboard.press('Control+k');
+    await expect(search(page)).toBeFocused();
+    const list = page.getByRole('listbox', { name: 'Commands' });
+    await expect(search(page)).toHaveAttribute('aria-controls', (await list.getAttribute('id'))!);
+    await expect(list.getByRole('option').nth(12)).toBeAttached();
+    for (let i = 0; i < 12; i++) await page.keyboard.press('ArrowDown');
+    const active = list.getByRole('option', { selected: true });
+    await expect(active).toHaveCount(1);
+    await expect(search(page)).toHaveAttribute('aria-activedescendant', (await active.getAttribute('id'))!);
+    await expect(active).toBeInViewport();
+    const [a, l] = [(await active.boundingBox())!, (await list.boundingBox())!];
+    expect(a.y).toBeGreaterThanOrEqual(l.y - 1);
+    expect(a.y + a.height).toBeLessThanOrEqual(l.y + l.height + 1);
+  });
+
+  test('every sidebar page is in the palette', async ({ page }) => {
+    await page.goto('/#/jobs');
+    const labels = (await page.locator('aside nav').getByRole('link').allTextContents()).map((l) => l.trim());
+    expect(labels).toEqual(expect.arrayContaining(['Replication', 'Disaster Recovery', 'Anomalies']));
+    await page.keyboard.press('Control+k');
+    const pages = page.getByRole('group', { name: 'Pages' });
+    for (const label of labels) {
+      await expect(pages.getByRole('option', { name: new RegExp(`^(Go to|Open) ${label}`) })).toHaveCount(1);
+    }
+  });
+
+  test('announces the number of results', async ({ page }) => {
+    await page.goto('/#/jobs');
+    await page.keyboard.press('Control+k');
+    await search(page).fill('disaster');
+    await expect(page.getByRole('dialog').getByRole('status')).toHaveText('1 result');
+  });
+
+  test('the sidebar shows the shortcut and opens the palette', async ({ page }) => {
+    await page.goto('/#/jobs');
+    const hint = page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Search' });
+    await expect(hint).toBeVisible();
+    await expect(hint).toHaveAttribute('aria-keyshortcuts', /Control\+K/);
+    await expect(hint).toContainText(/(⌘|Ctrl\+)K/);
+    await hint.click();
+    await expect(search(page)).toBeFocused();
+  });
+});

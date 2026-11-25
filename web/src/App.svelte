@@ -12,6 +12,7 @@
   import { isAuthRequired } from './lib/auth.svelte.js'
   import { revealFrameTop } from './lib/embed.js'
   import { createConnectionBanner, isConnectionLost } from './lib/connection-banner.js'
+  import { shortcutModifier } from './lib/shortcuts.js'
   import { onMount, tick } from 'svelte'
 
   import Dashboard from './pages/Dashboard.svelte'
@@ -37,6 +38,7 @@
 
   let moreOpen = $state(false)
   let showCommandPalette = $state(false)
+  const shortcutMod = shortcutModifier()
 
   function handleGlobalKeydown(e) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -262,7 +264,7 @@
   <ApiKeyPrompt />
 {/if}
 
-<CommandPalette bind:show={showCommandPalette} onclose={() => showCommandPalette = false} />
+<CommandPalette bind:show={showCommandPalette} pages={nav} onclose={() => showCommandPalette = false} />
 
 <a href="#main-content" onclick={skipToMain} class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-vault focus:text-on-vault focus:rounded-lg focus:text-sm focus:font-medium">Skip to main content</a>
 
@@ -302,6 +304,16 @@
           <span class="text-xs text-text-dim block -mt-0.5">{replicaMode ? 'Replica' : 'Backup Manager'}</span>
         </div>
       {/if}
+    </div>
+
+    <!-- Opens the command palette, and shows its shortcut (#691). -->
+    <div class="px-3 pt-4">
+      <button type="button" onclick={() => showCommandPalette = true} aria-keyshortcuts="Meta+K Control+K"
+        class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-muted bg-surface-3 border border-border hover:text-text hover:bg-surface-4 transition-colors">
+        <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <span class="flex-1 text-left">Search</span>
+        <kbd aria-hidden="true" class="text-xs font-mono px-1.5 py-0.5 rounded border border-border bg-surface-2">{shortcutMod}K</kbd>
+      </button>
     </div>
 
     <!-- Nav links -->
