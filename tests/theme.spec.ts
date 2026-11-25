@@ -15,6 +15,9 @@ function seed(page: Page, values: Record<string, string>) {
   }, values);
 }
 
+/** The preview server's origin, from the config's baseURL. */
+const origin = () => new URL(test.info().project.use.baseURL ?? 'http://127.0.0.1:4173').origin;
+
 /** Records every font and off-origin request, and anything the page logs as an error. */
 function watch(page: Page) {
   const fonts: string[] = [];
@@ -24,7 +27,7 @@ function watch(page: Page) {
     const url = new URL(request.url());
     if (url.protocol === 'data:') return;
     if (request.resourceType() === 'font' || url.pathname.endsWith('.woff2')) fonts.push(request.url());
-    if (url.origin !== 'http://127.0.0.1:4173') foreign.push(request.url());
+    if (url.origin !== origin()) foreign.push(request.url());
   });
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => {
@@ -133,7 +136,7 @@ test.describe('Plugin-served assets', () => {
     // Mirrors app.php: index.html's asset paths point at the plugin's UI folder.
     await page.route('**/plugins/vault/ui/**', async (route) => {
       const { pathname } = new URL(route.request().url());
-      const upstream = await route.fetch({ url: `http://127.0.0.1:4173/${pathname.replace('/plugins/vault/ui/', '')}` });
+      const upstream = await route.fetch({ url: `${origin()}/${pathname.replace('/plugins/vault/ui/', '')}` });
       if (pathname !== '/plugins/vault/ui/') return route.fulfill({ response: upstream });
       const html = (await upstream.text()).replaceAll(/(src|href)="(\.?\/)assets\//g, '$1="/plugins/vault/ui/assets/');
       return route.fulfill({ response: upstream, body: html });
@@ -301,7 +304,7 @@ test.describe('Pixel fonts', () => {
       const files = fonts.map((url) => new URL(url).pathname);
       expect(files.some((file) => /\/vt323-latin[^/]*\.woff2$/.test(file))).toBe(true);
       expect(files.some((file) => /\/press-start-2p-latin[^/]*\.woff2$/.test(file))).toBe(true);
-      expect(fonts.every((url) => new URL(url).origin === 'http://127.0.0.1:4173')).toBe(true);
+      expect(fonts.every((url) => new URL(url).origin === origin())).toBe(true);
       expect(statuses.length).toBeGreaterThan(0);
       expect(statuses.every((status) => status === 200 || status === 304)).toBe(true);
       expect(foreign).toEqual([]);
@@ -570,5 +573,51 @@ test.describe('Appearance pickers announce the selection', () => {
     await expect(group.getByRole('button', { name: 'System', pressed: true })).toBeDisabled();
     const snapshot = await group.ariaSnapshot();
     expect(snapshot).toContain('button "System" [disabled] [pressed]');
+  });
+});
+
+// The saved theme applies before the first paint (#696), and native controls
+// follow the mode.
+test.describe('Theme before the app starts', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page);
+  });
+
+  /** Holds the app bundle back, so only the inline script in index.html has run. */
+  async function withoutApp(page: Page) {
+    await page.route(/\/assets\/index-[^/]*\.js$/, () => { /* never answered */ });
+  }
+
+  test('a saved dark mode is on the very first frame', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await seed(page, { 'vault-mode': 'dark' });
+    await withoutApp(page);
+    await page.goto('/', { waitUntil: 'commit' });
+    const html = page.locator('html');
+    await expect(html).toHaveClass(/\bdark\b/);
+    await expect(html).toHaveCSS('background-color', rgbOf('#111827'));
+    await expect(html).toHaveCSS('color-scheme', 'dark');
+  });
+
+  test('a saved style and light mode are on the very first frame', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await seed(page, { 'vault-style': 'retro', 'vault-mode': 'light' });
+    await withoutApp(page);
+    await page.goto('/', { waitUntil: 'commit' });
+    const html = page.locator('html');
+    await expect(html).toHaveClass(/\btheme-retro\b/);
+    await expect(html).not.toHaveClass(/\bdark\b/);
+    await expect(html).toHaveCSS('color-scheme', 'light');
+  });
+
+  test('native controls switch colour scheme with the mode', async ({ page }) => {
+    await seed(page, { 'vault-mode': 'light' });
+    await page.goto('/#/settings');
+    const select = page.locator('main select').first();
+    await expect(select).toHaveCSS('color-scheme', 'light');
+    await page.keyboard.press('Control+Shift+L');
+    await page.keyboard.press('Control+Shift+L');
+    await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+    await expect(select).toHaveCSS('color-scheme', 'dark');
   });
 });

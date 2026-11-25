@@ -447,6 +447,14 @@ input.peer:focus-visible + div {
   outline-offset: 2px;
 }
 
+/* Native controls, their popups and scrollbars follow the mode (#696). */
+:root {
+  color-scheme: light;
+}
+:root.dark {
+  color-scheme: dark;
+}
+
 html {
   background-color: var(--color-surface);
   color: var(--color-text);
