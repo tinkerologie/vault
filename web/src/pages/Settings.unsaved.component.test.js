@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import Settings from './Settings.svelte'
 import { navigate, getRoute } from '../lib/router.svelte.js'
 import { api } from '../lib/api.js'
@@ -20,6 +20,7 @@ vi.mock('../lib/api.js', () => ({
     getChangelog: vi.fn(async () => []),
     getLatestRelease: vi.fn(async () => null),
     getAppdataPath: vi.fn(async () => null),
+    setAppdataPath: vi.fn(async (path) => ({ path: path || '/mnt/user/appdata' })),
     getRuntime: vi.fn(async () => null),
     listAssistantKeys: vi.fn(async () => []),
   },
@@ -117,6 +118,29 @@ describe('Settings unsaved changes', () => {
       expect(api.updateSettings).toHaveBeenLastCalledWith({ history_retention_days: '30' })
       expect(retention.value).toBe('90')
       expect(screen.getByText('Unsaved changes')).toBeTruthy()
+    })
+
+    it('records the default as saved when Appdata Path is reset while the user types', async () => {
+      await openSettings()
+      const path = /** @type {HTMLInputElement} */ (screen.getByRole('textbox', { name: 'Path' }))
+      await fireEvent.input(path, { target: { value: '/mnt/user/old' } })
+      const section = /** @type {HTMLElement} */ (screen.getByRole('heading', { name: /Docker Appdata Path/ }).closest('section, .bg-surface-2, div[class*="rounded"]'))
+      await fireEvent.click(within(section).getByRole('button', { name: 'Apply' }))
+      await waitFor(() => expect(api.setAppdataPath).toHaveBeenLastCalledWith('/mnt/user/old'))
+      await waitFor(() => expect(screen.queryByText('Unsaved changes')).toBeNull())
+
+      let release = () => {}
+      vi.mocked(api.setAppdataPath).mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ path: '/mnt/user/appdata' }) }))
+      await fireEvent.click(screen.getByRole('button', { name: /Reset to default/ }))
+      await fireEvent.input(path, { target: { value: '/mnt/user/new' } })
+      release()
+      await waitFor(() => expect(api.setAppdataPath).toHaveBeenLastCalledWith(''))
+      await waitFor(() => expect(screen.getByText('Unsaved changes')).toBeTruthy())
+      // The server now holds the default, not the old path.
+      await fireEvent.input(path, { target: { value: '/mnt/user/old' } })
+      await waitFor(() => expect(screen.getByText('Unsaved changes')).toBeTruthy())
+      await fireEvent.input(path, { target: { value: '/mnt/user/appdata' } })
+      await waitFor(() => expect(screen.queryByText('Unsaved changes')).toBeNull())
     })
 
     it('keeps a Retry Policy edit made while it saves instead of the server value', async () => {

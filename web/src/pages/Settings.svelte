@@ -533,7 +533,8 @@
     const sent = sending('appdata')
     try {
       const res = await api.setAppdataPath('')
-      settleSave('appdata', sent, () => { appdataPath = res.path })
+      // Reset stores the default, not the path on screen when it was pressed.
+      settleSave('appdata', sent, () => { appdataPath = res.path }, snapshot([text(res.path)]))
       showToast('Appdata path reset to default', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -1048,9 +1049,10 @@
    * the baseline. Otherwise keep the newer edits, unsaved against what the
    * server received (#718).
    */
-  function settleSave(key, sent, apply = () => {}) {
+  function settleSave(key, sent, apply = () => {}, stored = sent) {
     if (snapshot(sections[key].value()) !== sent) {
-      saved[key] = sent
+      // Edited while saving: keep the newer text, against what the server holds.
+      saved[key] = stored
       return
     }
     apply()
