@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isCustomCron, cronError } from './cron.js'
+import { isCustomCron, cronError, timeSlots, serverWallClock, formatRunDate } from './cron.js'
 
 describe('isCustomCron', () => {
   it('treats an empty schedule as manual, not custom', () => {
@@ -88,5 +88,49 @@ describe('cronError', () => {
   it('accepts the Vault last-day token only in the day-of-month field', () => {
     expect(cronError('0 2 L * *')).toBeNull()
     expect(cronError('0 2 * L *')).toMatch(/month field/)
+  })
+})
+
+describe('timeSlots', () => {
+  it('offers every half hour', () => {
+    const slots = timeSlots()
+    expect(slots).toHaveLength(48)
+    expect(slots[0]).toEqual({ value: '0:0', hour: 0, minute: 0 })
+    expect(slots[5]).toEqual({ value: '2:30', hour: 2, minute: 30 })
+  })
+
+  it('adds an off-grid time in order, so the list shows what the schedule says', () => {
+    const slots = timeSlots(2, 15)
+    expect(slots).toHaveLength(49)
+    const i = slots.findIndex((s) => s.value === '2:15')
+    expect(slots[i - 1].value).toBe('2:0')
+    expect(slots[i + 1].value).toBe('2:30')
+  })
+
+  it('does not duplicate a half-hour time or accept an invalid one', () => {
+    expect(timeSlots(2, 30)).toHaveLength(48)
+    expect(timeSlots(25, 15)).toHaveLength(48)
+    expect(timeSlots(NaN, 15)).toHaveLength(48)
+  })
+})
+
+describe('serverWallClock', () => {
+  it('reads the server time as written, ignoring the offset', () => {
+    expect(serverWallClock('2026-10-07T02:15:00+02:00')).toEqual({ year: 2026, month: 10, day: 7, hour: 2, minute: 15 })
+    expect(serverWallClock('2026-10-07T23:59:00Z')).toEqual({ year: 2026, month: 10, day: 7, hour: 23, minute: 59 })
+  })
+
+  it('rejects anything else', () => {
+    expect(serverWallClock('')).toBeNull()
+    expect(serverWallClock(undefined)).toBeNull()
+    expect(serverWallClock('tomorrow')).toBeNull()
+  })
+})
+
+describe('formatRunDate', () => {
+  it('formats the calendar date without shifting it into the browser zone', () => {
+    const text = formatRunDate({ year: 2026, month: 10, day: 7 })
+    expect(text).toMatch(/7/)
+    expect(text).toMatch(/Oct/)
   })
 })

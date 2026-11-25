@@ -80,6 +80,7 @@ The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `d
 | GET    | `/jobs`                                            | List jobs                                                                                 |
 | POST   | `/jobs`                                            | Create a Job and return the committed Job and items                                       |
 | GET    | `/jobs/next-runs`                                  | Next scheduled run for every job                                                          |
+| GET    | `/jobs/schedule-preview?schedule=…&count=…`        | Next runs of a cron expression on the server's clock, with its timezone (default 3, max 10) |
 | GET    | `/jobs/{id}`                                       | Get a job and its items                                                                   |
 | PUT    | `/jobs/{id}`                                       | Update a Job and return the committed Job and items                                       |
 | DELETE | `/jobs/{id}`                                       | Delete a job                                                                              |

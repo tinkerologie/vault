@@ -622,6 +622,20 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       });
     }
 
+    // Schedule preview (#682): fixed server-clock runs, or none for manual only.
+    if (path.endsWith('/jobs/schedule-preview')) {
+      const schedule = url.searchParams.get('schedule') || '';
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          runs: schedule.trim() ? ['2026-10-07T02:15:00+02:00', '2026-10-08T02:15:00+02:00', '2026-10-09T02:15:00+02:00'] : [],
+          timezone: 'CEST',
+          utc_offset: '+02:00',
+        }),
+      });
+    }
+
     // Job Next Run
     const nextRunMatch = path.match(/\/jobs\/(\d+)\/next-run$/);
     if (nextRunMatch) {
