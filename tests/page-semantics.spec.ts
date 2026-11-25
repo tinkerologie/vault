@@ -502,10 +502,10 @@ test.describe('screen-reader state and names (#529)', () => {
     test(`Restore at ${viewport.name}: steps keep their names and mark the current one`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.goto('/#/restore');
-      const step1 = page.getByRole('button', { name: '1 Select Items' });
+      const step1 = page.getByRole('button', { name: '1 Choose what to restore' });
       await expect(step1).toHaveAttribute('aria-current', 'step');
-      await expect(page.getByRole('button', { name: '2 Choose Version' })).not.toHaveAttribute('aria-current');
-      await expect(page.getByRole('button', { name: '3 Restore' })).toBeAttached();
+      await expect(page.getByRole('button', { name: '2 Choose a restore point' })).not.toHaveAttribute('aria-current');
+      await expect(page.getByRole('button', { name: '3 Set restore options' })).toBeAttached();
     });
   }
 

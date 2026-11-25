@@ -1,6 +1,14 @@
 import { test, expect, type Page, type WebSocketRoute } from '@playwright/test';
 import { setupVaultMockApi, type VaultMockOptions } from './mocks/vault-api';
 
+// Clearing the destination is on by default, so Start Restore asks for a
+// typed RESTORE that lists the affected locations (#700).
+async function confirmClearingRestore(page: Page) {
+  const dialog = page.getByRole('dialog', { name: 'Restore and Delete Extra Files' });
+  await dialog.getByRole('textbox').fill('RESTORE');
+  await dialog.getByRole('button', { name: 'Start Restore', exact: true }).click();
+}
+
 test.describe('Restore Run outcomes (#654)', () => {
   const idle = { active: false };
   const active = { active: true, job_id: 1, run_id: 7, run_type: 'restore', items_total: 1 };
@@ -13,6 +21,7 @@ test.describe('Restore Run outcomes (#654)', () => {
     await page.getByRole('button', { name: /Docker & Appdata/i }).first().click();
     await page.getByRole('button', { name: 'Run checks', exact: true }).click();
     await page.getByRole('button', { name: 'Start Restore', exact: true }).click();
+    await confirmClearingRestore(page);
   }
 
   async function startRestore(page: Page, runResult: NonNullable<VaultMockOptions['runResult']>) {
@@ -159,7 +168,7 @@ test.describe('Scoped restore preflight (#655)', () => {
     await check.click();
     await expect(start).toBeEnabled();
 
-    await page.getByRole('button', { name: 'Back to versions', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to restore points', exact: true }).click();
     await page.getByRole('button', { name: 'Back to items', exact: true }).click();
     await page.getByRole('button', { name: /nextcloud/i }).click();
     await next.click();
@@ -218,7 +227,7 @@ test.describe('Restore Wizard Multi-Job Flow (#438)', () => {
     await page.goto('/#/restore');
 
     // Step 1: Select items across jobs
-    await expect(page.getByText('Select Items').first()).toBeVisible();
+    await expect(page.getByText('Choose what to restore').first()).toBeVisible();
     await expect(page.getByText(/Select items to restore/i)).toBeVisible();
 
     // Verify items from Job 1 and Job 2 are present
@@ -313,6 +322,7 @@ test.describe('Restore Wizard Multi-Job Flow (#438)', () => {
     await expect(startRestoreBtn).toBeVisible();
     await expect(startRestoreBtn).toBeEnabled();
     await startRestoreBtn.click();
+    await confirmClearingRestore(page);
 
     // Verify Job 1 was submitted first while Job 2 has not started yet
     await expect.poll(() => restoreRequests.length).toBe(1);
@@ -386,6 +396,7 @@ test.describe('Restore Wizard Multi-Job Flow (#438)', () => {
     const startRestoreBtn = page.getByRole('button', { name: /^Start Restore/i });
     await expect(startRestoreBtn).toBeEnabled();
     await startRestoreBtn.click();
+    await confirmClearingRestore(page);
 
     await expect.poll(() => restoreRequests.length).toBe(1);
     expect(restoreRequests[0].url).toContain('/jobs/1/restore');
@@ -407,7 +418,7 @@ test.describe('Restore Wizard Multi-Job Flow (#438)', () => {
 
     // Navigate back to Step 1
     await page.getByText('Back to items').click();
-    await expect(page.getByText('Select Items').first()).toBeVisible();
+    await expect(page.getByText('Choose what to restore').first()).toBeVisible();
     await expect(page.getByText(/1 item selected/i)).toBeVisible();
   });
 });
@@ -458,7 +469,7 @@ test.describe('Restore Wizard partial-restore file picker (#449)', () => {
     await expect(page.getByText('Loading file list…')).toBeVisible();
 
     release();
-    await expect(page.getByLabel('Select config')).toBeVisible();
+    await expect(page.getByRole('treeitem', { name: /^config / })).toBeVisible();
     await expect(page.getByText('All 2 files selected').first()).toBeVisible();
   });
 
@@ -482,12 +493,13 @@ test.describe('Restore Wizard partial-restore file picker (#449)', () => {
     await expect(page.getByText(/whole-archive|whole item is restored/i)).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Retry', exact: true }).click();
-    await expect(page.getByLabel('Select config')).toBeVisible();
+    await expect(page.getByRole('treeitem', { name: /^config / })).toBeVisible();
     expect(calls).toBe(2);
 
     // Deselect one file; the remaining one is submitted as a partial restore.
-    await page.getByRole('button', { name: 'Expand config' }).click();
-    await page.getByLabel('Select database.db').uncheck();
+    await page.getByRole('treeitem', { name: /^config / }).click();
+    await page.getByRole('treeitem', { name: /^database\.db / }).click();
+    await expect(page.getByRole('treeitem', { name: /^database\.db / })).toHaveAttribute('aria-checked', 'false');
     await expect(page.getByText('Partial restore: restoring 1 of 2 selected files.')).toBeVisible();
 
     const restoreRequests: unknown[] = [];
@@ -535,6 +547,7 @@ test.describe('Restore Wizard partial-restore file picker (#449)', () => {
       }
     });
     await startRestoreBtn.click();
+    await confirmClearingRestore(page);
     await expect.poll(() => restoreRequests.length).toBe(1);
     expect(restoreRequests[0]).toMatchObject({ items: ['plex'] });
     expect(restoreRequests[0]).not.toHaveProperty('file_paths');
@@ -549,22 +562,28 @@ test.describe('Restore Wizard partial-restore file picker (#449)', () => {
       if (calls === 1) await held;
       await route.fallback();
     });
+    // An older second point, so the user can switch points (#702: re-picking
+    // the same point keeps its file list).
+    await page.route('**/jobs/1/restore-points', route => route.fulfill({ json: [
+      { id: 1001, job_id: 1, backup_type: 'full', created_at: '2026-10-01T02:00:00Z', size_bytes: 10, chain_depth: 1, metadata: JSON.stringify({ item_sizes: { plex: 5, nextcloud: 5 } }) },
+      { id: 1000, job_id: 1, backup_type: 'full', created_at: '2026-09-30T02:00:00Z', size_bytes: 10, chain_depth: 1, metadata: JSON.stringify({ item_sizes: { plex: 5, nextcloud: 5 } }) },
+    ] }));
 
     const summary = await openPlexPlan(page);
     await summary.click();
     await expect(page.getByText('Loading file list…')).toBeVisible();
 
-    // Go back and re-pick the point while the first listing is in flight;
+    // Go back and pick another point while the first listing is in flight;
     // this resets the picker, so the late response must not repopulate it.
-    await page.getByRole('button', { name: /Choose Version/ }).click();
-    await page.getByRole('button', { name: /Docker & Appdata/i }).first().click();
+    await page.getByRole('button', { name: /Choose a restore point/ }).click();
+    await page.getByRole('button', { name: /Docker & Appdata/i }).nth(2).click();
     await expect(summary).toContainText('Click to browse contents');
 
     release();
     await expect.poll(() => calls).toBe(1);
     await page.waitForTimeout(250);
     await expect(summary).toContainText('Click to browse contents');
-    await expect(page.getByLabel('Select config')).toHaveCount(0);
+    await expect(page.getByRole('treeitem', { name: /^config / })).toHaveCount(0);
   });
 
   test('an unbrowsable restore point explains the whole-item fallback', async ({ page }) => {

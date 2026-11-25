@@ -3,7 +3,6 @@
   import { getPointCoverage } from '../lib/restore-plan.js'
   import { isEmbedded } from '../lib/runtime-config.js'
   import { scrollHostTo } from '../lib/embed.js'
-  import Tooltip from './Tooltip.svelte'
 
   let {
     points = [],
@@ -13,7 +12,6 @@
     onSelect,
     onDelete,
     deletingId = null,
-    confirmDeleteId = null,
     /** Optional (rp) => bytes for the displayed size (e.g. selected-items only). */
     sizeFor,
     /** Optional item type for type-specific nouns in count labels */
@@ -48,6 +46,8 @@
   function displaySize(rp) {
     return sizeFor ? sizeFor(rp) : rp.size_bytes
   }
+
+  const uid = $props.id()
 
   // Type marker: ● full / ◐ differential / ○ incremental.
   function dotClass(rp) {
@@ -87,13 +87,15 @@
       const key = valid ? dayKey(d) : 'unknown'
       let g = byKey[key]
       if (!g) {
-        g = { key, label: valid ? dayLabel(d) : 'Unknown date', points: [], size: 0, hasFull: false }
+        g = { key, label: valid ? dayLabel(d) : 'Unknown date', points: [], size: 0, hasFull: false, types: {} }
         byKey[key] = g
         groups.push(g)
       }
       g.points.push(rp)
       g.size += rp.size_bytes || 0
-      if ((rp.backup_type || '').toLowerCase() === 'full') g.hasFull = true
+      const type = (rp.backup_type || 'unknown').toLowerCase()
+      if (type === 'full') g.hasFull = true
+      g.types[type] = (g.types[type] || 0) + 1
     }
     return groups
   })
@@ -118,6 +120,34 @@
     ]
   })
 
+  const TYPE_ORDER = ['full', 'differential', 'incremental']
+
+  function plural(n, one, many = `${one}s`) {
+    return `${n} ${n === 1 ? one : many}`
+  }
+
+  // "2 restore points (1 full, 1 incremental)": the strip names its backup
+  // types in words, not by bar style alone (#704).
+  function dayCountLabel(day) {
+    const rank = (k) => (TYPE_ORDER.indexOf(k) < 0 ? 99 : TYPE_ORDER.indexOf(k))
+    const kinds = Object.keys(day.types).sort((a, b) => rank(a) - rank(b))
+    const detail = kinds.length === 1 ? kinds[0] : kinds.map((k) => `${day.types[k]} ${k}`).join(', ')
+    return `${plural(day.points.length, 'restore point')} (${detail})`
+  }
+
+  function pointLabel(rp) {
+    const d = new Date(rp.created_at)
+    const when = Number.isNaN(d.getTime()) ? 'Unknown date' : `${dayLabel(d)} ${timeLabel(d)}`
+    return [`Restore point ${when}`, rp.backup_type, rp.jobName].filter(Boolean).join(', ')
+  }
+
+  function coverageText(coverage) {
+    if (coverage.coversAll) {
+      return coverage.coverageCount === 1 ? 'Contains the selected item' : `Contains all ${coverage.coverageCount} selected items`
+    }
+    return `Contains ${coverage.coverageCount} of ${plural(coverage.totalSelected, 'selected item')}`
+  }
+
   function scrollToDay(key) {
     const el = document.getElementById(`rpday-${key}`)
     if (!el) return
@@ -132,26 +162,38 @@
 </script>
 
 <div class="space-y-4">
-  <!-- Density overview: one bar per day with backups (oldest -> newest). -->
+  <!-- Density overview: one bar per day with backups (oldest -> newest). Each
+       bar is a full-height target at least 24px wide; a long history scrolls. -->
   {#if strip.length > 1}
     <div class="bg-surface-2 border border-border rounded-xl p-3">
-      <div class="flex items-end gap-1 h-12" role="group" aria-label="Backup activity by day">
-        {#each strip as d (d.key)}
-          <button
-            type="button"
-            onclick={() => scrollToDay(d.key)}
-            title="{d.label}: {d.points.length} backup{d.points.length !== 1 ? 's' : ''} · {formatBytes(d.size)}"
-            aria-label="{d.label}: {d.points.length} backups, {formatBytes(d.size)}"
-            class="flex-1 min-w-[3px] rounded-t cursor-pointer transition-colors hover:opacity-100 {d.hasFull ? 'bg-vault/70 hover:bg-vault' : 'bg-vault/30 hover:bg-vault/50'}"
-            style="height: {Math.max(8, Math.round((d.size / maxDaySize) * 100))}%"
-          ></button>
-        {/each}
+      <div class="overflow-x-auto">
+        <div class="flex items-end gap-1 h-12 min-w-full w-max" role="group" aria-label="Backup activity by day">
+          {#each strip as d (d.key)}
+            <button
+              type="button"
+              onclick={() => scrollToDay(d.key)}
+              title="{d.label}: {dayCountLabel(d)} · {formatBytes(d.size)}"
+              aria-label="{d.label}: {dayCountLabel(d)}, {formatBytes(d.size)}"
+              class="group flex-1 min-w-6 h-full flex items-end cursor-pointer rounded-t"
+            >
+              <span
+                aria-hidden="true"
+                class="block w-full rounded-t transition-colors {d.hasFull ? 'bg-vault/70 group-hover:bg-vault' : 'border-2 border-b-0 border-vault bg-transparent group-hover:bg-vault/20'}"
+                style="height: {Math.max(8, Math.round((d.size / maxDaySize) * 100))}%"
+              ></span>
+            </button>
+          {/each}
+        </div>
       </div>
-      <div class="flex justify-between text-[10px] text-text-dim mt-1.5">
+      <div class="flex justify-between text-xs text-text-dim mt-1.5">
         {#each graphLabels as label (label.align)}
           <span class={label.align}>{label.text}</span>
         {/each}
       </div>
+      <p class="flex items-center gap-3 flex-wrap text-xs text-text-dim mt-1">
+        <span class="inline-flex items-center gap-1"><span aria-hidden="true" class="inline-block w-2.5 h-2.5 rounded-sm bg-vault/70"></span>Includes a full backup</span>
+        <span class="inline-flex items-center gap-1"><span aria-hidden="true" class="inline-block w-2.5 h-2.5 rounded-sm border-2 border-vault"></span>Incremental only</span>
+      </p>
     </div>
   {/if}
 
@@ -159,10 +201,10 @@
   {#each days as day (day.key)}
     <div id="rpday-{day.key}" class="scroll-mt-4">
       <div class="flex items-baseline justify-between mb-2">
-        <h4 class="text-xs font-semibold text-text-muted">{day.label}</h4>
-        <span class="text-[11px] text-text-dim font-medium">{formatBytes(day.size)}</span>
+        <h3 class="text-xs font-semibold text-text-muted">{day.label}</h3>
+        <span class="text-xs text-text-dim font-medium tabular-nums">{formatBytes(day.size)}</span>
       </div>
-      <div class="space-y-1.5 border-l border-border pl-4 ml-1">
+      <ul class="space-y-1.5 border-l border-border pl-4 ml-1">
         {#each day.points as rp (rp.id)}
           {@const meta = parseMeta(rp)}
           {@const selected = isSelected(rp)}
@@ -170,120 +212,112 @@
           {@const dsz = displaySize(rp)}
           {@const itemCount = itemCountOf(rp)}
           {@const coverage = selectedItems.length > 0 ? getPointCoverage(rp, selectedItems) : null}
-          <div
-            role="button"
-            tabindex="0"
-            onclick={() => onSelect?.(rp)}
-            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(rp) } }}
-            class="relative bg-surface-2 border rounded-lg p-3 cursor-pointer transition-all hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-vault/50
-              {selected ? 'border-vault ring-1 ring-vault' : recommended ? 'border-vault/40 hover:border-vault/60' : 'border-border hover:border-vault/30'}"
-          >
+          <li class="relative flex items-stretch gap-1 bg-surface-2 border rounded-lg transition-colors
+              {selected ? 'border-vault ring-1 ring-vault' : recommended ? 'border-vault/40 hover:border-vault/60' : 'border-border hover:border-vault/30'}">
             <!-- timeline node -->
             <span class="absolute -left-[1.30rem] top-4 w-2.5 h-2.5 rounded-full border-2 {dotClass(rp)}" aria-hidden="true"></span>
 
-            <div class="flex items-center justify-between gap-2">
-              <div class="flex items-center gap-2 min-w-0 flex-wrap">
-                <span class="text-sm font-medium text-text tabular-nums">{timeLabel(new Date(rp.created_at))}</span>
-                <span class="text-[11px] px-1.5 py-0.5 rounded-full font-medium uppercase bg-vault/10 text-vault-text">{rp.backup_type}</span>
-                {#if selected}
-                  <span class="text-[11px] px-1.5 py-0.5 rounded-full bg-vault text-on-vault font-medium">Selected</span>
-                {/if}
-                {#if rp.jobName}
-                  <span class="text-[11px] px-2 py-0.5 rounded-full bg-surface-3 text-text font-medium">{rp.jobName}</span>
-                {/if}
-                {#if recommended}
-                  <span class="text-[11px] px-1.5 py-0.5 rounded-full bg-success/15 text-success font-medium">Recommended</span>
-                {/if}
-                {#if meta.verified}
-                  <span class="text-[11px] px-1.5 py-0.5 rounded-full bg-info/15 text-info font-medium">Verified</span>
-                {/if}
-                {#if rp.chain_status === 'broken'}
-                  <span class="text-[11px] px-1.5 py-0.5 rounded-full font-medium bg-danger/15 text-danger">Broken chain</span>
-                {:else if chainDeps(rp) > 0}
-                  <span class="inline-flex items-center gap-0.5">
-                    <span class="text-[11px] px-1.5 py-0.5 rounded-full font-medium bg-info/15 text-info">Chain ×{rp.chain_depth}</span>
-                    <Tooltip label="Chain depth" text="Chain length is {rp.chain_depth}. Restoring replays the base full backup plus intermediate backups in this chain." />
+            <!-- The point is one pressed/not-pressed button; its actions sit beside it, never inside (#704). -->
+            <button
+              type="button"
+              aria-pressed={selected}
+              aria-label={pointLabel(rp)}
+              aria-describedby="{uid}-rp-{rp.id}"
+              onclick={() => onSelect?.(rp)}
+              class="flex-1 min-w-0 text-left p-3 rounded-lg cursor-pointer"
+            >
+              <span id="{uid}-rp-{rp.id}" class="block">
+                <span class="flex items-center gap-2 min-w-0 flex-wrap">
+                  <span class="text-sm font-medium text-text tabular-nums">{timeLabel(new Date(rp.created_at))}</span>
+                  <span class="text-xs px-1.5 py-0.5 rounded-full font-medium uppercase bg-vault/10 text-vault-text">{rp.backup_type}</span>
+                  {#if selected}
+                    <span class="text-xs px-1.5 py-0.5 rounded-full bg-vault text-on-vault font-medium">Selected</span>
+                  {/if}
+                  {#if rp.jobName}
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-surface-3 text-text font-medium">{rp.jobName}</span>
+                  {/if}
+                  {#if recommended}
+                    <span class="text-xs px-1.5 py-0.5 rounded-full bg-success/15 text-success font-medium">Recommended</span>
+                  {/if}
+                  {#if meta.verified}
+                    <span class="text-xs px-1.5 py-0.5 rounded-full bg-info/15 text-info font-medium">Verified</span>
+                  {/if}
+                  {#if rp.chain_status === 'broken'}
+                    <span class="text-xs px-1.5 py-0.5 rounded-full font-medium bg-danger/15 text-danger">Broken chain</span>
+                  {:else if chainDeps(rp) > 0}
+                    <span class="text-xs px-1.5 py-0.5 rounded-full font-medium bg-info/15 text-info">Chain ×{rp.chain_depth}</span>
+                  {/if}
+                  {#if rp.retention_preserved}
+                    <span class="text-xs px-1.5 py-0.5 rounded-full font-medium bg-warning/15 text-warning">Retained for chain</span>
+                  {/if}
+                  <span class="text-xs text-text-dim ml-auto" title={formatDate(rp.created_at)}>{relTime(rp.created_at)}</span>
+                </span>
+
+                <span class="flex items-center gap-4 text-xs text-text-dim mt-1.5 flex-wrap tabular-nums">
+                  {#if dsz !== rp.size_bytes}
+                    <span title="Estimated restore size for selected items"><span class="text-text-muted">Restore:</span> {formatBytes(dsz)}</span>
+                    <span title="Total backup archive size"><span class="text-text-muted">Backup:</span> {formatBytes(rp.size_bytes)}</span>
+                  {:else}
+                    <span title="Backup archive size"><span class="text-text-muted">Size:</span> {formatBytes(rp.size_bytes)}</span>
+                  {/if}
+                  {#if itemCount != null}
+                    <span>{itemTypeCountLabel(itemCount, itemType)}</span>
+                  {/if}
+                </span>
+
+                {#if coverage}
+                  <span class="block mt-2 text-xs">
+                    {#if coverage.isLegacy}
+                      <span class="px-1.5 py-0.5 rounded bg-surface-3 text-text-muted">Item list not recorded for this backup</span>
+                    {:else if coverage.coversAll}
+                      <span class="text-hue-emerald font-medium">{coverageText(coverage)}</span>
+                    {:else}
+                      <span class="text-hue-amber font-medium">{coverageText(coverage)}</span>
+                    {/if}
+                    {#if coverage.missingItems.length > 0}
+                      <span class="block mt-1 space-y-0.5 text-text-dim">
+                        {#each coverage.missingItems as missing (`${missing.item?.type || missing.item?.item_type || 'item'}:${missing.name}`)}
+                          <span class="block"><span class="text-text-muted">{missing.name}:</span> {missing.reason}</span>
+                        {/each}
+                      </span>
+                    {/if}
                   </span>
                 {/if}
-                {#if rp.retention_preserved}
-                  <span class="text-[11px] px-1.5 py-0.5 rounded-full font-medium bg-warning/15 text-warning">Retained for chain</span>
-                {/if}
-              </div>
-              <div class="flex items-center gap-2 shrink-0">
-                <span class="text-xs text-text-dim" title={relTime(rp.created_at)}>{relTime(rp.created_at)}</span>
-                {#if onDelete}
-                  <button
-                    type="button"
-                    onclick={(e) => { e.stopPropagation(); onDelete(rp) }}
-                    disabled={deletingId === rp.id}
-                    title={confirmDeleteId === rp.id ? 'Click to confirm permanent deletion' : 'Delete this backup'}
-                    aria-label={confirmDeleteId === rp.id ? 'Confirm deletion of restore point' : 'Delete restore point'}
-                    class="rounded transition-all cursor-pointer disabled:opacity-40 {confirmDeleteId === rp.id ? 'px-2 py-0.5 text-xs font-medium text-danger bg-danger/15 hover:bg-danger/25 border border-danger/40 flex items-center gap-1.5' : 'p-1 text-text-dim hover:text-danger'}"
-                  >
-                    {#if deletingId === rp.id}
-                      <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                    {:else if confirmDeleteId === rp.id}
-                      <svg class="w-3 h-3 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                      <span>Delete?</span>
-                    {:else}
-                      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+
+                {#if rp.chain_status === 'broken'}
+                  <span class="block mt-2 text-xs text-danger">{rp.chain_warning}</span>
+                {:else if chainDeps(rp) > 0}
+                  <span class="block mt-2 space-y-0.5 text-xs">
+                    <span class="block text-info">Restore replays {chainDeps(rp)} earlier backup{chainDeps(rp) === 1 ? '' : 's'} in this chain.</span>
+                    {#if rp.base_full_created_at}
+                      <span class="block text-text-muted">Based on the full backup from {formatDate(rp.base_full_created_at)}{rp.base_full_size_bytes ? ` (${formatBytes(rp.base_full_size_bytes)})` : ''}.</span>
                     {/if}
-                  </button>
+                  </span>
                 {/if}
-              </div>
-            </div>
+              </span>
+            </button>
 
-            <div class="flex items-center gap-4 text-xs text-text-dim mt-1.5 flex-wrap">
-              {#if dsz !== rp.size_bytes}
-                <span title="Estimated restore size for selected items"><span class="text-text-muted">Restore:</span> {formatBytes(dsz)}</span>
-                <span title="Total backup archive size"><span class="text-text-muted">Backup:</span> {formatBytes(rp.size_bytes)}</span>
-              {:else}
-                <span title="Backup archive size"><span class="text-text-muted">Size:</span> {formatBytes(rp.size_bytes)}</span>
-              {/if}
-              {#if itemCount != null}
-                <span>{itemTypeCountLabel(itemCount, itemType)}</span>
-              {/if}
-            </div>
-
-            {#if coverage}
-              <div class="mt-2 text-xs">
-                {#if coverage.isLegacy}
-                  <div class="text-text-dim flex items-center gap-1.5">
-                    <span class="px-1.5 py-0.5 rounded bg-surface-3 text-text-muted">Item list not recorded for this backup</span>
-                  </div>
-                {:else if selectedItems.length > 0}
-                  {#if coverage.coversAll}
-                    <span class="text-hue-emerald font-medium">Contains all {coverage.coverageCount} selected items</span>
+            {#if onDelete}
+              <div class="shrink-0 flex items-start p-2">
+                <button
+                  type="button"
+                  onclick={() => onDelete(rp)}
+                  disabled={deletingId === rp.id}
+                  title="Delete this restore point"
+                  aria-label="Delete restore point {pointLabel(rp).replace(/^Restore point /, '')}"
+                  class="hit-target inline-flex items-center justify-center w-8 h-8 rounded-lg text-text-dim hover:text-danger hover:bg-danger/10 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {#if deletingId === rp.id}
+                    <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                   {:else}
-                    <span class="text-hue-amber font-medium">Contains {coverage.coverageCount} of {coverage.totalSelected} selected items</span>
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                   {/if}
-                {/if}
-                {#if selectedItems.length > 0 && coverage.missingItems.length > 0}
-                  <div class="mt-1 space-y-0.5 text-text-dim">
-                    {#each coverage.missingItems as missing (`${missing.item?.type || missing.item?.item_type || 'item'}:${missing.name}`)}
-                      <div>
-                        <span class="text-text-muted">{missing.name}:</span>
-                        <span>{missing.reason}</span>
-                      </div>
-                    {/each}
-                  </div>
-                {/if}
+                </button>
               </div>
             {/if}
-
-            {#if rp.chain_status === 'broken'}
-              <p class="mt-2 text-xs text-danger">{rp.chain_warning}</p>
-            {:else if chainDeps(rp) > 0}
-              <div class="mt-2 space-y-0.5 text-xs">
-                <p class="text-info">Restore replays {chainDeps(rp)} earlier backup{chainDeps(rp) === 1 ? '' : 's'} in this chain.</p>
-                {#if rp.base_full_created_at}
-                  <p class="text-text-muted">Based on the full backup from {formatDate(rp.base_full_created_at)}{rp.base_full_size_bytes ? ` (${formatBytes(rp.base_full_size_bytes)})` : ''}.</p>
-                {/if}
-              </div>
-            {/if}
-          </div>
+          </li>
         {/each}
-      </div>
+      </ul>
     </div>
   {/each}
 </div>

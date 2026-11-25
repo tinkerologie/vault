@@ -280,6 +280,20 @@
     } catch { /* keep whatever is already loaded */ }
   }
 
+  // #/history?run=<id> opens that run, e.g. "View run" from the restore wizard (#701).
+  function runFrom(params) {
+    const run = Number(params?.get('run'))
+    return Number.isInteger(run) && run > 0 ? run : null
+  }
+  let focusRunId = $state(runFrom(readHashFilters('/history')))
+  function revealFocusedRun() {
+    if (focusRunId == null || !allRuns.some(r => r.id === focusRunId)) return
+    const id = focusRunId
+    focusRunId = null
+    expandedRunIds.add(id)
+    tick().then(() => document.getElementById(`run-${id}`)?.scrollIntoView({ block: 'center' }))
+  }
+
   // A link or Back/Forward to another History URL while the page is open.
   function applyHashFilters() {
     const params = readHashFilters('/history')
@@ -290,6 +304,8 @@
     selectedJob = next.job
     selectedRunType = next.kind
     searchQuery = next.q
+    focusRunId = runFrom(params)
+    revealFocusedRun()
   }
 
   onMount(() => {
@@ -328,6 +344,7 @@
       }
       error = ''
       autoExpandRecentFailures()
+      revealFocusedRun()
     } catch (e) {
       if (generation === dataRequestGeneration) error = e.message || 'Failed to load history'
     } finally {
@@ -775,7 +792,7 @@
                 {@const anomalyCounts = runAnomalyCounts(run.id)}
                 {@const speed = runSpeed(run)}
                 {@const expandable = hasLogDetails(run) || Boolean(run.acknowledged_at)}
-                <div class="bg-surface-2 border border-border rounded-xl p-4 hover:border-vault/30 transition-all">
+                <div id="run-{run.id}" class="bg-surface-2 border border-border rounded-xl p-4 hover:border-vault/30 transition-all">
                   <!-- With details to show, the run's name is the disclosure button and its
                        ::after stretches over this row, so the whole summary stays clickable
                        while the anomaly badge remains a sibling control, not a nested one. -->

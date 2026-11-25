@@ -74,6 +74,18 @@ describe('jobs', () => {
     expect(fetch).toHaveBeenCalledOnce()
     expect(fetch.mock.calls[0][0]).toBe('/api/v1/jobs?details=true')
   })
+
+  it('asks for historical items when the restore wizard lists jobs (#669)', async () => {
+    const fetch = vi.fn(async () => new Response('[]', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await api.listJobsForRestore()
+
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/jobs?details=true&history=true')
+  })
 })
 
 describe('history trend', () => {

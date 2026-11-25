@@ -102,6 +102,7 @@ func (r *Runner) persistTrackedRestore(run db.JobRun, approved *ApprovedRestore,
 	r.cancellingRunID = 0
 	r.cancellingRestoreRequest = ""
 	r.restoreStopRequested = false
+	r.restoreStopFn = nil
 	if approved == nil {
 		return r.db.UpdateJobRun(run)
 	}

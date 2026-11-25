@@ -241,7 +241,10 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 		db.Job
 		Items    []db.JobItem   `json:"items"`
 		Baseline db.JobBaseline `json:"baseline"`
+		// HistoricalItems is set only with history=true (#669).
+		HistoricalItems []historicalItem `json:"historical_items,omitempty"`
 	}
+	withHistory := r.URL.Query().Get("history") == "true"
 	result := make([]detailedJob, 0, len(jobs))
 	for _, job := range jobs {
 		jobItems := itemsByJob[job.ID]
@@ -250,9 +253,70 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		baseline := baselineByJob[job.ID]
 		baseline.JobID = job.ID
-		result = append(result, detailedJob{Job: job, Items: jobItems, Baseline: baseline})
+		entry := detailedJob{Job: job, Items: jobItems, Baseline: baseline}
+		if withHistory {
+			points, err := h.db.ListRestorePointsContext(r.Context(), job.ID)
+			if err != nil {
+				respondInternalError(w, fmt.Errorf("listing restore points for job %d: %w", job.ID, err))
+				return
+			}
+			entry.HistoricalItems = historicalItems(jobItems, points)
+		}
+		result = append(result, entry)
 	}
 	respondJSON(w, http.StatusOK, result)
+}
+
+// historicalItem is a Backup Item that a job's retained Restore Points hold
+// but the job no longer lists, such as a deleted container (#669).
+type historicalItem struct {
+	ItemName      string `json:"item_name"`
+	ItemType      string `json:"item_type"`
+	LastBackupAt  string `json:"last_backup_at"`
+	RestorePoints int    `json:"restore_points"`
+}
+
+// historicalItems lists the items recorded in points that are not in the job.
+// Only names with a recorded type are listed, because a restore needs one;
+// a name still in the job is left to the job's own item.
+func historicalItems(jobItems []db.JobItem, points []db.RestorePoint) []historicalItem {
+	current := make(map[string]struct{}, len(jobItems))
+	for _, item := range jobItems {
+		current[item.ItemName] = struct{}{}
+	}
+	byName := map[string]*historicalItem{}
+	var order []string
+	for _, point := range points {
+		members, known := point.BackedUpItems()
+		if !known {
+			continue
+		}
+		for name, kind := range point.RecordedItemTypes() {
+			if _, member := members[name]; !member {
+				continue
+			}
+			if _, inJob := current[name]; inJob {
+				continue
+			}
+			created := point.CreatedAt.UTC().Format(time.RFC3339)
+			item, seen := byName[name]
+			if !seen {
+				item = &historicalItem{ItemName: name, ItemType: kind}
+				byName[name] = item
+				order = append(order, name)
+			}
+			item.RestorePoints++
+			if created > item.LastBackupAt {
+				item.LastBackupAt = created
+			}
+		}
+	}
+	sort.Strings(order)
+	out := make([]historicalItem, 0, len(order))
+	for _, name := range order {
+		out = append(out, *byName[name])
+	}
+	return out
 }
 
 func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -470,7 +534,7 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 	archiveName := strings.TrimSpace(r.URL.Query().Get("file"))
 	// Container manifests need synthetic-key resolution; folder and plugin
 	// manifests must pass through untouched (see dedupManifestToTarIndex).
-	itemType := h.itemType(jobID, itemName)
+	itemType := h.itemType(jobID, rp, itemName)
 
 	job, err := h.db.GetJob(jobID)
 	if err != nil {
@@ -649,13 +713,18 @@ func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []d
 	respondJSON(w, http.StatusOK, engine.TarIndex{Version: 1, Archive: itemName, Files: files})
 }
 
-// itemType resolves a job item's type ("container", "folder", "plugin", …).
+// itemType resolves an item's type ("container", "folder", "plugin", …).
 //
-// Returns "" when the item is no longer configured on the job — a restore
-// point can outlive its item. Callers treat that as "not a container", which
+// The Restore Point's own record comes first: it describes the data being
+// browsed, and it outlives the item's place in the job (#669). The job's item
+// is the fallback for points made before item types were recorded. Returns ""
+// when neither knows the item. Callers treat that as "not a container", which
 // is the safe default: it leaves manifest keys untouched rather than dropping
 // paths that only look synthetic.
-func (h *JobHandler) itemType(jobID int64, itemName string) string {
+func (h *JobHandler) itemType(jobID int64, rp db.RestorePoint, itemName string) string {
+	if kind := rp.RecordedItemTypes()[itemName]; kind != "" {
+		return kind
+	}
 	items, err := h.db.GetJobItems(jobID)
 	if err != nil {
 		// The item name is caller-supplied, so it is deliberately left out of the
@@ -1388,7 +1457,7 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 			respondInternalError(w, fmt.Errorf("fetching job items: %w", err))
 			return
 		}
-		targets, err := resolveNamedRestoreTargets(jobItems, req.Items)
+		targets, err := resolveNamedRestoreTargets(jobItems, rp, req.Items)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
@@ -1417,16 +1486,27 @@ type restoreTarget struct {
 	Type string
 }
 
-func resolveNamedRestoreTargets(jobItems []db.JobItem, names []string) ([]restoreTarget, error) {
+// resolveNamedRestoreTargets resolves each requested name to a type: the
+// job's item first, then the type the Restore Point recorded, so an item that
+// has left its job can still be restored from points that hold it (#669).
+// Membership of the point is still checked by validateRestorePointTargets.
+func resolveNamedRestoreTargets(jobItems []db.JobItem, point db.RestorePoint, names []string) ([]restoreTarget, error) {
 	types := make(map[string]string, len(jobItems))
 	for _, item := range jobItems {
 		types[item.ItemName] = item.ItemType
 	}
+	var recorded map[string]string
 	targets := make([]restoreTarget, 0, len(names))
 	for _, name := range names {
 		itemType, ok := types[name]
 		if !ok {
-			return nil, fmt.Errorf("item not found in job: %s", name)
+			if recorded == nil {
+				recorded = point.RecordedItemTypes()
+			}
+			itemType, ok = recorded[name]
+		}
+		if !ok || itemType == "" {
+			return nil, fmt.Errorf("item not found in job or restore point: %s", name)
 		}
 		targets = append(targets, restoreTarget{Name: name, Type: itemType})
 	}
@@ -1556,7 +1636,7 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(req.Items) > 0 {
-			targets, err = resolveNamedRestoreTargets(jobItems, req.Items)
+			targets, err = resolveNamedRestoreTargets(jobItems, *found, req.Items)
 			if err != nil {
 				respondError(w, http.StatusBadRequest, err.Error())
 				return
