@@ -175,7 +175,7 @@ test.describe('vault.key caution (#714)', () => {
     });
     await page.goto('/#/');
     const save = banner(page).getByRole('link', { name: 'Save vault.key' });
-    await expect(save).toHaveAttribute('href', '#/settings');
+    await expect(save).toHaveAttribute('href', '#/settings/security');
     await expect(banner(page)).toContainText('vault.key is the only key to your deduplicated backups');
 
     await page.goto('/#/recovery');

@@ -776,9 +776,9 @@ for (const stopOutcome of ['cancelled', 'completed'] as const) {
     await review.getByRole('button', { name: 'Stop Restore Run' }).click();
     const dialog = page.getByRole('dialog', { name: 'Stop Restore Run #91' });
     await expect(dialog.getByText('Stopping can leave the restore location partly restored.')).toBeVisible();
-    const stop = dialog.getByRole('button', { name: 'Stop Restore Run' });
-    await stop.click();
-    await expect(stop).toBeDisabled();
+    await dialog.getByRole('button', { name: 'Stop Restore Run' }).click();
+    // While the request runs the button says what is happening (#698 busyLabel).
+    await expect(dialog.getByRole('button', { name: 'Stopping…' })).toBeDisabled();
     await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
     acceptStop();
     if (stopOutcome === 'cancelled') {

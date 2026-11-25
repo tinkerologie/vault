@@ -233,6 +233,10 @@
   --color-on-status: #ffffff;
   /* Darker than the default amber hue: its tint sits on parchment here. */
   --color-hue-amber: var(--color-amber-900);
+  /* Emerald and cyan chips sit on the parchment card fill (surface-3) in the
+     type picker, where the 800 shades fall just under 4.5:1. */
+  --color-hue-emerald: var(--color-emerald-900);
+  --color-hue-cyan: var(--color-cyan-900);
   /* Tint bases: the Default 500 shades, as before the tokens existed. */
   --color-hue-blue-bg: var(--color-blue-500);
   --color-hue-purple-bg: var(--color-purple-500);
@@ -263,6 +267,8 @@
   --color-vault-dark: #d09800;
   --color-vault-text: #f8b800;
   --color-hue-amber: var(--color-amber-300);
+  --color-hue-emerald: var(--color-emerald-300);
+  --color-hue-cyan: var(--color-cyan-300);
   --color-on-vault: #0f0f23;
   --color-on-status: #0f0f23;
   --color-surface: #0f0f23;
