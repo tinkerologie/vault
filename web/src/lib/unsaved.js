@@ -21,6 +21,30 @@ export function isDirty(baseline, value) {
 
 let seq = 0
 
+// Every history entry Vault creates carries a `vaultIdx` in history.state: its
+// position in the session history, one past the entry it was pushed from,
+// whether a page or a dialog pushed it. The guard below walks back by the
+// difference of two indices, so they have to count dialog entries too (#718).
+// positions remembers the index each window was last seen on, because a
+// fresh entry (a followed link, a typed URL) arrives without one.
+/** @type {WeakMap<object, number>} */
+const positions = new WeakMap()
+
+const idxOf = (state) => (state && typeof state === 'object' && typeof state.vaultIdx === 'number' ? state.vaultIdx : null)
+
+/** Remember the current entry's index, if it has one. */
+function noteEntry(win) {
+  const idx = idxOf(win.history.state)
+  if (idx !== null) positions.set(win, idx)
+  return idx
+}
+
+/** The index for an entry about to be pushed from the current one. */
+function nextIdx(win) {
+  const idx = idxOf(win.history.state) ?? positions.get(win)
+  return idx === undefined ? 0 : idx + 1
+}
+
 /**
  * @param {Window} [win]
  */
@@ -48,10 +72,13 @@ export function createDialogHistory(win = globalThis.window) {
   function push() {
     token = `vault-dialog-${++seq}`
     const state = win.history.state && typeof win.history.state === 'object' ? win.history.state : {}
-    win.history.pushState({ ...state, vaultDialog: token }, '')
+    const vaultIdx = nextIdx(win)
+    win.history.pushState({ ...state, vaultDialog: token, vaultIdx }, '')
+    positions.set(win, vaultIdx)
   }
 
   function onPop() {
+    noteEntry(win)
     if (ignore > 0) {
       ignore--
       unlistenIfIdle()
@@ -166,9 +193,10 @@ export function guardUnload(isDirtyNow, win = globalThis.window) {
  *   about them, so the new location is not committed while the guard is
  *   asked, and a refusal walks history back to the page's own entry.
  *
- * Each entry carries a `vaultIdx` in history.state, so a refusal knows how far
- * to walk (history.go) and the page returns to its own entry: nothing is
- * added to history and Forward stays intact. Moving between sub-routes of the
+ * Each entry carries a `vaultIdx` in history.state (its position, counting
+ * dialog entries), so a refusal knows how far to walk (history.go) and the
+ * page returns to the entry it was on: nothing is added to history and
+ * Forward stays intact. Moving between sub-routes of the
  * same page (#/settings/general to #/settings/security) never asks, because
  * the page stays mounted and keeps its state.
  *
@@ -186,24 +214,19 @@ export function createNavigationGuard({ win = globalThis.window, doc = globalThi
   let guard = null
   let stopLinks = null
   let asking = false
-  let committedIdx = 0
 
   const readRaw = () => win.location.hash.slice(1) || '/'
-  const idxOf = (state) => (state && typeof state === 'object' && typeof state.vaultIdx === 'number' ? state.vaultIdx : null)
 
   // Give the current entry an index if it has none: a fresh entry sits one
-  // past the committed one.
-  function stamp(next) {
+  // past the entry the browser was last seen on.
+  function stamp() {
+    const known = noteEntry(win)
+    if (known !== null) return known
     const state = win.history.state
-    const idx = idxOf(state)
-    if (idx !== null) return idx
-    win.history.replaceState({ ...(state && typeof state === 'object' ? state : {}), vaultIdx: next }, '')
-    return next
-  }
-
-  function settle(raw) {
-    committedIdx = idxOf(win.history.state) ?? committedIdx
-    commit(raw)
+    const idx = nextIdx(win)
+    win.history.replaceState({ ...(state && typeof state === 'object' ? state : {}), vaultIdx: idx }, '')
+    positions.set(win, idx)
+    return idx
   }
 
   const leavesPage = (raw) => guard !== null && pageOf(raw) !== pageOf(current())
@@ -221,22 +244,24 @@ export function createNavigationGuard({ win = globalThis.window, doc = globalThi
 
   // popstate and hashchange both land here, often twice for one change.
   async function onLocationChange() {
-    stamp(committedIdx + 1)
+    // The entry shown before this change, which a refusal returns to.
+    const from = positions.get(win)
+    stamp()
     const raw = readRaw()
     if (raw === current() || asking) return
     if (!leavesPage(raw)) {
-      settle(raw)
+      commit(raw)
       return
     }
     const ok = await allowed(raw)
     const now = readRaw()
     if (now === current()) return
     if (ok) {
-      settle(now)
+      commit(now)
       return
     }
     const idx = idxOf(win.history.state)
-    if (idx !== null && idx !== committedIdx) win.history.go(committedIdx - idx)
+    if (idx !== null && from !== undefined && idx !== from) win.history.go(from - idx)
     else win.history.replaceState(win.history.state, '', '#' + current())
   }
 
@@ -257,8 +282,8 @@ export function createNavigationGuard({ win = globalThis.window, doc = globalThi
       if (asking || !(await allowed(raw))) return
     }
     win.location.hash = '#' + raw
-    stamp(committedIdx + 1)
-    settle(raw)
+    stamp()
+    commit(raw)
   }
 
   function setLinks() {
@@ -284,7 +309,7 @@ export function createNavigationGuard({ win = globalThis.window, doc = globalThi
       }
     },
     start() {
-      committedIdx = stamp(0)
+      stamp()
       win.addEventListener('popstate', onLocationChange)
       win.addEventListener('hashchange', onLocationChange)
     },
