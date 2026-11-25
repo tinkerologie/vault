@@ -276,16 +276,16 @@ describe('run links (#720)', () => {
     api.getRun.mockRejectedValue(Object.assign(new Error('run not found'), { status: 404 }))
     window.location.hash = '#/history?run=999'
     render(History)
-    expect(await screen.findByText(/Run 999 wasn.t found/)).toBeTruthy()
+    expect(await screen.findByText(/Run 999 wasn't found/)).toBeTruthy()
     await waitFor(() => expect(window.location.hash).toBe('#/history'))
     await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
-    expect(screen.queryByText(/Run 999 wasn.t found/)).toBeNull()
+    expect(screen.queryByText(/Run 999 wasn't found/)).toBeNull()
   })
 
   it('reports a failed run lookup', async () => {
     api.getRun.mockRejectedValue(Object.assign(new Error('HTTP 500'), { status: 500 }))
     window.location.hash = '#/history?run=999'
     render(History)
-    expect(await screen.findByText(/Couldn.t load run 999: HTTP 500/)).toBeTruthy()
+    expect(await screen.findByText(/Couldn't load run 999: HTTP 500/)).toBeTruthy()
   })
 })
