@@ -5,6 +5,7 @@
   import { relTime, formatBytes, formatInt, runSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate, itemDisplayLabel, itemTypeNoun, commonItemType, unchangedItemCount } from '../lib/utils.js'
   import { runStatusLabel } from '../lib/statusLabels.js'
   import { readHashFilters, writeHashFilters } from '../lib/urlFilters.js'
+  import { editLinkFor } from '../lib/jobForm.js'
   import { errorHint } from '../lib/errorHint.js'
   import LoadError from '../components/LoadError.svelte'
   import { onWsMessage } from '../lib/ws.svelte.js'
@@ -952,7 +953,7 @@
                                 <p class="text-text-muted break-words">
                                   {hint.action}
                                   {#if hint.excludePath && !isReplicaMode() && (run.run_type || 'backup') === 'backup'}
-                                    <a href="#/jobs" class="font-medium text-vault-text hover:underline">Edit {run.jobName}</a>
+                                    <a href={'#' + editLinkFor(run.job_id, item.item_name || item.name || '')} class="font-medium text-vault-text hover:underline">Edit {run.jobName}</a>
                                   {/if}
                                 </p>
                                 <details>

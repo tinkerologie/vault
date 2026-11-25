@@ -189,7 +189,7 @@ test('a Docker socket error explains the fix and keeps the raw text under Detail
   await page.goto('/#/history');
   await expect(page.getByText("The Docker socket can't be backed up.")).toBeVisible();
   await expect(page.getByText(/Exclude \/var\/run\/docker\.sock/)).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Edit Docker & Appdata' })).toHaveAttribute('href', '#/jobs');
+  await expect(page.getByRole('link', { name: 'Edit Docker & Appdata' })).toHaveAttribute('href', '#/jobs?edit=1&item=portainer');
   const raws = page.locator('details').getByText(raw);
   await expect(raws).toBeHidden();
   await page.getByText('Details', { exact: true }).click();

@@ -968,7 +968,7 @@
       {#if jobs.length === 0}
         3-2-1 rule unavailable — add a job to compute it.
       {:else}
-        3-2-1 check is turned off. <a href="#/settings" class="text-vault-text hover:underline font-medium">Turn it on in Settings › Dashboard</a>
+        3-2-1 check is turned off. <a href="#/settings/general" class="text-vault-text hover:underline font-medium">Turn it on in Settings › Dashboard</a>
       {/if}
     </div>
   {/if}

@@ -9,8 +9,7 @@
 
 const HEALTHY_SCORE = 80
 
-// Where vault.key is downloaded. Settings has no per-section route yet (#712);
-// point this at the Security section once it has one.
+// Where vault.key is downloaded: the Settings Security tab (#712, #714).
 export const SERVER_KEY_HREF = '/settings/security'
 
 const plural = (count, one, many = `${one}s`) => `${count} ${count === 1 ? one : many}`

@@ -443,3 +443,21 @@ test.describe('layout (#697, #699, #715)', () => {
     expect(box!.y).toBeGreaterThanOrEqual(bar!.y + bar!.height - 1);
   });
 });
+
+test.describe('edit link from a History error (#711)', () => {
+  test('opens the job editor at the container exclusions', async ({ page }) => {
+    await setupVaultMockApi(page);
+    await page.goto('/#/jobs?edit=1&item=plex');
+    const field = page.getByRole('textbox', { name: /Additional path exclusions for plex/ });
+    await expect(field).toBeVisible();
+    await expect(field).toBeFocused();
+    await expect(page).toHaveURL(/#\/jobs$/);
+  });
+
+  test('says so when the job no longer exists', async ({ page }) => {
+    await setupVaultMockApi(page);
+    await page.goto('/#/jobs?edit=999&item=plex');
+    await expect(page.getByText('That job no longer exists')).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+});

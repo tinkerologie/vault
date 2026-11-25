@@ -121,6 +121,6 @@ describe('createFileTreeModel', () => {
     expect(performance.now() - t).toBeLessThan(100)
     t = performance.now()
     m.visibleRows('file-9999')
-    expect(performance.now() - t).toBeLessThan(150)
+    expect(performance.now() - t).toBeLessThan(100)
   })
 })

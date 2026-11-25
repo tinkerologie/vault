@@ -84,7 +84,7 @@ test.describe('File tree keyboard and semantics', () => {
 // 1.0 s (filter keystroke).
 test.describe('File tree with 100k files', () => {
   const FILES = 100_000;
-  const BUDGET_MS = 150;
+  const BUDGET_MS = 100; // the #703 acceptance criterion
   const FILTER_DEBOUNCE_MS = 150;
 
   test.beforeEach(async ({ page }) => {

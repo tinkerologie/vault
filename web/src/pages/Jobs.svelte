@@ -28,7 +28,8 @@
   import StorageForm from '../components/StorageForm.svelte'
   import TypedConfirmField from '../components/TypedConfirmField.svelte'
   import { snapshot, isDirty, createDialogHistory, guardUnload } from '../lib/unsaved.js'
-  import { configuredSections, readFormMode, writeFormMode, nameFieldError } from '../lib/jobForm.js'
+  import { configuredSections, readFormMode, writeFormMode, nameFieldError, parseEditLink } from '../lib/jobForm.js'
+  import { getRawHash } from '../lib/router.svelte.js'
   import InlineSpinner from '../components/InlineSpinner.svelte'
   import { ICONS, PAGE_ICONS } from '../lib/icons.js'
   import Switch from '../components/Switch.svelte'
@@ -604,7 +605,7 @@
   }
 
   onMount(() => {
-    loadData()
+    loadData().then(openEditFromLink)
     // Feed the shared progress store so the per-row Cancel control knows
     // which job is running/queued even when Dashboard was never opened.
     api.getRunnerStatus().then(s => restoreFromStatus(s)).catch(() => {})
@@ -708,6 +709,30 @@
     lastSuggested = ''
     showModal = true
     markClean()
+  }
+
+  // A link such as #/jobs?edit=12&item=plex, from a History error that suggests
+  // excluding a path, opens that job's editor at the item's exclusions (#711).
+  async function openEditFromLink() {
+    const link = parseEditLink(getRawHash())
+    if (!link) return
+    history.replaceState(history.state, '', '#/jobs')
+    if (!jobs.some((j) => j.id === link.jobId)) {
+      showToast('That job no longer exists', 'warning')
+      return
+    }
+    await openEdit(link.jobId)
+    if (!link.item) return
+    await tick()
+    const field = document.getElementById(`${uid}-cexcl-${link.item}`)
+    if (!field) {
+      showToast(`${link.item} is no longer in this job`, 'warning')
+      return
+    }
+    const section = field.closest('details')
+    if (section) section.open = true
+    field.scrollIntoView({ block: 'center' })
+    field.focus()
   }
 
   async function openEdit(id) {
@@ -2335,7 +2360,7 @@
               {#if configured.containers}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
             </summary>
             <div class="space-y-4 mt-3 pl-6">
-              <p class="text-xs text-text-dim">Choose which mount points each container backs up. Container backups include appdata mounts by default based on the configured <a href="#/settings" class="text-vault-text hover:underline">Appdata Path</a>. Non-appdata bind mounts (e.g. large media or library paths) and shared data are excluded by default to prevent accidental multi-terabyte backups, while Docker named volumes and appdata mounts remain included. You can check any overridable mount to include it. System paths (like /dev or raw disks) cannot be included.</p>
+              <p class="text-xs text-text-dim">Choose which mount points each container backs up. Container backups include appdata mounts by default based on the configured <a href="#/settings/general" class="text-vault-text hover:underline">Appdata Path</a>. Non-appdata bind mounts (e.g. large media or library paths) and shared data are excluded by default to prevent accidental multi-terabyte backups, while Docker named volumes and appdata mounts remain included. You can check any overridable mount to include it. System paths (like /dev or raw disks) cannot be included.</p>
               {#each selectedContainerItems as cItem (cItem.item_name)}
                 {@const currentExclusions = getExclusionPaths(cItem)}
                 {@const preset = containerPresets[cItem.item_name]}

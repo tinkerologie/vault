@@ -89,3 +89,31 @@ export function nameFieldError(message, noun = 'job') {
   if (/(required|empty|blank)/i.test(text)) return `Enter a ${noun} name.`
   return null
 }
+
+/**
+ * Hash path that opens a job's editor, optionally at one item's exclusions,
+ * e.g. from a History error that suggests excluding a path (#711).
+ * @param {number} jobId
+ * @param {string} [item]
+ */
+export function editLinkFor(jobId, item = '') {
+  const params = new URLSearchParams({ edit: String(jobId) })
+  if (item) params.set('item', item)
+  return `/jobs?${params}`
+}
+
+/**
+ * Reads an edit link written by editLinkFor. Returns null for anything that
+ * isn't a Jobs page link with a positive whole job id.
+ * @param {string | undefined} rawHash
+ * @returns {{ jobId: number, item: string } | null}
+ */
+export function parseEditLink(rawHash) {
+  if (!rawHash) return null
+  const [path, query = ''] = rawHash.split('?')
+  if (path !== '/jobs') return null
+  const params = new URLSearchParams(query)
+  const edit = params.get('edit') || ''
+  if (!/^[1-9]\d*$/.test(edit)) return null
+  return { jobId: Number(edit), item: params.get('item') || '' }
+}

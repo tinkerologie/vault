@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { configuredSections, readFormMode, writeFormMode, nameFieldError } from './jobForm.js'
+import { configuredSections, readFormMode, writeFormMode, nameFieldError, editLinkFor, parseEditLink } from './jobForm.js'
 
 const defaults = {
   retention_count: 5, retention_days: 30, keep_latest: 0, keep_daily: 0, keep_weekly: 0, keep_monthly: 0, keep_yearly: 0,
@@ -66,5 +66,24 @@ describe('nameFieldError', () => {
     expect(nameFieldError('name must not contain slashes')).toBeNull()
     expect(nameFieldError('')).toBeNull()
     expect(nameFieldError(undefined)).toBeNull()
+  })
+})
+
+describe('edit links to a job item (#711)', () => {
+  it('round-trips a job and item through the hash', () => {
+    const link = editLinkFor(12, 'plex media')
+    expect(link).toBe('/jobs?edit=12&item=plex+media')
+    expect(parseEditLink(link)).toEqual({ jobId: 12, item: 'plex media' })
+  })
+
+  it('works without an item', () => {
+    expect(editLinkFor(3)).toBe('/jobs?edit=3')
+    expect(parseEditLink('/jobs?edit=3')).toEqual({ jobId: 3, item: '' })
+  })
+
+  it('ignores links that are not a valid job edit', () => {
+    for (const raw of ['/jobs', '/jobs?edit=', '/jobs?edit=abc', '/jobs?edit=-4', '/jobs?edit=1.5', '/history?edit=3', '', undefined]) {
+      expect(parseEditLink(raw)).toBeNull()
+    }
   })
 })
