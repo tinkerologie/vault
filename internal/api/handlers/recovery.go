@@ -50,7 +50,7 @@ func (h *RecoveryHandler) SetConfigChangeHook(fn ConfigChangeHook) {
 //
 //	GET /api/v1/recovery/plan
 func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
-	jobs, err := h.db.ListJobs()
+	jobs, err := h.db.ListJobsContext(r.Context())
 	if err != nil {
 		respondInternalError(w, err)
 		return
@@ -115,11 +115,11 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 		// schedule does not mean past restore points should disappear from
 		// the recovery plan. We surface protection based on actual restore
 		// points, not on whether the next run is scheduled.
-		items, err := h.db.GetJobItems(job.ID)
+		items, err := h.db.GetJobItemsContext(r.Context(), job.ID)
 		if err != nil {
 			continue
 		}
-		rps, err := h.db.ListRestorePoints(job.ID)
+		rps, err := h.db.ListRestorePointsContext(r.Context(), job.ID)
 		if err != nil {
 			rps = nil
 		}

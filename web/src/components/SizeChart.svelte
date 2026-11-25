@@ -178,7 +178,7 @@
           {#if shownIndex >= 0 && shownIndex < dataPoints.length}
             {@const p = dataPoints[shownIndex]}
             {@const slot = barSlot(shownIndex, dataPoints.length)}
-            <div data-chart-tooltip class="absolute z-10 pointer-events-none bg-surface-3 border border-border rounded-lg shadow-lg p-2 text-xs -translate-x-1/2 -translate-y-full tabular-nums"
+            <div data-chart-tooltip class="absolute z-10 pointer-events-none bg-surface-3 border border-border rounded-lg shadow p-2 text-xs -translate-x-1/2 -translate-y-full tabular-nums"
               style="left: {slot.center}%; top: {Math.max(0, y(p.size) - 4)}%">
               <p class="text-text-muted mb-1">{formatDateShort(p.date)}</p>
               {#each activeCategories as cat (cat.key)}

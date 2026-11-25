@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -155,7 +156,7 @@ func NewHealthHandler(database *db.DB) *HealthHandler {
 
 // Summary returns an aggregated health score and backup statistics.
 func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
-	result, err := BuildHealthSummary(h.db, time.Now())
+	result, err := BuildHealthSummary(r.Context(), h.db, time.Now())
 	if err != nil {
 		respondInternalError(w, err)
 		return
@@ -167,8 +168,8 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 // and recent backup outcomes. The REST summary and the MCP get_health_summary
 // tool both serve it, so the Dashboard, assistants and Home Assistant agree
 // on what is protected (#708).
-func BuildHealthSummary(database *db.DB, now time.Time) (map[string]any, error) {
-	jobs, err := database.ListJobs()
+func BuildHealthSummary(ctx context.Context, database *db.DB, now time.Time) (map[string]any, error) {
+	jobs, err := database.ListJobsContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing jobs: %w", err)
 	}
@@ -189,12 +190,12 @@ func BuildHealthSummary(database *db.DB, now time.Time) (map[string]any, error) 
 	classes := newProtectionClassifier(now)
 
 	for _, job := range jobs {
-		items, err := database.GetJobItems(job.ID)
+		items, err := database.GetJobItemsContext(ctx, job.ID)
 		if err != nil {
 			continue
 		}
 
-		rps, rpErr := database.ListRestorePoints(job.ID)
+		rps, rpErr := database.ListRestorePointsContext(ctx, job.ID)
 		if rpErr != nil {
 			// Surface DB issues rather than silently treating the job as having
 			// no backups (which would mislabel its items as pending).

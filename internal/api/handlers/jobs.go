@@ -1508,7 +1508,7 @@ func resolveNamedRestoreTargets(jobItems []db.JobItem, point db.RestorePoint, na
 		} else if pointType != "" && pointType != itemType {
 			// Browsing shows the point's recorded type; restoring the same data
 			// with the job's current type would write it in the wrong layout.
-			return nil, fmt.Errorf("item type changed since this backup: %s was a %s, the job now has a %s", name, pointType, itemType)
+			return nil, itemTypeChangedError(name, pointType, itemType)
 		}
 		if !ok || itemType == "" {
 			return nil, fmt.Errorf("item not found in job or restore point: %s", name)
@@ -1516,6 +1516,12 @@ func resolveNamedRestoreTargets(jobItems []db.JobItem, point db.RestorePoint, na
 		targets = append(targets, restoreTarget{Name: name, Type: itemType})
 	}
 	return targets, nil
+}
+
+// itemTypeChangedError explains why a restore was refused: the Restore Point
+// recorded the item as one type and the job or request now names another.
+func itemTypeChangedError(name, recorded, current string) error {
+	return fmt.Errorf("item type changed since this backup: %s was a %s, now a %s", name, recorded, current)
 }
 
 func validateRestorePointTargets(point db.RestorePoint, targets []restoreTarget) error {
@@ -1634,7 +1640,7 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		// Legacy single-item restore. A type that differs from the one the
 		// Restore Point recorded is refused, as for named items.
 		if recorded := found.RecordedItemTypes()[req.ItemName]; recorded != "" && recorded != req.ItemType {
-			respondError(w, http.StatusBadRequest, fmt.Sprintf("item type changed since this backup: %s was a %s, the request names a %s", req.ItemName, recorded, req.ItemType))
+			respondError(w, http.StatusBadRequest, itemTypeChangedError(req.ItemName, recorded, req.ItemType).Error())
 			return
 		}
 		targets = append(targets, restoreTarget{Name: req.ItemName, Type: req.ItemType})

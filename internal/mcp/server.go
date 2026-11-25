@@ -910,10 +910,10 @@ func (s *MCPServer) addGetHealthSummaryTool() {
 		Description: "Get an aggregated health summary including health score, protection rate, and recent backup statistics. " +
 			"Items are classified as protected (a recent enough restore point), out of date (the newest restore point is older " +
 			"than the job's schedule allows), or pending (in a job, not yet backed up), the same way the Vault Dashboard counts them",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ getHealthSummaryInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ getHealthSummaryInput) (*mcp.CallToolResult, any, error) {
 		// One computation with GET /health/summary, so assistants and the
 		// Dashboard never disagree about what is protected (#708).
-		result, err := handlers.BuildHealthSummary(s.db, time.Now())
+		result, err := handlers.BuildHealthSummary(ctx, s.db, time.Now())
 		if err != nil {
 			return nil, nil, fmt.Errorf("building health summary: %w", err)
 		}

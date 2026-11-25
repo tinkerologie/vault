@@ -37,7 +37,7 @@ docker exec vault-replica vault api-key generate # a Docker replica
 
 `vault api-key` also has `show`, `rotate`, `revoke`, and `status` commands. These commands connect to the daemon on this host. They use the address in `vault.cfg` unless you set `--addr ip:port`. If the daemon uses TLS, specify its certificate with `--tls-cert <file>`.
 
-**Local-only routes:** these answer `403` to anything but the Vault host, even with a valid key: `/settings/api-key/key`, `/settings/api-key/generate`, `/settings/api-key/rotate`, `DELETE /settings/api-key`, `/settings/encryption/passphrase` and `/settings/server-key`.
+**Local-only routes:** these answer `403` to anything but the Vault host, even with a valid key: `/settings/api-key/key`, `/settings/api-key/generate`, `/settings/api-key/rotate`, `DELETE /settings/api-key`, `/settings/encryption/passphrase`, `/settings/server-key`, `POST /settings/server-key/acknowledge` and `POST /restore-runs/{runID}/stop`.
 
 **Failed attempts:** key checks are rate limited per address and in total, and answer `429` past the limit. A client using the correct key is not affected once it has authenticated.
 
@@ -57,13 +57,21 @@ Then open `http://127.0.0.1:24085`. Use the Unraid web UI, an SSH tunnel, or the
 | Method | Endpoint             | Description                                                                                                                                                   |
 | ------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/health`            | Get status, version, mode, and `startup` diagnostics. Use local access or send the API key. For an anonymous health check, use `GET /ping` at the server root |
-| GET    | `/health/summary`    | Dashboard health metrics across every job, including `recent_partial`, `recent_skipped`, `recent_cancelled` and `stale_jobs`                                  |
+| GET    | `/health/summary`    | Dashboard health metrics across every job, including `recent_partial`, `recent_skipped`, `recent_cancelled`, `stale_jobs` and per-item protection             |
 | GET    | `/ws`                | WebSocket event stream                                                                                                                                        |
 | GET    | `/runner/status`     | Current backup or restore state, queued jobs, and [progress](#progress)                                                                                       |
 | GET    | `/release/changelog` | Embedded `CHANGELOG.md` parsed into version blocks (drives About modal)                                                                                       |
 | GET    | `/release/latest`    | Latest GitHub release metadata (used by the About card update badge)                                                                                          |
 
-The `recent_*` counts and `success_rate` include acknowledged backup runs. The `outstanding_failed`, `outstanding_skipped`, `outstanding_cancelled`, and `outstanding_partial` counts include only unacknowledged runs in the same per-job window. Protection coverage makes up 40% of the health score. The remaining 60% comes from the share of successes among successful and outstanding failed, skipped, and cancelled backup runs. With no scored runs, the success component is zero.
+The `recent_*` counts and `success_rate` include acknowledged backup runs. The `outstanding_failed`, `outstanding_skipped`, `outstanding_cancelled`, and `outstanding_partial` counts include only unacknowledged runs in the same per-job window. Up-to-date protection makes up 40% of the health score: the share of job items whose newest Restore Point is recent enough for the job's schedule. The remaining 60% comes from the share of successes among successful and outstanding failed, skipped, and cancelled backup runs. With no scored runs, the success component is zero.
+
+Each job item is classified once, the same way the Dashboard, Disaster Recovery and MCP `get_health_summary` count it (#708):
+
+- `up_to_date_items`: items with a Restore Point new enough for the job's schedule. `protected_items` and `protected_keys` still count every item with any Restore Point.
+- `out_of_date_items` and `out_of_date_keys`: items whose newest Restore Point is older than the schedule allows. Replica jobs are never out of date.
+- `pending_items`: items in a job that have no Restore Point yet.
+- `item_last_backup_at`: the newest Restore Point time per `type:name` key.
+- `server_key_at_risk`: `true` while deduplicated backups can only be opened with this server's `vault.key`. That is the case when a job uses a deduplicated destination, no backup password is set, and no copy of the current key is recorded. Downloading the key or `POST /settings/server-key/acknowledge` records a copy for the current key.
 
 ## Jobs
 
@@ -75,28 +83,28 @@ The job payload's `schedule`, `verify_schedule` and `full_backup_schedule` field
 
 The job payload's `backup_type_chain` field accepts `full`, `incremental`, or `differential`. Incremental and differential jobs automatically run as a **full** backup on their first run (when the job has no previous restore point to attach to); later runs capture only changes.
 
-| Method | Endpoint                                           | Description                                                                                 |
-| ------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| GET    | `/jobs`                                            | List jobs                                                                                   |
-| POST   | `/jobs`                                            | Create a Job and return the committed Job and items                                         |
-| GET    | `/jobs/next-runs`                                  | Next scheduled run for every job                                                            |
-| GET    | `/jobs/schedule-preview?schedule=…&count=…`        | Next runs of a cron expression on the server's clock, with its timezone (default 3, max 10) |
-| GET    | `/jobs/{id}`                                       | Get a job and its items                                                                     |
-| PUT    | `/jobs/{id}`                                       | Update a Job and return the committed Job and items                                         |
-| DELETE | `/jobs/{id}`                                       | Delete a job                                                                                |
-| GET    | `/jobs/{id}/history`                               | Job run history (returns `[]` when empty)                                                   |
-| GET    | `/jobs/{id}/restore-points`                        | Restore points with chain-health annotations (returns `[]` when empty)                      |
-| GET    | `/jobs/{id}/retention-preview`                     | Preview which restore points the configured retention policy would prune                    |
-| DELETE | `/jobs/{id}/restore-points/{rpid}`                 | Delete a specific restore point and its files                                               |
-| GET    | `/jobs/{id}/restore-points/{rpid}/contents?item=…` | List files inside a restore point (works for classic and dedup restore points)              |
-| POST   | `/jobs/{id}/restore-points/{rpid}/preflight`       | Check a restore before starting                                                             |
-| POST   | `/jobs/{id}/restore-points/{rpid}/verify`          | Start SHA-256 verification of a restore point                                               |
-| GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                                  |
-| GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                        |
-| POST   | `/jobs/{id}/run`                                   | Start a backup immediately                                                                  |
-| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup or manual restore, or remove a queued operation                     |
-| POST   | `/jobs/{id}/restore`                               | Start a restore. Set `destination` to an absolute path or, for a ZFS item, a dataset name   |
-| GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                              |
+| Method | Endpoint                                           | Description                                                                                                                                                     |
+| ------ | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/jobs`                                            | List jobs. With `details=true&history=true`, each job adds `historical_items`: items no longer in the job that its Restore Points still record, with their type |
+| POST   | `/jobs`                                            | Create a Job and return the committed Job and items                                                                                                             |
+| GET    | `/jobs/next-runs`                                  | Next scheduled run for every job                                                                                                                                |
+| GET    | `/jobs/schedule-preview?schedule=…&count=…`        | Next runs of a cron expression on the server's clock, with its timezone (default 3, max 10)                                                                     |
+| GET    | `/jobs/{id}`                                       | Get a job and its items                                                                                                                                         |
+| PUT    | `/jobs/{id}`                                       | Update a Job and return the committed Job and items                                                                                                             |
+| DELETE | `/jobs/{id}`                                       | Delete a job                                                                                                                                                    |
+| GET    | `/jobs/{id}/history`                               | Job run history (returns `[]` when empty)                                                                                                                       |
+| GET    | `/jobs/{id}/restore-points`                        | Restore points with chain-health annotations (returns `[]` when empty)                                                                                          |
+| GET    | `/jobs/{id}/retention-preview`                     | Preview which restore points the configured retention policy would prune                                                                                        |
+| DELETE | `/jobs/{id}/restore-points/{rpid}`                 | Delete a specific restore point and its files                                                                                                                   |
+| GET    | `/jobs/{id}/restore-points/{rpid}/contents?item=…` | List files inside a restore point (works for classic and dedup restore points)                                                                                  |
+| POST   | `/jobs/{id}/restore-points/{rpid}/preflight`       | Check a restore before starting                                                                                                                                 |
+| POST   | `/jobs/{id}/restore-points/{rpid}/verify`          | Start SHA-256 verification of a restore point                                                                                                                   |
+| GET    | `/jobs/{id}/restore-points/{rpid}/verify-runs`     | List verification runs for a restore point                                                                                                                      |
+| GET    | `/jobs/{id}/verify-runs/{vrid}`                    | Get a single verification run record                                                                                                                            |
+| POST   | `/jobs/{id}/run`                                   | Start a backup immediately                                                                                                                                      |
+| POST   | `/jobs/{id}/cancel`                                | Cancel a running backup or manual restore, or remove a queued operation                                                                                         |
+| POST   | `/jobs/{id}/restore`                               | Start a restore. Set `destination` to an absolute path or, for a ZFS item, a dataset name                                                                       |
+| GET    | `/jobs/{id}/next-run`                              | Next scheduled run for one job                                                                                                                                  |
 
 Preflight accepts optional `items`, `passphrase` and `destination` fields.
 Pass Backup Item names in `items`. Omitting it or passing an empty array
@@ -138,29 +146,30 @@ A Restore Request run uses the [exact-run stop action](#restore-requests).
 
 ## Settings
 
-| Method | Endpoint                          | Description                                                                                            |
-| ------ | --------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| GET    | `/settings`                       | List settings                                                                                          |
-| PUT    | `/settings`                       | Update settings                                                                                        |
-| GET    | `/settings/encryption`            | Encryption status                                                                                      |
-| POST   | `/settings/encryption`            | Set encryption passphrase                                                                              |
-| POST   | `/settings/encryption/verify`     | Verify encryption passphrase                                                                           |
-| GET    | `/settings/encryption/passphrase` | Read the configured passphrase (local only, `Cache-Control: no-store`)                                 |
-| GET    | `/settings/server-key`            | Download `vault.key`, the raw 32-byte server key (local only, `Cache-Control: no-store`, rate limited) |
-| GET    | `/settings/staging`               | Staging directory info                                                                                 |
-| PUT    | `/settings/staging`               | Override the staging directory                                                                         |
-| GET    | `/settings/database`              | Database snapshot settings                                                                             |
-| PUT    | `/settings/database`              | Update database snapshot settings                                                                      |
-| POST   | `/settings/discord/test`          | Test the Discord webhook                                                                               |
-| GET    | `/settings/api-key`               | API key status (configured / not configured)                                                           |
-| GET    | `/settings/api-key/key`           | Read the current API key (local only)                                                                  |
-| POST   | `/settings/api-key/generate`      | Generate a new API key (local only, rate-limited)                                                      |
-| POST   | `/settings/api-key/rotate`        | Rotate the existing API key (local only, rate-limited)                                                 |
-| DELETE | `/settings/api-key`               | Revoke the API key, refusing remote clients until a new one exists (local only)                        |
-| GET    | `/settings/assistant-keys`        | List key IDs, names and creation times (daemon mode)                                                   |
-| POST   | `/settings/assistant-keys`        | Create a key with `{"name":"<assistant-name>"}` (daemon mode, local only, rate limited)                |
-| DELETE | `/settings/assistant-keys/{id}`   | Revoke the specified key (daemon mode, local only)                                                     |
-| GET    | `/settings/diagnostics`           | Download a diagnostics ZIP (system info, schema, runs, scheduler, daemon log — credentials redacted)   |
+| Method | Endpoint                           | Description                                                                                            |
+| ------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| GET    | `/settings`                        | List settings                                                                                          |
+| PUT    | `/settings`                        | Update settings                                                                                        |
+| GET    | `/settings/encryption`             | Encryption status                                                                                      |
+| POST   | `/settings/encryption`             | Set encryption passphrase                                                                              |
+| POST   | `/settings/encryption/verify`      | Verify encryption passphrase                                                                           |
+| GET    | `/settings/encryption/passphrase`  | Read the configured passphrase (local only, `Cache-Control: no-store`)                                 |
+| GET    | `/settings/server-key`             | Download `vault.key`, the raw 32-byte server key (local only, `Cache-Control: no-store`, rate limited) |
+| POST   | `/settings/server-key/acknowledge` | Record that a copy of the current `vault.key` is kept off this server (local only, rate limited)       |
+| GET    | `/settings/staging`                | Staging directory info                                                                                 |
+| PUT    | `/settings/staging`                | Override the staging directory                                                                         |
+| GET    | `/settings/database`               | Database snapshot settings                                                                             |
+| PUT    | `/settings/database`               | Update database snapshot settings                                                                      |
+| POST   | `/settings/discord/test`           | Test the Discord webhook                                                                               |
+| GET    | `/settings/api-key`                | API key status (configured / not configured)                                                           |
+| GET    | `/settings/api-key/key`            | Read the current API key (local only)                                                                  |
+| POST   | `/settings/api-key/generate`       | Generate a new API key (local only, rate-limited)                                                      |
+| POST   | `/settings/api-key/rotate`         | Rotate the existing API key (local only, rate-limited)                                                 |
+| DELETE | `/settings/api-key`                | Revoke the API key, refusing remote clients until a new one exists (local only)                        |
+| GET    | `/settings/assistant-keys`         | List key IDs, names and creation times (daemon mode)                                                   |
+| POST   | `/settings/assistant-keys`         | Create a key with `{"name":"<assistant-name>"}` (daemon mode, local only, rate limited)                |
+| DELETE | `/settings/assistant-keys/{id}`    | Revoke the specified key (daemon mode, local only)                                                     |
+| GET    | `/settings/diagnostics`            | Download a diagnostics ZIP (system info, schema, runs, scheduler, daemon log — credentials redacted)   |
 
 Create returns `201` with `id`, `name`, `created_at` and the one-time `assistant_key` value. The response sets `Cache-Control: no-store`. A duplicate name returns `409`. A database restore in progress also returns `409` to a create or revoke request. Revoke returns `204` and closes that key's MCP sessions.
 
@@ -356,7 +365,7 @@ Vault returns `400` for invalid inputs or an item known to be absent, `403` for 
 
 An approved request includes a stable `run_id` and a `run` summary with status, item counts, live progress when available, and readiness checks. Folder application health is `unchecked`. The operator view also shows the verified approval time and Unraid account name when present. A busy Runner leaves the request pending. A change to the reviewed source or write effects invalidates the request. A repeated approval returns the existing Restore Run. After a restart, an unfinished run is marked interrupted. Prepare a new request to retry.
 
-The native Unraid stop action verifies operator proof bound to the exact Restore Run ID. It returns `202` with `run_id` and `status: stopping` after Vault saves the stop audit. It returns `409` with the recorded status when that run is no longer active, or `404` when the ID has no approved Restore Request. If Vault signals the stop but cannot save its audit to flash, it returns `503`. An API key, direct local connection, or the general Unraid API proxy cannot authorize this action. Use the Restore Request status to distinguish `cancelled` from a restore that finished before the stop took effect. The requesting assistant can follow the redacted outcome and stop request time.
+The native Unraid stop action verifies operator proof bound to the exact Restore Run ID. It returns `202` with `run_id` and `status: stopping` after Vault saves the stop audit. It returns `409` with the recorded status when that run is no longer active, or `404` when the ID is not a Restore Run that can be stopped. The same action also stops a Restore Run started from the Restore wizard. A plain Cancel already in progress wins, and no operator stop is recorded for that run. If Vault signals the stop but cannot save its audit to flash, it returns `503`. An API key, direct local connection, or the general Unraid API proxy cannot authorize this action. Use the Restore Request status to distinguish `cancelled` from a restore that finished before the stop took effect. The requesting assistant can follow the redacted outcome and stop request time.
 
 #### VM Restore Requests
 

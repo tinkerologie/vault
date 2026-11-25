@@ -21,7 +21,10 @@ func (d *DB) RecordRestoreRunStop(ctx context.Context, runID int64, requestedAt 
 		return false, fmt.Errorf("recording stop for Restore Run %d: %w", runID, err)
 	}
 	changed, err := result.RowsAffected()
-	return changed > 0, err
+	if err != nil {
+		return false, fmt.Errorf("checking stop for Restore Run %d: %w", runID, err)
+	}
+	return changed > 0, nil
 }
 
 // GetRestoreRunStatus returns the recorded status of a restore run, or
