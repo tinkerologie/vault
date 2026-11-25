@@ -247,8 +247,10 @@
     showModal = false
   }
 
-  function discardWizard() {
+  // Close one at a time, so focus unwinds through both to the opener.
+  async function discardWizard() {
     confirmDiscard = false
+    await tick()
     showModal = false
   }
 

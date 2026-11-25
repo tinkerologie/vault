@@ -242,7 +242,9 @@ test.describe('Nested dialogs (#528)', () => {
     await expect(editor.locator('#sname')).toHaveValue('Keep this name');
     await expect(browse).toBeFocused();
 
+    // The form has a typed name, so Escape asks before discarding it (#687).
     await page.keyboard.press('Escape');
+    await page.getByRole('dialog', { name: 'Discard changes?' }).getByRole('button', { name: 'Discard' }).click();
     await expect(editor).toHaveCount(0);
     await expect(page.locator('main').getByRole('button', { name: /add storage/i }).first()).toBeFocused();
   });
@@ -567,7 +569,9 @@ test.describe('Toasts and tooltips above a modal (#528)', () => {
     const dialog = await toastOverDialog(page);
     const toast = page.getByRole('alert');
     await expect(toast).toBeVisible();
+    // The rejected form still holds its input, so Escape asks first (#687).
     await page.keyboard.press('Escape');
+    await page.getByRole('dialog', { name: 'Discard changes?' }).getByRole('button', { name: 'Discard' }).click();
     await expect(dialog).toHaveCount(0);
     await expect(toast).toBeVisible();
     await toast.getByRole('button', { name: 'Dismiss' }).click();

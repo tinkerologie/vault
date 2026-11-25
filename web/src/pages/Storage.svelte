@@ -13,6 +13,10 @@
   import EmptyState from '../components/EmptyState.svelte'
   import CapacityTrend from '../components/CapacityTrend.svelte'
   import StorageForm from '../components/StorageForm.svelte'
+  import PasswordInput from '../components/PasswordInput.svelte'
+  import TypedConfirmField from '../components/TypedConfirmField.svelte'
+  import { dedupSummary } from '../lib/dedupSummary.js'
+  import { createDialogHistory, guardUnload } from '../lib/unsaved.js'
 
   let loading = $state(true)
   let loadError = $state('')
@@ -24,7 +28,61 @@
   let testResults = $state(new SvelteMap())
   let toast = $state({ message: '', type: 'info', key: 0 })
   let confirmDelete = $state({ show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 })
+  // Deleting the backup files too needs the typed word (#689).
+  let deleteWord = $state('')
   let depCounts = $state(new SvelteMap())
+
+  // ---- Unsaved changes and Back (#687) ----
+  let formDirty = $state(false)
+  let confirmDiscard = $state(false)
+  const formHistory = createDialogHistory()
+  const replaceHistory = createDialogHistory()
+
+  function requestCloseForm() {
+    if (formDirty) {
+      confirmDiscard = true
+      return
+    }
+    showModal = false
+  }
+
+  // Close one at a time, so focus unwinds through both to the opener.
+  async function discardForm() {
+    confirmDiscard = false
+    formDirty = false
+    await tick()
+    showModal = false
+  }
+
+  function onFormBack() {
+    if (formDirty) {
+      formHistory.keepOpen(onFormBack)
+      confirmDiscard = true
+      return
+    }
+    showModal = false
+  }
+
+  $effect(() => {
+    if (showModal) formHistory.open(onFormBack)
+    else formHistory.close()
+  })
+
+  // Back while the database is being replaced must not drop the dialog
+  // mid-request: keep it, and say why.
+  function onReplaceBack() {
+    if (restoringDB) {
+      replaceHistory.keepOpen(onReplaceBack)
+      showToast('The database is being replaced. Wait for it to finish before leaving.', 'warning')
+      return
+    }
+    confirmReplaceDB = null
+  }
+
+  $effect(() => {
+    if (confirmReplaceDB) replaceHistory.open(onReplaceBack)
+    else replaceHistory.close()
+  })
 
   // Import state
   let showImport = $state(false)
@@ -115,7 +173,14 @@
     })
     // Refresh dedup stats every 30s for dedup-enabled destinations.
     const pollHandle = setInterval(refreshDedupStats, 30000)
-    return () => { unsub(); clearInterval(pollHandle) }
+    const stopUnloadGuard = guardUnload(() => (showModal && formDirty) || restoringDB)
+    return () => {
+      unsub()
+      clearInterval(pollHandle)
+      stopUnloadGuard()
+      formHistory.destroy()
+      replaceHistory.destroy()
+    }
   })
 
   async function refreshDedupStats() {
@@ -253,11 +318,13 @@
 
   function openCreate() {
     editing = null
+    formDirty = false
     showModal = true
   }
 
   function openEdit(dest) {
     editing = dest
+    formDirty = false
     showModal = true
   }
 
@@ -265,6 +332,7 @@
   // toast copy as before, close the modal and reload the list.
   async function onFormSaved() {
     showToast(editing ? 'Storage updated successfully' : 'Storage created successfully', 'success')
+    formDirty = false
     showModal = false
     await loadData()
   }
@@ -276,11 +344,13 @@
       const result = await api.getDependentJobs(id)
       jobCount = result?.job_count || 0
     } catch { /* ignore */ }
+    deleteWord = ''
     confirmDelete = { show: true, id, name, deleteFiles: false, jobCount }
   }
 
   async function doDeleteStorage() {
     const { id, deleteFiles, jobCount } = confirmDelete
+    if (deleteFiles && deleteWord !== 'DELETE') return
     confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 }
     try {
       const res = await api.deleteStorage(id, { deleteFiles, force: jobCount > 0 })
@@ -634,21 +704,40 @@
             {@const s = dedupStats.get(dest.id)}
             <div class="border-t border-border pt-3 mb-3 text-xs space-y-1">
               {#if s}
-                <div class="flex justify-between">
-                  <span class="text-text-muted">Dedup</span>
-                  <span class="font-medium text-text">{(s.dedup_ratio || 1).toFixed(1)}× ({formatBytes(s.logical_bytes)} → {formatBytes(s.physical_bytes)})</span>
-                </div>
-                {#if s.logical_bytes > 0}
-                  {@const storedPct = Math.min(100, (s.physical_bytes / s.logical_bytes) * 100)}
-                  {@const saved = Math.max(0, s.logical_bytes - s.physical_bytes)}
+                {@const sum = dedupSummary(s)}
+                {#if sum.kind === 'savings'}
+                  <div class="flex justify-between">
+                    <span class="text-text-muted">Dedup</span>
+                    <span class="font-medium text-text tabular-nums">{sum.ratio.toFixed(1)}× ({formatBytes(sum.logical)} → {formatBytes(sum.physical)})</span>
+                  </div>
                   <!-- Savings bar: filled portion = bytes actually stored, the
                        remainder visualises what dedup avoided writing. -->
-                  <div class="h-2 bg-emerald-500/20 rounded-full overflow-hidden" title="{storedPct.toFixed(1)}% of logical data is physically stored">
-                    <div class="h-full bg-vault rounded-full transition-all" style="width: {storedPct.toFixed(1)}%"></div>
+                  <div class="h-2 bg-emerald-500/20 rounded-full overflow-hidden" title="{sum.storedPct.toFixed(1)}% of logical data is physically stored">
+                    <div class="h-full bg-vault rounded-full transition-all" style="width: {sum.storedPct.toFixed(1)}%"></div>
                   </div>
-                  <div class="flex justify-between text-text-dim">
-                    <span>Stored {storedPct.toFixed(0)}%</span>
-                    <span class="text-hue-emerald">Saved {formatBytes(saved)}</span>
+                  <div class="flex justify-between text-text-dim tabular-nums">
+                    <span>Stored {sum.storedPct.toFixed(0)}%</span>
+                    <span class="text-hue-emerald">Saved {formatBytes(sum.saved)}</span>
+                  </div>
+                {:else if sum.kind === 'overhead'}
+                  <!-- More stored than the data it holds: overhead, in neutral
+                       colour and plain words, never a ratio below 1× (#713). -->
+                  <div class="flex justify-between">
+                    <span class="text-text-muted">Dedup</span>
+                    <span class="font-medium text-text tabular-nums">Overhead {formatBytes(sum.overhead)}</span>
+                  </div>
+                  <p class="text-text-muted" data-testid="dedup-overhead">
+                    Using {formatBytes(sum.physical)} to store {formatBytes(sum.logical)} so far. Savings grow as more backups share data.{#if sum.reclaimable > 0} Run cleanup to reclaim unused space.{/if}
+                  </p>
+                {:else if sum.kind === 'even'}
+                  <div class="flex justify-between">
+                    <span class="text-text-muted">Dedup</span>
+                    <span class="font-medium text-text tabular-nums">No savings yet ({formatBytes(sum.logical)} → {formatBytes(sum.physical)})</span>
+                  </div>
+                {:else}
+                  <div class="flex justify-between">
+                    <span class="text-text-muted">Dedup</span>
+                    <span class="text-text-dim">No backup data yet</span>
                   </div>
                 {/if}
                 <div class="flex justify-between text-text-dim">
@@ -744,21 +833,33 @@
 </div>
 
 <!-- Create/Edit Modal -->
-<Modal show={showModal} title={editing ? 'Edit Storage' : 'Add Storage'} onclose={() => showModal = false}>
+<Modal show={showModal} title={editing ? 'Edit Storage' : 'Add Storage'} onclose={requestCloseForm}>
   <StorageForm
     initial={editing}
     submitLabel={editing ? 'Save Changes' : 'Add Storage'}
     onsaved={onFormSaved}
-    oncancel={() => showModal = false}
+    oncancel={requestCloseForm}
     ontoast={showToast}
+    bind:dirty={formDirty}
   />
 </Modal>
+
+<ConfirmDialog
+  show={confirmDiscard}
+  title="Discard changes?"
+  message="Your changes to this destination haven't been saved."
+  confirmLabel="Discard"
+  cancelLabel="Keep editing"
+  onconfirm={discardForm}
+  oncancel={() => { confirmDiscard = false }}
+/>
 
 <!-- Enhanced Delete Dialog -->
 <ConfirmDialog
   show={confirmDelete.show}
   title="Delete Storage"
   confirmLabel={confirmDelete.deleteFiles ? 'Delete Storage & Files' : 'Delete Storage'}
+  confirmDisabled={confirmDelete.deleteFiles && deleteWord !== 'DELETE'}
   onconfirm={doDeleteStorage}
   oncancel={() => { confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 } }}
 >
@@ -771,7 +872,8 @@
       </div>
     {/if}
 
-    <div class="mt-4 space-y-2">
+    <fieldset class="mt-4 space-y-2">
+      <legend class="text-sm font-medium text-text mb-2">Backup files</legend>
       <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {!confirmDelete.deleteFiles ? 'border-vault bg-vault/5' : 'border-border hover:border-vault/30'}">
         <input type="radio" name="delStorageMode" checked={!confirmDelete.deleteFiles}
           onchange={() => confirmDelete.deleteFiles = false}
@@ -790,7 +892,10 @@
           <p class="text-xs text-text-dim mt-0.5">Remove the storage destination <strong class="text-danger">and permanently delete the Vault-managed restore points</strong> on it. Other files and folders in the destination are left untouched.</p>
         </div>
       </label>
-    </div>
+    </fieldset>
+    {#if confirmDelete.deleteFiles}
+      <TypedConfirmField bind:value={deleteWord} onenter={doDeleteStorage} />
+    {/if}
 </ConfirmDialog>
 
 <!-- Import Backups Modal -->
@@ -849,14 +954,17 @@
             </svg>
             <span>One or more backups are encrypted. Enter the passphrase to unlock manifest details and import.</span>
           </div>
+          <label for="import-passphrase" class="sr-only">Encryption passphrase</label>
           <div class="flex gap-2">
-            <input
-              type="password"
-              bind:value={importPassphrase}
-              placeholder="Enter encryption passphrase"
-              class="flex-1 px-3 py-1.5 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault"
-              onkeydown={(e) => e.key === 'Enter' && !scanning && importPassphrase && scanStorage()}
-            />
+            <div class="flex-1 min-w-0">
+              <PasswordInput
+                id="import-passphrase"
+                bind:value={importPassphrase}
+                toggleLabel="Show passphrase"
+                class="w-full px-3 py-1.5 max-lg:min-h-11 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault"
+                onkeydown={(e) => e.key === 'Enter' && !scanning && importPassphrase && scanStorage()}
+              />
+            </div>
             <button
               type="button"
               onclick={scanStorage}
