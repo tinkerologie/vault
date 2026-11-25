@@ -2669,6 +2669,14 @@ func (r *Runner) ensureDedupEscrow(repo *dedup.Repo, dest db.StorageDestination)
 	}
 	r.escrowed[dest.ID] = pass
 	r.escrowMu.Unlock()
+	// Record which passphrase the escrow opens with, so the Dashboard keeps
+	// warning about vault.key until the passphrase really protects this
+	// destination (#714).
+	if hash, _ := r.db.GetSetting("encryption_passphrase_hash", ""); hash != "" {
+		if err := r.db.SetSetting(db.DedupEscrowConfirmedPrefix+strconv.FormatInt(dest.ID, 10), hash); err != nil {
+			log.Printf("runner: dedup: recording the escrow for destination %q: %v", dest.Name, err)
+		}
+	}
 	if wrote {
 		log.Printf("runner: dedup: destination %q can now also be unlocked with the backup passphrase", dest.Name)
 	}

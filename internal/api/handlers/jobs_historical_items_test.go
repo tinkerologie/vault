@@ -222,3 +222,37 @@ func TestRestore_LegacyItemTypeMismatchIsRefused(t *testing.T) {
 		t.Fatalf("status = %d; body: %s", w.Code, w.Body.String())
 	}
 }
+
+// A whole-job restore gets the same recorded-type check as named items.
+func TestRestore_WholeJobTypeMismatchIsRefused(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+	seedJobItem(t, d, jobID, "folder", "app")
+	rpID := seedHistoricalPoint(t, d, jobID, `{"item_sizes":{"app":10},"item_types":{"app":"container"}}`)
+	idStr := strconv.FormatInt(jobID, 10)
+	w := postJSON(t, h.Restore, "/api/v1/jobs/"+idStr+"/restore", map[string]any{"restore_point_id": rpID}, "id", idStr)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "type changed") {
+		t.Fatalf("status = %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// A folder or ZFS item that left its job has no recorded original location,
+// so its restore needs an explicit destination instead of failing mid-run.
+func TestRestore_RemovedFolderNeedsADestination(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+	rpID := seedHistoricalPoint(t, d, jobID, `{"item_sizes":{"share":10},"item_types":{"share":"folder"}}`)
+	idStr := strconv.FormatInt(jobID, 10)
+	path := "/api/v1/jobs/" + idStr + "/restore"
+	w := postJSON(t, h.Restore, path, map[string]any{"restore_point_id": rpID, "items": []string{"share"}}, "id", idStr)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "choose a restore destination") {
+		t.Fatalf("no destination: status = %d; body: %s", w.Code, w.Body.String())
+	}
+	w = postJSON(t, h.Restore, path, map[string]any{"restore_point_id": rpID, "items": []string{"share"}, "destination": "/mnt/user/restored"}, "id", idStr)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("with destination: status = %d; body: %s", w.Code, w.Body.String())
+	}
+	h.runner.WaitForBackgroundWork()
+}

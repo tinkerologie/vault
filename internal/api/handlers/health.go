@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -119,9 +120,6 @@ func serverKeyCopyRecorded(database *db.DB) bool {
 // key file only matters while no passphrase is set; its copy, on the same flash
 // drive Vault protects, would be lost with the server.
 func serverKeyAtRisk(database *db.DB, jobs []db.Job) bool {
-	if hash, _ := database.GetSetting("encryption_passphrase_hash", ""); hash != "" {
-		return false
-	}
 	if serverKeyCopyRecorded(database) {
 		return false
 	}
@@ -136,8 +134,17 @@ func serverKeyAtRisk(database *db.DB, jobs []db.Job) bool {
 			dedup[dest.ID] = true
 		}
 	}
+	// A backup passphrase protects a destination only once the runner has
+	// confirmed its escrow for that passphrase (written on the next backup).
+	hash, _ := database.GetSetting("encryption_passphrase_hash", "")
 	for _, job := range jobs {
-		if dedup[job.StorageDestID] {
+		if !dedup[job.StorageDestID] {
+			continue
+		}
+		if hash == "" {
+			return true
+		}
+		if confirmed, _ := database.GetSetting(db.DedupEscrowConfirmedPrefix+strconv.FormatInt(job.StorageDestID, 10), ""); confirmed != hash {
 			return true
 		}
 	}

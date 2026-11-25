@@ -330,7 +330,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for k := range incoming {
-		if protectedSettingKeys[k] || strings.HasPrefix(k, db.SFTPHostKeyPinPrefix) {
+		if protectedSettingKeys[k] || strings.HasPrefix(k, db.SFTPHostKeyPinPrefix) || strings.HasPrefix(k, db.DedupEscrowConfirmedPrefix) {
 			respondError(w, http.StatusBadRequest, "cannot modify protected setting: "+k)
 			return
 		}

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -98,6 +99,41 @@ func TestHealthSummary_EmptyListsAreNotNull(t *testing.T) {
 	}
 }
 
+// A backup passphrase protects deduplicated backups only once each destination
+// in use has a confirmed escrow for that passphrase (#714, #451).
+func TestHealthSummary_ServerKeyAtRiskFollowsEscrow(t *testing.T) {
+	d := newTestDB(t)
+	destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "dest", Type: "local", Config: `{"path":"/tmp"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`UPDATE storage_destinations SET dedup_enabled = 1 WHERE id = ?`, destID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateJob(db.Job{Name: "job", Enabled: true, StorageDestID: destID, BackupTypeChain: "full"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetSetting("encryption_passphrase_hash", "current"); err != nil {
+		t.Fatal(err)
+	}
+	key := db.DedupEscrowConfirmedPrefix + strconv.FormatInt(destID, 10)
+	for _, tc := range []struct {
+		name, recorded string
+		want           bool
+	}{
+		{"no escrow confirmed yet", "", true},
+		{"escrow confirmed for an older passphrase", "previous", true},
+		{"escrow confirmed for this passphrase", "current", false},
+	} {
+		if err := d.SetSetting(key, tc.recorded); err != nil {
+			t.Fatal(err)
+		}
+		if got := fetchHealthSummary(t, d)["server_key_at_risk"]; got != tc.want {
+			t.Errorf("%s: server_key_at_risk = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestHealthSummary_ServerKeyAtRisk(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -109,7 +145,7 @@ func TestHealthSummary_ServerKeyAtRisk(t *testing.T) {
 		want       bool
 	}{
 		{"dedup in use, no passphrase, no saved copy", true, false, "", "aaaa", true, true},
-		{"a backup passphrase escrows the key", true, true, "", "aaaa", true, false},
+		{"a passphrase whose escrow is not written yet", true, true, "", "aaaa", true, true},
 		{"a copy of this key was saved", true, false, "2026-11-25T10:00:00Z aaaa", "aaaa", true, false},
 		{"the saved copy is of an older key", true, false, "2026-11-25T10:00:00Z bbbb", "aaaa", true, true},
 		{"a saved copy with no fingerprint while the key is known", true, false, "2026-11-25T10:00:00Z", "aaaa", true, true},

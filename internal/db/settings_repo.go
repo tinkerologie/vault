@@ -40,6 +40,11 @@ const SFTPHostKeyPinPrefix = "sftp_host_key_pin:"
 // matches, so a regenerated key brings the "save a copy" caution back (#714).
 const ServerKeyFingerprintSetting = "server_key_fingerprint"
 
+// DedupEscrowConfirmedPrefix + a destination ID records the backup passphrase
+// hash whose escrow the runner last confirmed on that destination. The
+// passphrase protects deduplicated backups only once this matches (#714).
+const DedupEscrowConfirmedPrefix = "dedup_escrow_confirmed:"
+
 // PinSFTPHostKey records fingerprint as the host key for address unless one
 // is already on record, and returns the fingerprint on record. The conditional
 // insert is atomic and a pin is never updated here, so concurrent first

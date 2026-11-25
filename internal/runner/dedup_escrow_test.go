@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -71,9 +72,16 @@ func TestDedupBackupEscrowsUnderBackupPassphrase(t *testing.T) {
 	}
 	t.Cleanup(func() { database.Close() })
 	_ = database.SetSetting("encryption_passphrase", "first")
+	_ = database.SetSetting("encryption_passphrase_hash", "hash-of-first")
 	storageDir := t.TempDir()
 	r := runnerWithKey(database, testServerKey())
 	dest, jobID := dedupBackup(t, r, database, storageDir)
+
+	// The confirmed escrow is recorded under the passphrase it opens with,
+	// so the vault.key caution can trust it (#714).
+	if got, _ := database.GetSetting(db.DedupEscrowConfirmedPrefix+strconv.FormatInt(dest.ID, 10), ""); got != "hash-of-first" {
+		t.Fatalf("escrow confirmation recorded as %q, want the passphrase hash", got)
+	}
 
 	if _, err := os.Stat(filepath.Join(storageDir, "_vault", "master.escrow.age")); err != nil {
 		t.Fatalf("backup did not write the escrow: %v", err)

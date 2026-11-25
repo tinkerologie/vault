@@ -1518,6 +1518,27 @@ func resolveNamedRestoreTargets(jobItems []db.JobItem, point db.RestorePoint, na
 	return targets, nil
 }
 
+// removedItemWithoutLocation returns the first folder or ZFS target that is no
+// longer in the job. Its original location comes from the job's item, so
+// restoring it needs an explicit destination (#669). Containers and VMs
+// restore from their saved configuration and don't need one.
+func removedItemWithoutLocation(jobID int64, targets []restoreTarget, database *db.DB) string {
+	items, err := database.GetJobItems(jobID)
+	if err != nil {
+		return ""
+	}
+	inJob := make(map[string]bool, len(items))
+	for _, item := range items {
+		inJob[item.ItemName] = true
+	}
+	for _, t := range targets {
+		if !inJob[t.Name] && (t.Type == "folder" || t.Type == "zfs") {
+			return t.Name
+		}
+	}
+	return ""
+}
+
 // itemTypeChangedError explains why a restore was refused: the Restore Point
 // recorded the item as one type and the job or request now names another.
 func itemTypeChangedError(name, recorded, current string) error {
@@ -1658,8 +1679,14 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			// Restore all items from the job.
+			// Restore all items from the job, with the same recorded-type
+			// check as named items.
+			recorded := found.RecordedItemTypes()
 			for _, ji := range jobItems {
+				if pointType := recorded[ji.ItemName]; pointType != "" && pointType != ji.ItemType {
+					respondError(w, http.StatusBadRequest, itemTypeChangedError(ji.ItemName, pointType, ji.ItemType).Error())
+					return
+				}
 				targets = append(targets, restoreTarget{Name: ji.ItemName, Type: ji.ItemType})
 			}
 		}
@@ -1668,6 +1695,12 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	if len(targets) == 0 {
 		respondError(w, http.StatusBadRequest, "no items to restore")
 		return
+	}
+	if req.Destination == "" {
+		if name := removedItemWithoutLocation(id, targets, h.db); name != "" {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("%s is no longer in this job, so its original location isn't recorded: choose a restore destination", name))
+			return
+		}
 	}
 
 	if req.Destination != "" {

@@ -83,3 +83,22 @@ func TestPreviewRunsNeverMatchingSchedule(t *testing.T) {
 		t.Fatalf("got %v, want no runs", got)
 	}
 }
+
+// A frequent last-day schedule reaches the month's last day instead of
+// spending the candidate budget on the days before it.
+func TestPreviewRunsFrequentLastDay(t *testing.T) {
+	from := time.Date(2026, time.November, 1, 0, 0, 0, 0, time.UTC)
+	runs, err := PreviewRuns("*/5 * L * *", from, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 3 {
+		t.Fatalf("got %d runs, want 3: %v", len(runs), runs)
+	}
+	want := time.Date(2026, time.November, 30, 0, 0, 0, 0, time.UTC)
+	for i, run := range runs {
+		if !run.Equal(want.Add(time.Duration(i) * 5 * time.Minute)) {
+			t.Fatalf("run %d = %v, want %v", i, run, want.Add(time.Duration(i)*5*time.Minute))
+		}
+	}
+}

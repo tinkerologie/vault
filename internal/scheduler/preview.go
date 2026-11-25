@@ -45,6 +45,11 @@ func PreviewRuns(spec string, from time.Time, n int) ([]time.Time, error) {
 			break // the parser found no match within its search window
 		}
 		if lastDay && !isLastDayOfMonth(t) {
+			// Skip to just before the month's last day, so frequent schedules
+			// (every few minutes) don't spend the budget on earlier days.
+			if lastDayStart := time.Date(t.Year(), t.Month()+1, 0, 0, 0, 0, 0, t.Location()); lastDayStart.After(t) {
+				t = lastDayStart.Add(-time.Second)
+			}
 			continue
 		}
 		runs = append(runs, t)
