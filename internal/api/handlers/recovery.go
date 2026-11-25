@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/health"
 	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/unraid"
 )
@@ -108,7 +109,7 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 	// Protection is decided per item from Restore Point membership, shared with
 	// the health summary so Dashboard and Disaster Recovery agree (#708).
 	now := time.Now()
-	classes := newProtectionClassifier(now)
+	classes := health.NewProtectionClassifier(now)
 
 	for _, job := range jobs {
 		// Include all jobs regardless of schedule-enabled state: a disabled
@@ -124,7 +125,7 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 			rps = nil
 		}
 
-		classes.addJob(job, items, rps)
+		classes.AddJob(job, items, rps)
 
 		var latestRP *db.RestorePoint
 		if len(rps) > 0 {
@@ -184,9 +185,9 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 	for _, key := range order {
 		si := merged[key]
 		totalProtected++
-		si.HasRestorePoint = classes.isBacked(key)
-		si.OutOfDate = classes.isOutOfDate(key)
-		if newest, ok := classes.newestBackup(key); ok {
+		si.HasRestorePoint = classes.IsBacked(key)
+		si.OutOfDate = classes.IsOutOfDate(key)
+		if newest, ok := classes.NewestBackup(key); ok {
 			si.LastBackup = &newest
 		} else {
 			si.LastBackup = nil
