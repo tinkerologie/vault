@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createNavigationGuard } from './unsaved.js'
+import { createDialogHistory, createNavigationGuard } from './unsaved.js'
 
 // A browser-like session history for a hash-routed page. Fragment navigation
 // and traversal fire popstate then hashchange asynchronously, like a browser.
@@ -306,5 +306,98 @@ describe('createNavigationGuard', () => {
     t.b.win.location.hash = '#/jobs'
     await flush()
     expect(t.current()).toBe('/')
+  })
+})
+
+// A dialog's history entry sits between two page entries, so a refusal has to
+// count it when walking back to the page (#718).
+describe('createNavigationGuard with dialog entries', () => {
+  // Jobs with a job editor open, then its Appdata Path link to Settings. The
+  // Jobs page (and its dialog helper) goes away, but the dialog's entry stays.
+  async function settingsAfterJobDialog() {
+    const t = setup('/')
+    t.nav.navigate('/jobs')
+    await flush()
+    const dialog = createDialogHistory(t.b.win)
+    dialog.open(() => {})
+    t.nav.navigate('/settings')
+    dialog.destroy()
+    await flush()
+    expect(t.b.hashes).toEqual(['/', '/jobs', '/jobs', '/settings'])
+    return t
+  }
+
+  it('gives every entry, dialogs included, its own index', async () => {
+    const t = await settingsAfterJobDialog()
+    const seen = []
+    for (let i = 0; i < 3; i++) {
+      seen.unshift(t.b.win.history.state?.vaultIdx)
+      t.b.win.history.back()
+      await flush()
+    }
+    seen.unshift(t.b.win.history.state?.vaultIdx)
+    expect(seen).toEqual([0, 1, 2, 3])
+  })
+
+  it('returns to Settings after Back, Back and Keep editing', async () => {
+    const t = await settingsAfterJobDialog()
+    let answer
+    const guard = vi.fn(() => new Promise((r) => (answer = r)))
+    t.nav.setGuard(guard)
+    t.b.win.history.back()
+    await flush()
+    t.b.win.history.back()
+    await flush()
+    expect(t.b.index).toBe(1)
+    answer(false)
+    await flush()
+    await flush()
+    expect(t.b.index).toBe(3)
+    expect(t.current()).toBe('/settings')
+    expect(t.b.win.location.hash).toBe('#/settings')
+    expect(guard).toHaveBeenCalledTimes(1)
+    expect(t.b.hashes).toEqual(['/', '/jobs', '/jobs', '/settings'])
+  })
+
+  it('returns to Settings after one Back onto the dialog entry and Keep editing', async () => {
+    const t = await settingsAfterJobDialog()
+    t.nav.setGuard(() => false)
+    t.b.win.history.back()
+    await flush()
+    await flush()
+    expect(t.b.index).toBe(3)
+    expect(t.current()).toBe('/settings')
+  })
+
+  it('counts a dialog entry before a URL typed into the address bar', async () => {
+    const t = setup('/jobs')
+    const dialog = createDialogHistory(t.b.win)
+    dialog.open(() => {})
+    // Typed URLs and plain links change the hash without navigate().
+    t.b.win.location.hash = '#/settings'
+    dialog.destroy()
+    await flush()
+    const guard = vi.fn(() => false)
+    t.nav.setGuard(guard)
+    t.b.win.history.go(-2)
+    await flush()
+    await flush()
+    expect(t.b.index).toBe(2)
+    expect(t.current()).toBe('/settings')
+    expect(guard).toHaveBeenCalledTimes(1)
+  })
+
+  it('still closes the dialog on Back without asking the page guard', async () => {
+    const t = setup('/settings')
+    const guard = vi.fn(() => false)
+    t.nav.setGuard(guard)
+    const dialog = createDialogHistory(t.b.win)
+    const closed = vi.fn()
+    dialog.open(closed)
+    t.b.win.history.back()
+    await flush()
+    expect(closed).toHaveBeenCalledTimes(1)
+    expect(guard).not.toHaveBeenCalled()
+    expect(t.current()).toBe('/settings')
   })
 })

@@ -140,4 +140,36 @@ test.describe('Settings unsaved changes (#719)', () => {
     await expect(page.getByRole('heading', { name: 'Jobs', level: 1 })).toBeVisible();
     await expect(discard(page)).toHaveCount(0);
   });
+
+  // The job editor's history entry stays behind when its Appdata Path link
+  // leaves Jobs, so Keep editing has to walk past it as well (#718).
+  test('Keep editing after two Backs returns to Settings from a job editor link', async ({ page }) => {
+    await page.goto('/#/jobs');
+    await page.getByRole('button', { name: 'Edit job: Docker & Appdata' }).click();
+    const editor = page.getByRole('dialog', { name: 'Edit Job' });
+    await editor.getByText('Container Mounts & Exclusions', { exact: true }).click();
+    await editor.getByRole('link', { name: 'Appdata Path' }).click();
+    await expect(page).toHaveURL(/#\/settings\/general$/);
+    const max = page.getByRole('spinbutton', { name: 'Max retries' });
+    await max.fill('7');
+    await expect(page.getByText('Unsaved changes')).toBeVisible();
+    const length = await page.evaluate(() => history.length);
+
+    await page.goBack();
+    await expect(discard(page)).toBeVisible();
+    await page.goBack();
+    await discard(page).getByRole('button', { name: 'Keep editing' }).click();
+    await expect(discard(page)).toHaveCount(0);
+    await expect(page).toHaveURL(/#\/settings\/general$/);
+    await expect(max).toHaveValue('7');
+    // Settled on Settings: no second question, and no history was added.
+    await page.waitForTimeout(300);
+    await expect(discard(page)).toHaveCount(0);
+    await expect(page).toHaveURL(/#\/settings\/general$/);
+    expect(await page.evaluate(() => history.length)).toBe(length);
+
+    await page.goBack();
+    await discard(page).getByRole('button', { name: 'Discard' }).click();
+    await expect(page.getByRole('heading', { name: 'Jobs', level: 1 })).toBeVisible();
+  });
 });
