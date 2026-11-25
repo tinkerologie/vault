@@ -297,6 +297,33 @@
   // Runs fetched on their own because a link asked for one older than the
   // loaded history; kept across reloads so the shown run doesn't vanish.
   let linkedRuns = []
+
+  // Fetches the linked runs again so a reload shows their current state, such
+  // as a review saved since. Returns each refetched run by id: null when it is
+  // gone. A run that fails for another reason keeps the copy already shown.
+  async function refreshLinkedRuns(runs) {
+    const loaded = new Set(runs.map(run => run.id))
+    const stale = linkedRuns.filter(run => !loaded.has(run.id))
+    const results = await Promise.allSettled(stale.map(run => api.getRun(run.id)))
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local lookup, never rendered.
+    const updates = new Map()
+    stale.forEach((run, i) => {
+      const result = results[i]
+      if (result.status === 'fulfilled') updates.set(run.id, result.value)
+      else if (result.reason?.status === 404) updates.set(run.id, null)
+    })
+    return updates
+  }
+
+  // Applies refreshed copies, keeping any run linked while they were fetched.
+  function applyLinkedRunUpdates(updates) {
+    linkedRuns = linkedRuns.flatMap(run => {
+      if (!updates.has(run.id)) return [run]
+      const fresh = updates.get(run.id)
+      return fresh ? [fresh] : []
+    })
+  }
+
   let historyLoaded = false
   let lookingUpRunId = null
 
@@ -395,7 +422,9 @@
     if (!silent) loading = true
     try {
       const [loadedJobs, runs] = await Promise.all([api.listJobs(), api.getHistory(200)])
+      const updates = await refreshLinkedRuns(runs || [])
       if (generation !== dataRequestGeneration) return
+      applyLinkedRunUpdates(updates)
       jobs = loadedJobs || []
       const names = new Map(jobs.map(job => [job.id, job.name]))
       allRuns = withLinkedRuns(runs || []).map(run => ({ ...run, jobName: names.get(run.job_id) || `Job ${run.job_id}` }))

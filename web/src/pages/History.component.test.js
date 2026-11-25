@@ -272,6 +272,46 @@ describe('run links (#720)', () => {
     expect(within(/** @type {HTMLElement} */ (document.getElementById('run-500'))).getByText('VM Backups')).toBeTruthy()
   })
 
+  it('shows the saved review of a separately fetched run after acknowledging it', async () => {
+    const old = { id: 500, job_id: 1, status: 'failed', log: LOG, started_at: '2025-01-01T12:00:00Z' }
+    api.getRun.mockResolvedValueOnce(old)
+      .mockResolvedValue({ ...old, acknowledged_at: '2026-10-05T09:00:00Z', acknowledged_by: 'admin', acknowledge_reason: 'known flake' })
+    api.acknowledgeRuns.mockResolvedValue({ acknowledged: 1, skipped: 0 })
+    window.location.hash = '#/history?run=500'
+    render(History)
+    await waitFor(() => expect(runButton(500)?.getAttribute('aria-expanded')).toBe('true'))
+    const row = /** @type {HTMLElement} */ (document.getElementById('run-500'))
+    await fireEvent.click(within(row).getByRole('button', { name: 'Acknowledge' }))
+    await waitFor(() => expect(within(row).getByText('known flake')).toBeTruthy())
+    expect(within(row).queryByRole('button', { name: 'Acknowledge' })).toBeNull()
+    expect(api.acknowledgeRuns).toHaveBeenCalledWith([500], '')
+  })
+
+  it('drops a separately fetched run that was removed since', async () => {
+    const old = { id: 500, job_id: 1, status: 'failed', log: LOG, started_at: '2025-01-01T12:00:00Z' }
+    api.getRun.mockResolvedValueOnce(old).mockRejectedValue(Object.assign(new Error('run not found'), { status: 404 }))
+    api.acknowledgeRuns.mockResolvedValue({ acknowledged: 1, skipped: 0 })
+    window.location.hash = '#/history?run=500'
+    render(History)
+    await waitFor(() => expect(runButton(500)).toBeTruthy())
+    const row = /** @type {HTMLElement} */ (document.getElementById('run-500'))
+    await fireEvent.click(within(row).getByRole('button', { name: 'Acknowledge' }))
+    await waitFor(() => expect(document.getElementById('run-500')).toBeNull())
+  })
+
+  it('keeps the cached copy when refreshing a separately fetched run fails', async () => {
+    const old = { id: 500, job_id: 1, status: 'failed', log: LOG, started_at: '2025-01-01T12:00:00Z' }
+    api.getRun.mockResolvedValueOnce(old).mockRejectedValue(Object.assign(new Error('HTTP 500'), { status: 500 }))
+    api.acknowledgeRuns.mockResolvedValue({ acknowledged: 1, skipped: 0 })
+    window.location.hash = '#/history?run=500'
+    render(History)
+    await waitFor(() => expect(runButton(500)).toBeTruthy())
+    await fireEvent.click(within(/** @type {HTMLElement} */ (document.getElementById('run-500'))).getByRole('button', { name: 'Acknowledge' }))
+    await waitFor(() => expect(api.getRun).toHaveBeenCalledTimes(2))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(document.getElementById('run-500')).toBeTruthy()
+  })
+
   it('says so when the linked run no longer exists', async () => {
     api.getRun.mockRejectedValue(Object.assign(new Error('run not found'), { status: 404 }))
     window.location.hash = '#/history?run=999'
