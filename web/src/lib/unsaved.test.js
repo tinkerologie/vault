@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { snapshot, isDirty, createDialogHistory, guardUnload } from './unsaved.js'
+import { snapshot, isDirty, createDialogHistory, guardUnload, guardLinks } from './unsaved.js'
 
 // A history stack with a cursor, firing popstate asynchronously like a browser.
 function fakeWindow() {
@@ -122,6 +122,47 @@ describe('createDialogHistory', () => {
     dh.destroy()
     expect(dh.active).toBe(false)
     expect(win.listenerCount('popstate')).toBe(0)
+  })
+})
+
+describe('guardLinks', () => {
+  function fakeDoc() {
+    const listeners = new Set()
+    return {
+      addEventListener: (_t, fn) => listeners.add(fn),
+      removeEventListener: (_t, fn) => listeners.delete(fn),
+      click(href, extra = {}) {
+        const a = { getAttribute: () => href }
+        const event = { button: 0, defaultPrevented: false, target: { closest: () => (href ? a : null) }, preventDefault() { this.defaultPrevented = true }, ...extra }
+        for (const fn of listeners) fn(event)
+        return event
+      },
+      count: () => listeners.size,
+    }
+  }
+
+  it('holds a link to another page while dirty', () => {
+    const doc = fakeDoc()
+    let dirty = true
+    const blocked = vi.fn()
+    const stop = guardLinks('/settings', () => dirty, blocked, doc)
+    expect(doc.click('#/jobs').defaultPrevented).toBe(true)
+    expect(blocked).toHaveBeenCalledWith('#/jobs')
+    dirty = false
+    expect(doc.click('#/jobs').defaultPrevented).toBe(false)
+    stop()
+    expect(doc.count()).toBe(0)
+  })
+
+  it('lets same-page links, modified clicks and non-links through', () => {
+    const doc = fakeDoc()
+    const blocked = vi.fn()
+    guardLinks('/settings', () => true, blocked, doc)
+    expect(doc.click('#/settings/security').defaultPrevented).toBe(false)
+    expect(doc.click('#/settings').defaultPrevented).toBe(false)
+    expect(doc.click('#/jobs', { metaKey: true }).defaultPrevented).toBe(false)
+    expect(doc.click(null).defaultPrevented).toBe(false)
+    expect(blocked).not.toHaveBeenCalled()
   })
 })
 

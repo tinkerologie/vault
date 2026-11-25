@@ -3,10 +3,25 @@
 let rawHash = $state(readRawHash())
 let current = $derived(routePath(rawHash))
 
-function routePath(raw) {
-  // Strip query params for route matching
+function withoutQuery(raw) {
   const qIdx = raw.indexOf('?')
   return qIdx === -1 ? raw : raw.slice(0, qIdx)
+}
+
+// The page is the first path segment: '#/settings/security' renders Settings,
+// and the rest ('security') is the page's own sub-route, read with
+// getSubpath(). Keeping the route at the page level means a sub-route change
+// neither remounts the page nor counts as a route change for focus (#712).
+function routePath(raw) {
+  const path = withoutQuery(raw)
+  const slash = path.indexOf('/', 1)
+  return slash === -1 ? path : path.slice(0, slash)
+}
+
+function subPath(raw) {
+  const path = withoutQuery(raw)
+  const slash = path.indexOf('/', 1)
+  return slash === -1 ? '' : path.slice(slash + 1)
 }
 
 function handleHashChange() {
@@ -50,6 +65,11 @@ export function navigate(path) {
 
 export function getRoute() {
   return current
+}
+
+/** The part of the path after the page, e.g. 'security' for '#/settings/security'. */
+export function getSubpath() {
+  return subPath(rawHash)
 }
 
 /** Get the raw hash including query params */

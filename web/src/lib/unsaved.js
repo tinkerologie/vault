@@ -110,6 +110,33 @@ export function createDialogHistory(win = globalThis.window) {
 }
 
 /**
+ * Hold in-app links that would leave the current page while isDirty() is
+ * true. A click on an `<a href="#/other">` is cancelled and onBlocked(hash)
+ * is called, so the page can ask first and then navigate itself. Links within
+ * the same page (sub-routes such as '#/settings/security') pass through.
+ * Returns a cleanup function.
+ * @param {string} page e.g. '/settings'
+ * @param {() => boolean} isDirtyNow
+ * @param {(hash: string) => void} onBlocked
+ * @param {Document} [doc]
+ */
+export function guardLinks(page, isDirtyNow, onBlocked, doc = globalThis.document) {
+  function onClick(e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    const a = e.target?.closest?.('a[href^="#/"]')
+    if (!a) return
+    const hash = a.getAttribute('href')
+    const path = hash.slice(1).split('?')[0]
+    if (path === page || path.startsWith(`${page}/`)) return
+    if (!isDirtyNow()) return
+    e.preventDefault()
+    onBlocked(hash)
+  }
+  doc.addEventListener('click', onClick, true)
+  return () => doc.removeEventListener('click', onClick, true)
+}
+
+/**
  * Warn before the tab closes or reloads while isDirty() is true. Returns a
  * cleanup function.
  * @param {() => boolean} isDirtyNow
