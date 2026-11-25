@@ -42,6 +42,12 @@
     const item = items.find((i) => i.id === id)
     if (item?.timer) clearTimeout(item.timer)
     items = items.filter((i) => i.id !== id)
+    // The stack unmounts with its last toast, so the pointer or focus never
+    // gets to leave it: clear the pause, or later toasts would never go.
+    if (items.length === 0) {
+      hovered = false
+      focused = false
+    }
   }
 
   function push(text, kind) {

@@ -259,6 +259,12 @@
   }
 
   function onWizardBack() {
+    // Add Storage sits over the wizard: Back closes it first (#687).
+    if (addingStorage) {
+      wizardHistory.keepOpen(onWizardBack)
+      requestCloseAddStorage()
+      return
+    }
     if (wizardDirty || saving) {
       // The entry is gone; put it back so the next Back still closes the dialog.
       wizardHistory.keepOpen(onWizardBack)
@@ -276,7 +282,24 @@
   // Adding a destination from step 2 keeps the draft: the storage form opens
   // over the wizard instead of navigating away.
   let addingStorage = $state(false)
+  let addStorageDirty = $state(false)
+  let confirmDiscardStorage = $state(false)
+  function requestCloseAddStorage() {
+    if (addStorageDirty) {
+      confirmDiscardStorage = true
+      return
+    }
+    addingStorage = false
+  }
+  // Close one at a time, so focus unwinds through both to the opener.
+  async function discardAddStorage() {
+    confirmDiscardStorage = false
+    addStorageDirty = false
+    await tick()
+    addingStorage = false
+  }
   async function onStorageAdded(dest) {
+    addStorageDirty = false
     addingStorage = false
     try {
       storageList = (await api.listStorage()) || storageList
@@ -723,8 +746,11 @@
     }
     await openEdit(link.jobId)
     if (!link.item) return
+    // Exclusions render on the full form, whatever layout the user prefers;
+    // this shows it for this edit only and leaves the saved preference alone.
+    expressMode = true
     await tick()
-    const field = document.getElementById(`${uid}-cexcl-${link.item}`)
+    const field = document.getElementById(`${uid}-cexcl-${link.item}`) ?? document.getElementById(`${uid}-fexcl-${link.item}`)
     if (!field) {
       showToast(`${link.item} is no longer in this job`, 'warning')
       return
@@ -2730,11 +2756,21 @@
 </Modal>
 
 <!-- Add a destination without leaving the wizard (#687) -->
-<Modal show={addingStorage} title="Add Storage" size="lg" onclose={() => { addingStorage = false }}>
+<Modal show={addingStorage} title="Add Storage" size="lg" onclose={requestCloseAddStorage}>
   {#if addingStorage}
-    <StorageForm onsaved={onStorageAdded} oncancel={() => { addingStorage = false }} ontoast={showToast} />
+    <StorageForm onsaved={onStorageAdded} oncancel={requestCloseAddStorage} ontoast={showToast} bind:dirty={addStorageDirty} />
   {/if}
 </Modal>
+
+<ConfirmDialog
+  show={confirmDiscardStorage}
+  title="Discard changes?"
+  message="This destination hasn't been saved."
+  confirmLabel="Discard"
+  cancelLabel="Keep editing"
+  onconfirm={discardAddStorage}
+  oncancel={() => { confirmDiscardStorage = false }}
+/>
 
 <ConfirmDialog
   show={confirmDiscard}

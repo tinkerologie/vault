@@ -152,6 +152,21 @@ describe('Toast', () => {
       expect(toasts(view.container)).toHaveLength(0)
     })
 
+    it('auto-dismisses again after the last hovered toast is dismissed', async () => {
+      vi.useFakeTimers()
+      const view = await show({ type: 'success', message: 'first' })
+      await fireEvent.mouseEnter(toasts(view.container)[0].parentElement)
+      await fireEvent.focusIn(screen.getByRole('button', { name: 'Dismiss' }))
+      await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+      await tick()
+      expect(toasts(view.container)).toHaveLength(0)
+      // The stack unmounted under the pointer and focus, so no leave event came.
+      await next(view, 2, 'success', 'second')
+      vi.advanceTimersByTime(4000)
+      await tick()
+      expect(toasts(view.container)).toHaveLength(0)
+    })
+
     it('holds the timer while focus is inside the stack', async () => {
       vi.useFakeTimers()
       const view = await show({ type: 'info', message: 'fyi' })

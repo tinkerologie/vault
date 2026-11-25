@@ -129,6 +129,7 @@
   }
 
   function resetWizard() {
+    clearFilterTimers()
     restoreGeneration += 1
     adoptedRunId = null
     pendingAdoptedRun = null
@@ -477,6 +478,12 @@
   // The filter applies after typing pauses, so each keystroke stays cheap (#703).
   const FILTER_DEBOUNCE_MS = 150
   const filterTimers = {}
+  function clearFilterTimers() {
+    for (const key of Object.keys(filterTimers)) {
+      clearTimeout(filterTimers[key])
+      delete filterTimers[key]
+    }
+  }
   function onFilterInput(item, value) {
     const key = itemKey(item)
     updateEntry(item, { searchInput: value })
@@ -580,6 +587,7 @@
     })
     return () => {
       destroyed = true
+      clearFilterTimers()
       unsub()
     }
   })

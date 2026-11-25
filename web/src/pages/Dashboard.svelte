@@ -1078,7 +1078,7 @@
          when the row is narrow (#715). -->
     <div class="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
       <span class="text-sm text-text break-words min-w-0">{displayLabel}</span>
-      {#if it.group === 'flash'}<span class="text-2xs px-1.5 py-0.5 rounded bg-hue-amber/15 text-hue-amber font-medium whitespace-nowrap">USB boot drive</span>{/if}
+      {#if it.group === 'flash'}<span class="text-2xs px-1.5 py-0.5 rounded bg-hue-amber-bg/15 text-hue-amber font-medium whitespace-nowrap">USB boot drive</span>{/if}
     </div>
     {#if backedUp && !isReplicaMode()}
       <a href="#/restore?type={it.type}&name={encodeURIComponent(it.name)}" class="opacity-40 hover:opacity-100 focus-visible:opacity-100 p-1 text-vault-text hover:bg-vault/10 rounded transition-all shrink-0" title="Restore {it.name}" aria-label="Restore: {it.name}">

@@ -461,3 +461,55 @@ test.describe('edit link from a History error (#711)', () => {
     await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 });
+
+test.describe('edit link with other layouts and item types (#711)', () => {
+  test('reaches the exclusions even when the editor prefers steps', async ({ page }) => {
+    await page.addInitScript(() => { try { localStorage.setItem('vault.jobForm', 'steps'); } catch { /* blocked storage */ } });
+    await setupVaultMockApi(page);
+    await page.goto('/#/jobs?edit=1&item=plex');
+    await expect(page.getByRole('textbox', { name: /Additional path exclusions for plex/ })).toBeFocused();
+    // The saved preference is untouched.
+    expect(await page.evaluate(() => localStorage.getItem('vault.jobForm'))).toBe('steps');
+  });
+
+  test('reaches a folder item’s exclusions', async ({ page }) => {
+    const jobs = createInitialMockJobs();
+    jobs[0].items.push({ id: 103, job_id: 1, item_type: 'folder', type: 'folder', item_name: 'appdata', name: 'appdata', settings: '{"path":"/mnt/user/appdata"}' });
+    await setupVaultMockApi(page, { jobs });
+    await page.goto('/#/jobs?edit=1&item=appdata');
+    await expect(page.getByRole('textbox', { name: /appdata/ })).toBeFocused();
+  });
+});
+
+test.describe('Add storage over the job wizard (#687)', () => {
+  test('Back closes Add storage and keeps the wizard and its draft', async ({ page }) => {
+    await setupVaultMockApi(page, { storage: [] });
+    const dialog = await openNewJob(page);
+    await pickPlex(page);
+    await dialog.getByRole('button', { name: 'Next', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Add storage' }).click();
+    const add = page.getByRole('dialog', { name: 'Add Storage' });
+    await expect(add).toBeVisible();
+    await page.goBack();
+    await expect(add).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Discard changes?' })).toHaveCount(0);
+    await expect(dialog).toBeVisible();
+    await expect(page).toHaveURL(/#\/jobs$/);
+  });
+
+  test('Back with a half-filled destination asks first', async ({ page }) => {
+    await setupVaultMockApi(page, { storage: [] });
+    const dialog = await openNewJob(page);
+    await pickPlex(page);
+    await dialog.getByRole('button', { name: 'Next', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Add storage' }).click();
+    const add = page.getByRole('dialog', { name: 'Add Storage' });
+    await add.locator('#sname').fill('Half done');
+    await page.goBack();
+    const ask = page.getByRole('dialog', { name: 'Discard changes?' });
+    await expect(ask).toBeVisible();
+    await ask.getByRole('button', { name: 'Discard' }).click();
+    await expect(add).toHaveCount(0);
+    await expect(dialog).toBeVisible();
+  });
+});
