@@ -316,7 +316,9 @@ export function connectWs() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   let url = `${proto}//${location.host}/api/v1/ws`
 
-  status = 'connecting'
+  // A retry keeps 'reconnecting', so the connection banner doesn't flicker
+  // off and on with every attempt (#686). Only a first connect is 'connecting'.
+  status = reconnectAttempts > 0 ? 'reconnecting' : 'connecting'
   // Capture this socket locally so a stale handler (from a socket that was
   // replaced) can never mutate shared state for the current connection.
   let socket

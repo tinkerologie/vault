@@ -92,7 +92,7 @@ export const RISKY_FLOWS: RiskyFlow[] = [
     actionUrl: /\/storage\/\d+\/restore-db$/,
     afterConfirm: async (page) => {
       await expect(page.getByRole('dialog')).toHaveCount(0);
-      await expect(page.getByRole('alert').filter({ hasText: /restored successfully/i })).toBeVisible();
+      await expect(page.getByRole('status').filter({ hasText: /restored successfully/i })).toBeVisible();
     },
   },
   {
@@ -125,7 +125,13 @@ export const RISKY_FLOWS: RiskyFlow[] = [
       await page.goto('/#/history');
       await expect(page.locator('main span', { hasText: 'Docker & Appdata' }).first()).toBeVisible();
     },
-    opener: async (page) => page.getByRole('button', { name: /purge/i }).first(),
+    // Purge lives in History's More actions menu (#699). The menu stays open
+    // behind the confirmation, so a cancelled dialog returns focus to Purge.
+    opener: async (page) => {
+      const more = page.getByRole('button', { name: 'More actions' });
+      if (await more.getAttribute('aria-expanded') !== 'true') await more.click();
+      return page.getByRole('menuitem', { name: /purge/i });
+    },
     isAction: (r) => r.method() === 'DELETE' && /\/history$/.test(r.url()),
     calls: 1,
     source: ['All jobs: the entire history, not only the filtered rows'],
@@ -133,7 +139,8 @@ export const RISKY_FLOWS: RiskyFlow[] = [
     actionUrl: /\/history$/,
     afterConfirm: async (page) => {
       await expect(page.getByRole('dialog')).toHaveCount(0);
-      await expect(page.getByRole('button', { name: /purge/i }).first()).toBeDisabled();
+      await expect(page.getByText('No runs yet')).toBeVisible();
+      await expect(page.getByRole('menu')).toHaveCount(0);
     },
   },
   {

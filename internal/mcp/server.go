@@ -13,6 +13,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tinkerologie/vault/internal/api/handlers"
 	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/engine"
@@ -905,64 +906,16 @@ type getHealthSummaryInput struct{}
 
 func (s *MCPServer) addGetHealthSummaryTool() {
 	mcp.AddTool(s.server, &mcp.Tool{
-		Name:        "get_health_summary",
-		Description: "Get an aggregated health summary including health score, protection rate, and recent backup statistics",
+		Name: "get_health_summary",
+		Description: "Get an aggregated health summary including health score, protection rate, and recent backup statistics. " +
+			"Items are classified as protected (a recent enough restore point), out of date (the newest restore point is older " +
+			"than the job's schedule allows), or pending (in a job, not yet backed up), the same way the Vault Dashboard counts them",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ getHealthSummaryInput) (*mcp.CallToolResult, any, error) {
-		jobs, err := s.db.ListJobs()
+		// One computation with GET /health/summary, so assistants and the
+		// Dashboard never disagree about what is protected (#708).
+		result, err := handlers.BuildHealthSummary(s.db, time.Now())
 		if err != nil {
-			return nil, nil, fmt.Errorf("listing jobs: %w", err)
-		}
-
-		var totalItems, protectedItems int
-		var recentSuccess, recentFailed int
-		var lastSuccessTime *time.Time
-
-		for _, job := range jobs {
-			items, err := s.db.GetJobItems(job.ID)
-			if err != nil {
-				continue
-			}
-			totalItems += len(items)
-			if job.Enabled {
-				protectedItems += len(items)
-			}
-			runs, err := s.db.GetJobRuns(job.ID, 10)
-			if err != nil {
-				continue
-			}
-			for _, run := range runs {
-				switch run.Status {
-				case "success", "completed":
-					recentSuccess++
-					if run.CompletedAt != nil && (lastSuccessTime == nil || run.CompletedAt.After(*lastSuccessTime)) {
-						lastSuccessTime = run.CompletedAt
-					}
-				case "failed", "error":
-					recentFailed++
-				}
-			}
-		}
-
-		totalRuns := recentSuccess + recentFailed
-		successRate := 0
-		if totalRuns > 0 {
-			successRate = (recentSuccess * 100) / totalRuns
-		}
-		protectionPct := 0
-		if totalItems > 0 {
-			protectionPct = (protectedItems * 100) / totalItems
-		}
-		healthScore := (protectionPct*40 + successRate*60) / 100
-
-		result := map[string]any{
-			"health_score":    healthScore,
-			"total_items":     totalItems,
-			"protected_items": protectedItems,
-			"protection_pct":  protectionPct,
-			"success_rate":    successRate,
-			"recent_success":  recentSuccess,
-			"recent_failed":   recentFailed,
-			"last_success_at": lastSuccessTime,
+			return nil, nil, fmt.Errorf("building health summary: %w", err)
 		}
 		r, _ := textResult(result)
 		return r, nil, nil

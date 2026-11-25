@@ -42,12 +42,12 @@ beforeEach(() => {
   // its natural height, ROW px per rendered line.
   savedRect = Element.prototype.getBoundingClientRect
   Element.prototype.getBoundingClientRect = function () {
-    const log = this.getAttribute?.('role') === 'log' ? this : null
+    const log = this.hasAttribute?.('data-log-console') ? this : null
     if (log) {
       const height = log.querySelectorAll('[data-entry-id]').length * ROW
       return { top: CONSOLE_TOP, bottom: CONSOLE_TOP + height, height, left: 0, right: 0, width: 0, x: 0, y: CONSOLE_TOP }
     }
-    const rows = this.closest?.('[role="log"]')?.querySelectorAll('[data-entry-id]')
+    const rows = this.closest?.('[data-log-console]')?.querySelectorAll('[data-entry-id]')
     const i = rows ? [...rows].indexOf(this) : -1
     const top = i >= 0 ? CONSOLE_TOP + i * ROW : 0
     return { top, bottom: top + ROW, height: ROW, left: 0, right: 0, width: 0, x: 0, y: top }
@@ -128,7 +128,7 @@ describe('embedded Logs console (#526)', () => {
     const measure = Element.prototype.getBoundingClientRect
     let consoleReads = 0
     Element.prototype.getBoundingClientRect = function () {
-      if (this.getAttribute?.('role') === 'log') consoleReads++
+      if (this.hasAttribute?.('data-log-console')) consoleReads++
       return measure.call(this)
     }
     current.area = { ...current.area, top: CONSOLE_TOP + 220 }

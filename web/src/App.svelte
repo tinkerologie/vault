@@ -11,6 +11,8 @@
   import { getHostThemeMode, isEmbedded } from './lib/runtime-config.js'
   import { isAuthRequired } from './lib/auth.svelte.js'
   import { revealFrameTop } from './lib/embed.js'
+  import { createConnectionBanner, isConnectionLost } from './lib/connection-banner.js'
+  import { shortcutModifier } from './lib/shortcuts.js'
   import { onMount, tick } from 'svelte'
 
   import Dashboard from './pages/Dashboard.svelte'
@@ -36,6 +38,7 @@
 
   let moreOpen = $state(false)
   let showCommandPalette = $state(false)
+  const shortcutMod = shortcutModifier()
 
   function handleGlobalKeydown(e) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -181,10 +184,22 @@
   // page. Driven purely by the live-connection status: 'polling', 'connecting',
   // and 'connected' are healthy/transient and stay silent. Deliberately NOT tied
   // to boot-degraded state — a browser that merely blocks storage must not be
-  // reported as a daemon outage.
-  let connectionLost = $derived.by(() => {
-    const wsStatus = getWsStatus()
-    return ready && (wsStatus === 'disconnected' || wsStatus === 'reconnecting')
+  // reported as a daemon outage. A drop shorter than the grace period shows
+  // nothing, and once shown it stays through every retry (#686).
+  let connectionLost = $state(false)
+  const connectionBanner = createConnectionBanner((shown) => { connectionLost = shown })
+  $effect(() => {
+    connectionBanner.update(ready && isConnectionLost(getWsStatus()))
+  })
+  $effect(() => () => connectionBanner.dispose())
+
+  // The banner is fixed to the top, so the layout and the toasts move down by
+  // its height rather than sit under it (#686). The embedded banner is in the
+  // page's flow and reserves its own space.
+  let bannerHeight = $state(0)
+  $effect(() => {
+    const offset = connectionLost && !embedded ? `${bannerHeight}px` : '0px'
+    document.documentElement.style.setProperty('--vault-banner-offset', offset)
   })
 
   // True when the daemon version predates the latest published release.
@@ -249,20 +264,25 @@
   <ApiKeyPrompt />
 {/if}
 
-<CommandPalette bind:show={showCommandPalette} onclose={() => showCommandPalette = false} />
+<CommandPalette bind:show={showCommandPalette} pages={nav} onclose={() => showCommandPalette = false} />
 
 <a href="#main-content" onclick={skipToMain} class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-vault focus:text-on-vault focus:rounded-lg focus:text-sm focus:font-medium">Skip to main content</a>
 
-{#if connectionLost}
-  <div role="status" aria-live="polite"
-    class="fixed top-0 left-0 right-0 z-[150] flex items-center justify-center gap-3 px-4 py-2 text-sm bg-amber-500/95 text-amber-950">
-    <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-    <span>Live connection to the Vault daemon is unavailable. Data may be out of date.</span>
-    <button onclick={() => location.reload()} class="underline font-medium hover:no-underline">Reload</button>
-  </div>
-{/if}
+<!-- One live region that stays in the page, so the banner is announced once
+     when it appears rather than each time it is re-inserted. -->
+<div role="status" data-connection-banner class={embedded ? '' : 'fixed top-0 left-0 right-0 z-[150]'} bind:clientHeight={bannerHeight}>
+  {#if connectionLost}
+    <div class="bg-surface-2 border-b border-warning/40">
+      <div class="flex items-center justify-center gap-3 px-4 py-2 text-sm text-text bg-warning/15">
+        <svg class="w-4 h-4 shrink-0 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        <span>Live connection to the Vault daemon is unavailable. Data may be out of date.</span>
+        <button type="button" onclick={() => location.reload()} class="underline font-medium hover:no-underline">Reload</button>
+      </div>
+    </div>
+  {/if}
+</div>
 
-<div class={embedded ? 'bg-surface' : 'flex h-screen bg-surface'}>
+<div class={embedded ? 'bg-surface' : 'flex h-screen bg-surface'} style:padding-top={embedded ? undefined : 'var(--vault-banner-offset, 0px)'}>
   {#if !ready}
     <div class="flex-1 flex items-center justify-center"><Spinner text="Connecting..." /></div>
   {:else}
@@ -284,6 +304,16 @@
           <span class="text-xs text-text-dim block -mt-0.5">{replicaMode ? 'Replica' : 'Backup Manager'}</span>
         </div>
       {/if}
+    </div>
+
+    <!-- Opens the command palette, and shows its shortcut (#691). -->
+    <div class="px-3 pt-4">
+      <button type="button" onclick={() => showCommandPalette = true} aria-keyshortcuts="Meta+K Control+K"
+        class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-muted bg-surface-3 border border-border hover:text-text hover:bg-surface-4 transition-colors">
+        <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <span class="flex-1 text-left">Search</span>
+        <kbd aria-hidden="true" class="text-xs font-mono px-1.5 py-0.5 rounded border border-border bg-surface-2">{shortcutMod}K</kbd>
+      </button>
     </div>
 
     <!-- Nav links -->
@@ -329,7 +359,7 @@
   </aside>
 
   <!-- Mobile header -->
-  <header class="lg:hidden fixed top-0 left-0 right-0 z-40 bg-surface-2 border-b border-border">
+  <header class="lg:hidden fixed top-0 left-0 right-0 z-40 bg-surface-2 border-b border-border" style:top="var(--vault-banner-offset, 0px)">
     <div class="flex items-center justify-between px-4 py-3">
       <div class="flex items-center gap-2">
         <div class="w-7 h-7 bg-vault rounded-lg flex items-center justify-center">

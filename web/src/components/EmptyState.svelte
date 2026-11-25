@@ -1,5 +1,6 @@
 <script>
-  // eslint-disable-next-line no-unused-vars -- children is an implicit Svelte slot prop
+  // `children` renders below the text, for a next step that is a link or needs
+  // more than the single action button (#695).
   let { icon = '', title = '', description = '', subtitle = '', actionLabel = '', onaction = null, iconSlot = undefined, children = undefined } = $props()
 </script>
 
@@ -21,4 +22,5 @@
       {actionLabel}
     </button>
   {/if}
+  {@render children?.()}
 </div>

@@ -2432,6 +2432,7 @@
   confirmLabel="Delete Restore Point"
   confirmWord="DELETE"
   busy={deletingRpId != null}
+  busyLabel="Deleting…"
   source={deletePointContent.source}
   consequences={deletePointContent.consequences}
   onconfirm={confirmDeletePointNow}
@@ -2457,6 +2458,7 @@
   message="Stopping can leave the restore location partly restored."
   confirmLabel="Stop restore"
   busy={sendingStop}
+  busyLabel="Stopping…"
   source={stopTarget ? [{ label: 'Job', value: stopTarget.jobName || 'Unknown job' }] : []}
   onconfirm={stopRestore}
   oncancel={() => { stopTarget = null }}

@@ -11,16 +11,16 @@ test.describe('Backup History & Run Inspector', () => {
 
     await expect(page.getByRole('heading', { name: /Backup & Restore History/i })).toBeVisible();
 
-    // Verify stats cards
-    await expect(page.getByText('Total Runs')).toBeVisible();
-    await expect(page.getByText('Successful')).toBeVisible();
-    await expect(page.getByRole('paragraph').filter({ hasText: 'Failed' })).toBeVisible();
+    // One summary row of counts (#699), using the run-status words (#694).
+    await expect(page.getByText('Total runs')).toBeVisible();
+    await expect(page.locator('main dt', { hasText: 'Completed' })).toBeVisible();
+    await expect(page.locator('main dt', { hasText: 'Failed' })).toBeVisible();
 
     // Verify run cards in timeline
     await expect(page.locator('main span', { hasText: 'Docker & Appdata' }).first()).toBeVisible();
     await expect(page.locator('main span', { hasText: 'VM Backups' }).first()).toBeVisible();
-    await expect(page.getByText('completed').first()).toBeVisible();
-    await expect(page.getByText('failed').first()).toBeVisible();
+    await expect(page.locator('main span.badge', { hasText: 'Completed' }).first()).toBeVisible();
+    await expect(page.locator('main span.badge', { hasText: 'Failed' }).first()).toBeVisible();
   });
 
   test('filters history by status pills and search query', async ({ page }) => {
@@ -57,7 +57,7 @@ test.describe('Backup History & Run Inspector', () => {
     await page.goto('/#/history');
 
     // Click run card for Docker & Appdata
-    const dockerRunCard = page.getByRole('button', { name: /^Docker & Appdata completed/ }).first();
+    const dockerRunCard = page.getByRole('button', { name: /^Docker & Appdata Completed/ }).first();
     await expect(dockerRunCard).toBeVisible();
     await dockerRunCard.click();
 
@@ -73,7 +73,7 @@ test('can acknowledge one failed run without changing its outcome', async ({ pag
   await rowAction.click();
   await expect(page.getByText('Acknowledged 1 run. Skipped 0.')).toBeVisible();
   await expect(page.getByText('Acknowledged', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: /^VM Backups failed/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^VM Backups Failed/ })).toBeVisible();
   await expect(rowAction).toHaveCount(0);
 });
 
@@ -82,7 +82,7 @@ test('replicas can review History but have no acknowledgement actions', async ({
   await page.goto('/#/history?status=failed&review=outstanding');
   await expect(page.getByText('Read-only replica', { exact: false }).first()).toBeVisible();
   await expect(page.locator('main span').getByText('VM Backups', { exact: true })).toBeVisible();
-  await expect(page.getByText('failed', { exact: true })).toBeVisible();
+  await expect(page.locator('main span.badge', { hasText: 'Failed' })).toBeVisible();
   await expect(page.getByRole('button', { name: /^Acknowledge/ })).toHaveCount(0);
   await expect(page.getByRole('checkbox', { name: /Select run .* for acknowledgement/ })).toHaveCount(0);
 });
