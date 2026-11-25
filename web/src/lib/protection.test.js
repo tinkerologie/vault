@@ -86,3 +86,16 @@ describe('protectedPercent', () => {
     expect(protectedPercent({ total: 0, protected: 0 })).toBe(0)
   })
 })
+
+describe('classifyProtection with flash tracking off', () => {
+  it('does not count a saved Flash Drive job as a folder', () => {
+    const summary = { protected_keys: ['folder:Flash Drive', 'folder:media'], pending_keys: [] }
+    const result = classifyProtection({
+      summary,
+      discovered: { folders: [{ name: 'Flash Drive', settings: { preset: 'flash' } }] },
+      available: { folders: true },
+      enabled: { flash: false, folders: true },
+    })
+    expect(result.items.map((it) => it.name)).toEqual(['media'])
+  })
+})

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { failedRestoreItemNames, gatherRestorableItems, jobItemSignatures, reconcileJobState } from './restore-wizard-state.js'
+import { failedRestoreItemNames, gatherRestorableItems, jobItemSignatures, reconcileJobState, unitNeedsDestination, pointKey, pickerMatchesPoint } from './restore-wizard-state.js'
 
 describe('gatherRestorableItems (#669)', () => {
   const jobs = [
@@ -91,5 +91,34 @@ describe('reconcileJobState', () => {
     const result = reconcileJobState({ selected: [plex, ha], recorded: new Map([[1, 'container:plex']]), keyFn: key })
     expect(result.added).toEqual([2])
     expect(result.cleared).toEqual([])
+  })
+})
+
+describe('unitNeedsDestination (#669)', () => {
+  const folder = (historicalJobIds) => ({ type: 'folder', name: 'share', historicalJobIds })
+  it('asks for a destination for a removed folder or ZFS item from this job', () => {
+    expect(unitNeedsDestination({ jobId: 4, items: [folder([4])] })).toBe(true)
+    expect(unitNeedsDestination({ jobId: 4, items: [{ type: 'zfs', name: 'pool/data', historicalJobIds: [4] }] })).toBe(true)
+  })
+  it('not when the item is still in this job, or for containers and VMs', () => {
+    expect(unitNeedsDestination({ jobId: 4, items: [folder([7])] })).toBe(false)
+    expect(unitNeedsDestination({ jobId: 4, items: [folder([])] })).toBe(false)
+    expect(unitNeedsDestination({ jobId: 4, items: [{ type: 'container', name: 'plex', historicalJobIds: [4] }] })).toBe(false)
+    expect(unitNeedsDestination({ jobId: 4, items: [{ type: 'folder', name: 'x' }] })).toBe(false)
+    expect(unitNeedsDestination(null)).toBe(false)
+  })
+})
+
+describe('picker file lists follow their restore point', () => {
+  it('keys a point by job and id', () => {
+    expect(pointKey({ jobId: 2, id: 9 })).toBe('2:9')
+    expect(pointKey(null)).toBe('')
+  })
+  it('matches only the point the list was loaded from', () => {
+    const entry = { model: {}, pointKey: '1:5' }
+    expect(pickerMatchesPoint(entry, { jobId: 1, id: 5 })).toBe(true)
+    expect(pickerMatchesPoint(entry, { jobId: 2, id: 8 })).toBe(false)
+    expect(pickerMatchesPoint(entry, null)).toBe(false)
+    expect(pickerMatchesPoint({ model: null }, { jobId: 1, id: 5 })).toBe(false)
   })
 })

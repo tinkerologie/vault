@@ -64,9 +64,13 @@ export function classifyProtection({ summary, discovered = {}, available = {}, e
   const folder = []
   const flash = []
   const seenFolders = new Set()
+  // Flash Drive names stay out of the folder fallback even when flash tracking
+  // is off, so turning it off removes their counts and warnings.
+  const flashNames = new Set()
   if (available.folders) {
     for (const src of discovered.folders || []) {
       const isFlash = src.settings?.preset === 'flash'
+      if (isFlash) flashNames.add(src.name)
       if (!(isFlash ? on.flash : on.folders) || seenFolders.has(src.name)) continue
       seenFolders.add(src.name)
       ;(isFlash ? flash : folder).push(item('folder', isFlash ? 'flash' : 'folder', src.name, src))
@@ -75,7 +79,7 @@ export function classifyProtection({ summary, discovered = {}, available = {}, e
   if (on.folders || (!available.folders && on.flash)) {
     for (const key of keysOfType('folder')) {
       const name = nameOf(key)
-      if (seenFolders.has(name)) continue
+      if (seenFolders.has(name) || flashNames.has(name)) continue
       seenFolders.add(name)
       folder.push(item('folder', 'folder', name, { name }))
     }

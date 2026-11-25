@@ -121,3 +121,29 @@ export function failedRestoreItemNames(run) {
   if (!Array.isArray(items)) return null
   return new Set(items.filter((i) => i && i.status !== 'ok' && i.name).map((i) => i.name))
 }
+
+/**
+ * Whether a job's restore needs an explicit destination: it includes a folder
+ * or ZFS item that has left that job, so its original location isn't
+ * recorded (#669). Containers and VMs restore from their saved configuration.
+ * @param {{ jobId: number, items: Array<{ type: string, historicalJobIds?: number[] }> } | null | undefined} unit
+ */
+export function unitNeedsDestination(unit) {
+  if (!unit) return false
+  return unit.items.some((item) => (item.type === 'folder' || item.type === 'zfs') && (item.historicalJobIds || []).includes(unit.jobId))
+}
+
+/** Identifies a restore point across jobs. @param {{ jobId: number, id: number } | null | undefined} point */
+export function pointKey(point) {
+  return point ? `${point.jobId}:${point.id}` : ''
+}
+
+/**
+ * Whether a picker entry's loaded file list belongs to this restore point.
+ * A list loaded from another job's point must never be sent with this one.
+ * @param {{ model?: any, pointKey?: string } | null | undefined} entry
+ * @param {{ jobId: number, id: number } | null | undefined} point
+ */
+export function pickerMatchesPoint(entry, point) {
+  return !!entry?.model && !!point && entry.pointKey === pointKey(point)
+}

@@ -87,3 +87,17 @@ describe('edit links to a job item (#711)', () => {
     }
   })
 })
+
+describe('form mode with blocked storage', () => {
+  it('reads and writes nothing, without throwing, when localStorage itself throws', () => {
+    const desc = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new DOMException('blocked', 'SecurityError') } })
+    try {
+      expect(readFormMode()).toBe('')
+      expect(() => writeFormMode('full')).not.toThrow()
+    } finally {
+      if (desc) Object.defineProperty(globalThis, 'localStorage', desc)
+      else delete globalThis.localStorage
+    }
+  })
+})

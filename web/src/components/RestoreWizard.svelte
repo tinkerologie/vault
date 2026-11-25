@@ -9,7 +9,7 @@
   import { getProgress, restoreFromStatus } from '../lib/progress.svelte.js'
   import { matchesJobId, outcomeFromCompletion, outcomeFromRun, shouldClearOnSnapshot, waitForRestoreOutcome } from '../lib/restore-sync.js'
   import { getPointCoverage, assignItemsToChosenPoints } from '../lib/restore-plan.js'
-  import { jobItemSignatures, reconcileJobState } from '../lib/restore-wizard-state.js'
+  import { jobItemSignatures, reconcileJobState, unitNeedsDestination, pointKey, pickerMatchesPoint } from '../lib/restore-wizard-state.js'
   import { formatDate, formatBytes, itemDisplayLabel, itemTypeIcon, itemTypeColor, itemTypeLabel, itemTypeSingularLabel, effectiveItemType, commonItemType } from '../lib/utils.js'
   import { createFileTreeModel } from '../lib/file-tree-model.js'
   import PathBrowser from './PathBrowser.svelte'
@@ -446,12 +446,22 @@
       const contents = await api.getRestorePointContents(point.jobId, point.id, item.name)
       if (!isCurrent()) return
       const model = createFileTreeModel(contents?.files || [])
-      updateEntry(item, { contents, model, totalFiles: model.totalLeaves, selectedCount: model.selectedCount(), loading: false })
+      updateEntry(item, { contents, model, totalFiles: model.totalLeaves, selectedCount: model.selectedCount(), loading: false, pointKey: pointKey(point) })
     } catch (e) {
       if (!isCurrent()) return
       updateEntry(item, { error: e?.message || 'failed to load file list', errorStatus: e?.status || 0, loading: false })
     }
   }
+
+  // A file list loaded from one restore point must not follow the item to
+  // another job's point: drop it when the item's assignment changes.
+  $effect(() => {
+    for (const [key, entry] of picker) {
+      if (!entry?.model) continue
+      const point = restorePlan.assignments.get(key)?.point
+      if (!pickerMatchesPoint(entry, point)) picker.delete(key)
+    }
+  })
 
   // Re-reads the model after it changed, so counts and the tree update.
   function touchModel(item) {
@@ -1007,6 +1017,8 @@
     const hasContainer = unit.items.some(i => i.type === 'container')
     if (hasContainer && s.showDestOverride && !s.acknowledgeContainerRemap) return true
     if (unit.point?.encryption === 'age' && !s.passphrase) return true
+    // A removed folder or ZFS item has no recorded original location (#669).
+    if (unitNeedsDestination(unit) && !(s.showDestOverride && s.restoreDestination.trim())) return true
     return false
   }
 
@@ -1123,7 +1135,8 @@
       const filePaths = {}
       for (const item of unit.items) {
         const entry = picker.get(itemKey(item))
-        if (entry?.model && entry.selectedCount > 0 && entry.selectedCount < entry.totalFiles) {
+        // Only paths from this unit's own restore point are sent with it.
+        if (pickerMatchesPoint(entry, unit.point) && entry.selectedCount > 0 && entry.selectedCount < entry.totalFiles) {
           filePaths[item.name] = entry.model.selectedPaths()
         }
       }
@@ -1764,6 +1777,7 @@
     {#each restoreUnits as unit (unit.jobId)}
       {@const s = getUnitSettings(unit.jobId)}
       {@const hasContainer = unit.items.some(item => item.type === 'container')}
+      {@const needsDest = unitNeedsDestination(unit)}
       {@const hasPartial = unitHasPartialSelection(unit)}
       {@const unitEmpty = unitHasEmptySelection(unit)}
       {@const unitPendingList = unitHasPendingFileList(unit)}
@@ -1848,7 +1862,8 @@
           <p class="text-sm font-medium text-text-muted mb-2">Restore destination</p>
           <div class="space-y-2">
             <label class="flex items-center gap-2 cursor-pointer text-sm text-text">
-              <input type="radio" name="rw_dest_{unit.jobId}" class="accent-vault" checked={!s.showDestOverride}
+              <input type="radio" name="rw_dest_{unit.jobId}" class="accent-vault" checked={!s.showDestOverride} disabled={needsDest}
+                aria-describedby={needsDest ? `rw_dest_note_${unit.jobId}` : undefined}
                 onchange={() => updateUnitSetting(unit.jobId, { showDestOverride: false, restoreDestination: '', acknowledgeContainerRemap: false })} />
               Restore to original location
             </label>
@@ -1858,6 +1873,12 @@
               Custom destination
             </label>
           </div>
+          {#if needsDest}
+            <p id="rw_dest_note_{unit.jobId}" class="text-xs text-warning mt-2" data-needs-destination>
+              {unit.items.filter(i => (i.type === 'folder' || i.type === 'zfs') && (i.historicalJobIds || []).includes(unit.jobId)).map(i => i.name).join(', ')}
+              is no longer in {unit.jobName}, so its original location isn't recorded. Choose a custom destination.
+            </p>
+          {/if}
           {#if s.showDestOverride}
             <div class="mt-2">
               <PathBrowser
@@ -2262,11 +2283,11 @@
         <div class="w-full h-2.5 bg-surface-4 rounded-full overflow-hidden">
           <div class="h-full rounded-full transition-all duration-300 {overallPct < 100 ? 'shimmer-bar' : 'bg-vault'}" style="width: {overallPct}%"></div>
         </div>
-        <div role="status" class="flex items-center justify-between text-xs text-text-dim mt-2 tabular-nums">
-          <span>{progress.overallDone}/{progress.overallTotal} items · {elapsedStr}</span>
-          {#if progress.overallFailed > 0}
-            <span class="text-danger font-medium">{progress.overallFailed} failed</span>
-          {/if}
+        <!-- Only the counts are live; the elapsed time changes every second
+             and stays out of the live regions (#686). -->
+        <div class="flex items-center justify-between text-xs text-text-dim mt-2 tabular-nums">
+          <span><span role="status">{progress.overallDone}/{progress.overallTotal} items</span> · {elapsedStr}</span>
+          <span role="status" class="text-danger font-medium">{#if progress.overallFailed > 0}{progress.overallFailed} failed{/if}</span>
         </div>
         {#if progress.currentItem}
           <p class="text-xs text-text-dim mt-2 truncate">

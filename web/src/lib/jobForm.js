@@ -54,9 +54,10 @@ const FORM_MODE_KEY = 'vault.jobForm'
  * never chose. Storage can be unavailable (private windows, blocked site data).
  * @param {Storage | undefined} [store]
  */
-export function readFormMode(store = globalThis.localStorage) {
+export function readFormMode(store) {
   try {
-    const v = store?.getItem(FORM_MODE_KEY)
+    // Reading localStorage itself throws when site data is blocked.
+    const v = (store ?? globalThis.localStorage)?.getItem(FORM_MODE_KEY)
     return v === 'full' || v === 'steps' ? v : ''
   } catch {
     return ''
@@ -64,9 +65,9 @@ export function readFormMode(store = globalThis.localStorage) {
 }
 
 /** @param {'full' | 'steps'} mode @param {Storage | undefined} [store] */
-export function writeFormMode(mode, store = globalThis.localStorage) {
+export function writeFormMode(mode, store) {
   try {
-    store?.setItem(FORM_MODE_KEY, mode)
+    ;(store ?? globalThis.localStorage)?.setItem(FORM_MODE_KEY, mode)
   } catch {
     // A convenience only: the editor still works without it.
   }

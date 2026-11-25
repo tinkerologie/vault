@@ -44,6 +44,14 @@
     return i >= 0 && i < rowOf.length && rowOf[i] >= 0 ? rowOf[i] : null
   }
 
+  // A new search starts at the top: the old offset can point past the end of
+  // the shorter list, or past a list that was empty and had no scroller.
+  $effect(() => {
+    void search
+    scrollTop = 0
+    if (scroller) scroller.scrollTop = 0
+  })
+
   // Keep the roving tab stop on a visible row.
   $effect(() => {
     if (rows.length === 0) active = -1
