@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -197,5 +198,18 @@ func TestAcknowledgeServerKey(t *testing.T) {
 	h.AcknowledgeServerKey(w, httptest.NewRequest(http.MethodPost, "/api/v1/settings/server-key/acknowledge", nil))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("no key: status %d, want 503", w.Code)
+	}
+}
+
+type failingWriter struct{ *httptest.ResponseRecorder }
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("client went away") }
+
+// A download that never reaches the client doesn't count as a saved copy.
+func TestGetServerKeyFailedWriteIsNotRecorded(t *testing.T) {
+	h := newTestSettingsHandler(t)
+	h.GetServerKey(failingWriter{httptest.NewRecorder()}, httptest.NewRequest(http.MethodGet, "/api/v1/settings/server-key", nil))
+	if saved, _ := h.db.GetSetting(serverKeySavedSetting, ""); saved != "" {
+		t.Fatalf("a failed download was recorded as a saved copy: %q", saved)
 	}
 }

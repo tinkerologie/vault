@@ -20,7 +20,7 @@ func (s *Service) StopRun(ctx context.Context, runID int64, operator string) (St
 	result := StopResult{RunID: runID, Status: "stopping"}
 	stopping, err := s.runner.StopRestoreRun(ctx, runID, operator)
 	if err != nil {
-		return StopResult{}, fmt.Errorf("stopping approved Restore Run %d: %w", runID, err)
+		return StopResult{}, fmt.Errorf("stopping Restore Run %d: %w", runID, err)
 	}
 	if stopping {
 		if s.flushChange(true) != "" {
@@ -34,7 +34,7 @@ func (s *Service) StopRun(ctx context.Context, runID int64, operator string) (St
 		status, err = s.db.GetRestoreRunStatus(ctx, runID)
 	}
 	if err != nil {
-		return StopResult{}, fmt.Errorf("loading approved Restore Run %d status: %w", runID, err)
+		return StopResult{}, fmt.Errorf("loading Restore Run %d status: %w", runID, err)
 	}
 	result.Status = status
 	return result, nil

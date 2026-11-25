@@ -255,12 +255,14 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 		baseline.JobID = job.ID
 		entry := detailedJob{Job: job, Items: jobItems, Baseline: baseline}
 		if withHistory {
+			// One job's unreadable history shouldn't hide every job from the
+			// restore wizard; the health summary handles the same error this way.
 			points, err := h.db.ListRestorePointsContext(r.Context(), job.ID)
 			if err != nil {
-				respondInternalError(w, fmt.Errorf("listing restore points for job %d: %w", job.ID, err))
-				return
+				log.Printf("jobs: listing restore points for job %d: %v", job.ID, err)
+			} else {
+				entry.HistoricalItems = historicalItems(jobItems, points)
 			}
-			entry.HistoricalItems = historicalItems(jobItems, points)
 		}
 		result = append(result, entry)
 	}
@@ -1629,7 +1631,12 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	var targets []restoreTarget
 
 	if req.ItemName != "" && req.ItemType != "" {
-		// Legacy single-item restore.
+		// Legacy single-item restore. A type that differs from the one the
+		// Restore Point recorded is refused, as for named items.
+		if recorded := found.RecordedItemTypes()[req.ItemName]; recorded != "" && recorded != req.ItemType {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("item type changed since this backup: %s was a %s, the request names a %s", req.ItemName, recorded, req.ItemType))
+			return
+		}
 		targets = append(targets, restoreTarget{Name: req.ItemName, Type: req.ItemType})
 	} else {
 		// Look up job items to resolve types.

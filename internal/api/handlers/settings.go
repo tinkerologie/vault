@@ -507,16 +507,20 @@ func (h *SettingsHandler) GetServerKey(w http.ResponseWriter, _ *http.Request) {
 		respondError(w, http.StatusServiceUnavailable, "server key is not configured")
 		return
 	}
-	// The Dashboard and Disaster Recovery stop warning that vault.key exists
-	// only on this server once a copy has been taken (#714).
-	if err := recordServerKeyCopy(h.db, h.serverKey, time.Now()); err != nil {
-		log.Printf("settings: recording the vault.key download: %v", err)
-	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="vault.key"`)
 	w.Header().Set("Content-Length", strconv.Itoa(len(h.serverKey)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(h.serverKey)
+	n, err := w.Write(h.serverKey)
+	if err != nil || n != len(h.serverKey) {
+		return
+	}
+	// The Dashboard and Disaster Recovery stop warning that vault.key exists
+	// only on this server once a copy has been sent (#714). A download that
+	// never reached the client doesn't count.
+	if err := recordServerKeyCopy(h.db, h.serverKey, time.Now()); err != nil {
+		log.Printf("settings: recording the vault.key download: %v", err)
+	}
 }
 
 // AcknowledgeServerKey records the operator's confirmation that a copy of

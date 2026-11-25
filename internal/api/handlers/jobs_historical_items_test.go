@@ -207,3 +207,18 @@ func TestResolveNamedRestoreTargets(t *testing.T) {
 		t.Fatalf("type changed: %v", err)
 	}
 }
+
+// The legacy single-item form (item_name + item_type) gets the same check: a
+// type that differs from the one the Restore Point recorded is refused.
+func TestRestore_LegacyItemTypeMismatchIsRefused(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+	rpID := seedHistoricalPoint(t, d, jobID, `{"item_sizes":{"app":10},"item_types":{"app":"folder"}}`)
+	idStr := strconv.FormatInt(jobID, 10)
+	w := postJSON(t, h.Restore, "/api/v1/jobs/"+idStr+"/restore",
+		map[string]any{"restore_point_id": rpID, "item_name": "app", "item_type": "container"}, "id", idStr)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "type changed") {
+		t.Fatalf("status = %d; body: %s", w.Code, w.Body.String())
+	}
+}

@@ -98,7 +98,7 @@ func (rp RestorePoint) RecordedItemTypes() map[string]string {
 		types[entry.Name] = entry.Type
 	}
 	for name, checkpoint := range meta.VMCheckpoints {
-		if checkpoint != "" {
+		if checkpoint != "" && !conflicting[name] {
 			types[name] = "vm"
 		}
 	}
