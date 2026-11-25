@@ -366,7 +366,7 @@
 
 {#snippet scopeCell(a)}
   {#if scopeHref(a)}
-    <a href={scopeHref(a)} class="text-vault-text hover:underline">{scopeLabel(a)}</a>
+    <a href={scopeHref(a)} class="inline-flex items-center min-h-6 text-vault-text hover:underline">{scopeLabel(a)}</a>
   {:else}
     {scopeLabel(a)}
   {/if}
