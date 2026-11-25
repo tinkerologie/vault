@@ -107,9 +107,13 @@ test.describe('command palette (#691)', () => {
     await expect(active).toHaveCount(1);
     await expect(search(page)).toHaveAttribute('aria-activedescendant', (await active.getAttribute('id'))!);
     await expect(active).toBeInViewport();
-    const [a, l] = [(await active.boundingBox())!, (await list.boundingBox())!];
-    expect(a.y).toBeGreaterThanOrEqual(l.y - 1);
-    expect(a.y + a.height).toBeLessThanOrEqual(l.y + l.height + 1);
+    // The palette scrolls the option into view a tick after the key press;
+    // poll so the check doesn't sample mid-scroll.
+    const overflow = async () => {
+      const [a, l] = [(await active.boundingBox())!, (await list.boundingBox())!];
+      return Math.max(l.y - a.y, a.y + a.height - (l.y + l.height));
+    };
+    await expect.poll(overflow).toBeLessThanOrEqual(1);
   });
 
   test('every sidebar page is in the palette', async ({ page }) => {
