@@ -126,7 +126,11 @@ func TestHealthSummary_ServerKeyAtRiskFollowsEscrow(t *testing.T) {
 		{"escrow confirmed for an older passphrase", "previous", true},
 		{"escrow confirmed for this passphrase", "current", false},
 	} {
-		if err := d.SetSetting(key, tc.recorded); err != nil {
+		value := ""
+		if tc.recorded != "" {
+			value = db.EscrowConfirmation(tc.recorded)
+		}
+		if err := d.SetSetting(key, value); err != nil {
 			t.Fatal(err)
 		}
 		if got := fetchHealthSummary(t, d)["server_key_at_risk"]; got != tc.want {

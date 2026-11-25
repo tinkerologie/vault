@@ -70,7 +70,7 @@ func serverKeyAtRisk(database *db.DB, jobs []db.Job) bool {
 		if hash == "" {
 			return true
 		}
-		if confirmed, _ := database.GetSetting(db.DedupEscrowConfirmedPrefix+strconv.FormatInt(job.StorageDestID, 10), ""); confirmed != hash {
+		if confirmed, _ := database.GetSetting(db.DedupEscrowConfirmedPrefix+strconv.FormatInt(job.StorageDestID, 10), ""); confirmed != db.EscrowConfirmation(hash) {
 			return true
 		}
 	}

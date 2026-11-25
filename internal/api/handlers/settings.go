@@ -288,6 +288,11 @@ func (h *SettingsHandler) List(w http.ResponseWriter, r *http.Request) {
 	for _, key := range sensitiveSettingKeys {
 		delete(settings, key)
 	}
+	for key := range settings {
+		if strings.HasPrefix(key, db.DedupEscrowConfirmedPrefix) {
+			delete(settings, key)
+		}
+	}
 	delete(settings, db.DiscordBackupMuteMigrationKey)
 
 	respondJSON(w, http.StatusOK, settings)
