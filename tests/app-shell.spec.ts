@@ -114,7 +114,10 @@ test.describe('command palette (#691)', () => {
 
   test('every sidebar page is in the palette', async ({ page }) => {
     await page.goto('/#/jobs');
-    const labels = (await page.locator('aside nav').getByRole('link').allTextContents()).map((l) => l.trim());
+    // The sidebar fills in as feature flags load; read it only once it has.
+    const nav = page.locator('aside nav');
+    await expect(nav.getByRole('link', { name: 'Anomalies' })).toBeVisible();
+    const labels = (await nav.getByRole('link').allTextContents()).map((l) => l.trim());
     expect(labels).toEqual(expect.arrayContaining(['Replication', 'Disaster Recovery', 'Anomalies']));
     await page.keyboard.press('Control+k');
     const pages = page.getByRole('group', { name: 'Pages' });
