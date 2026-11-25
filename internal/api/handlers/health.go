@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -89,14 +90,14 @@ const serverKeySavedSetting = "server_key_saved_at"
 // (#714). Since #451 a backup passphrase escrows the dedup master key, so the
 // key file only matters while no passphrase is set; its copy, on the same flash
 // drive Vault protects, would be lost with the server.
-func (h *HealthHandler) serverKeyAtRisk(jobs []db.Job) bool {
-	if hash, _ := h.db.GetSetting("encryption_passphrase_hash", ""); hash != "" {
+func serverKeyAtRisk(database *db.DB, jobs []db.Job) bool {
+	if hash, _ := database.GetSetting("encryption_passphrase_hash", ""); hash != "" {
 		return false
 	}
-	if saved, _ := h.db.GetSetting(serverKeySavedSetting, ""); saved != "" {
+	if saved, _ := database.GetSetting(serverKeySavedSetting, ""); saved != "" {
 		return false
 	}
-	dests, err := h.db.ListStorageDestinations()
+	dests, err := database.ListStorageDestinations()
 	if err != nil {
 		log.Printf("health summary: listing storage destinations: %v", err)
 		return false
@@ -127,17 +128,28 @@ func NewHealthHandler(database *db.DB) *HealthHandler {
 
 // Summary returns an aggregated health score and backup statistics.
 func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
-	jobs, err := h.db.ListJobs()
+	result, err := BuildHealthSummary(h.db, time.Now())
 	if err != nil {
 		respondInternalError(w, err)
 		return
+	}
+	respondJSON(w, http.StatusOK, result)
+}
+
+// BuildHealthSummary aggregates the health score, protection classification
+// and recent backup outcomes. The REST summary and the MCP get_health_summary
+// tool both serve it, so the Dashboard, assistants and Home Assistant agree
+// on what is protected (#708).
+func BuildHealthSummary(database *db.DB, now time.Time) (map[string]any, error) {
+	jobs, err := database.ListJobs()
+	if err != nil {
+		return nil, fmt.Errorf("listing jobs: %w", err)
 	}
 
 	var recentSuccess, recentFailed, recentPartial, recentSkipped, recentCancelled int
 	var outstandingFailed, outstandingPartial, outstandingSkipped, outstandingCancelled int
 	var lastSuccessTime *time.Time
 	staleJobs := []staleJob{}
-	now := time.Now()
 
 	// Counts are per distinct item (type:name), not per job-item pair: the same
 	// container or VM is often covered by several jobs, and one key must never be
@@ -150,12 +162,12 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	classes := newProtectionClassifier(now)
 
 	for _, job := range jobs {
-		items, err := h.db.GetJobItems(job.ID)
+		items, err := database.GetJobItems(job.ID)
 		if err != nil {
 			continue
 		}
 
-		rps, rpErr := h.db.ListRestorePoints(job.ID)
+		rps, rpErr := database.ListRestorePoints(job.ID)
 		if rpErr != nil {
 			// Surface DB issues rather than silently treating the job as having
 			// no backups (which would mislabel its items as pending).
@@ -166,7 +178,7 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		// A run of skips or failures can push the last success out of any recent
 		// window, so this isn't read from the runs below. With run history purged,
 		// the newest restore point is the only record left of a backup.
-		lastSuccess, lsErr := h.db.GetLastSuccessfulBackupAt(job.ID)
+		lastSuccess, lsErr := database.GetLastSuccessfulBackupAt(job.ID)
 		if lsErr != nil {
 			log.Printf("health summary: finding last success for job %d: %v", job.ID, lsErr)
 		}
@@ -184,7 +196,7 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 			staleJobs = append(staleJobs, staleJob{ID: job.ID, Name: job.Name, Enabled: job.Enabled, LastSuccessAt: *newestBackup})
 		}
 
-		runs, err := h.db.GetJobRuns(job.ID, 10)
+		runs, err := database.GetJobRuns(job.ID, 10)
 		if err != nil {
 			continue
 		}
@@ -268,7 +280,7 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		"out_of_date_items":     len(outOfDateKeys),
 		"up_to_date_items":      upToDateItems,
 		"item_last_backup_at":   classes.newestBackups(),
-		"server_key_at_risk":    h.serverKeyAtRisk(jobs),
+		"server_key_at_risk":    serverKeyAtRisk(database, jobs),
 		"protection_pct":        protectionPct,
 		"success_rate":          successRate,
 		"recent_success":        recentSuccess,
@@ -283,5 +295,5 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		"last_success_at":       lastSuccessTime,
 		"stale_jobs":            staleJobs,
 	}
-	respondJSON(w, http.StatusOK, result)
+	return result, nil
 }
