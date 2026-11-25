@@ -103,15 +103,20 @@ func TestHealthSummary_ServerKeyAtRisk(t *testing.T) {
 		name       string
 		dedup      bool
 		passphrase bool
-		saved      bool
+		saved      string // server_key_saved_at value; "" = none
+		current    string // fingerprint of the key the daemon loaded; "" = unknown
 		jobUsesIt  bool
 		want       bool
 	}{
-		{"dedup in use, no passphrase, no saved copy", true, false, false, true, true},
-		{"a backup passphrase escrows the key", true, true, false, true, false},
-		{"a copy of the key was saved", true, false, true, true, false},
-		{"no deduplicated destination", false, false, false, true, false},
-		{"dedup destination no job uses", true, false, false, false, false},
+		{"dedup in use, no passphrase, no saved copy", true, false, "", "aaaa", true, true},
+		{"a backup passphrase escrows the key", true, true, "", "aaaa", true, false},
+		{"a copy of this key was saved", true, false, "2026-11-25T10:00:00Z aaaa", "aaaa", true, false},
+		{"the saved copy is of an older key", true, false, "2026-11-25T10:00:00Z bbbb", "aaaa", true, true},
+		{"a saved copy with no fingerprint while the key is known", true, false, "2026-11-25T10:00:00Z", "aaaa", true, true},
+		{"a value that is not a timestamp", true, false, "yes", "", true, true},
+		{"legacy record before fingerprints, key unknown", true, false, "2026-11-25T10:00:00Z", "", true, false},
+		{"no deduplicated destination", false, false, "", "aaaa", true, false},
+		{"dedup destination no job uses", true, false, "", "aaaa", false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -135,8 +140,13 @@ func TestHealthSummary_ServerKeyAtRisk(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if tc.saved {
-				if err := d.SetSetting(serverKeySavedSetting, "2026-11-25T10:00:00Z"); err != nil {
+			if tc.saved != "" {
+				if err := d.SetSetting(serverKeySavedSetting, tc.saved); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.current != "" {
+				if err := d.SetSetting(db.ServerKeyFingerprintSetting, tc.current); err != nil {
 					t.Fatal(err)
 				}
 			}

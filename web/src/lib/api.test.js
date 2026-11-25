@@ -286,6 +286,21 @@ describe('mounts', () => {
     expect(fetch.mock.calls[0][0]).toBe('/api/v1/mounts?active=true')
   })
 
+  it('acknowledges an off-server copy of vault.key with a POST', async () => {
+    const fetch = vi.fn(async () => new Response('{"acknowledged":true}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    const res = await api.acknowledgeServerKey()
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/settings/server-key/acknowledge')
+    expect(fetch.mock.calls[0][1].method).toBe('POST')
+    expect(res).toEqual({ acknowledged: true })
+  })
+
   it('gets mount details by id', async () => {
     const fetch = vi.fn(async () => new Response('{"id":42}', {
       status: 200,

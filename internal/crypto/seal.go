@@ -4,7 +4,9 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -98,4 +100,15 @@ func Unseal(key []byte, sealed string) (string, error) {
 	}
 
 	return string(plaintext), nil
+}
+
+// ServerKeyFingerprint identifies a server key without revealing it: the first
+// 16 hex digits of its SHA-256. Vault records it with a confirmed off-server
+// copy of vault.key, so a regenerated key is not mistaken for a saved one (#714).
+func ServerKeyFingerprint(key []byte) string {
+	if len(key) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(key)
+	return hex.EncodeToString(sum[:])[:16]
 }

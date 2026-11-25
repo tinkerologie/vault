@@ -35,6 +35,11 @@ func (d *DB) SetSetting(key, value string) error {
 // SFTP host key fingerprints, one per host:port.
 const SFTPHostKeyPinPrefix = "sftp_host_key_pin:"
 
+// ServerKeyFingerprintSetting holds the fingerprint of the vault.key the
+// daemon loaded at start-up. A confirmed off-server copy only counts while it
+// matches, so a regenerated key brings the "save a copy" caution back (#714).
+const ServerKeyFingerprintSetting = "server_key_fingerprint"
+
 // PinSFTPHostKey records fingerprint as the host key for address unless one
 // is already on record, and returns the fingerprint on record. The conditional
 // insert is atomic and a pin is never updated here, so concurrent first

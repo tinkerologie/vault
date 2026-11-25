@@ -315,6 +315,10 @@ var protectedSettingKeys = map[string]bool{
 	"snapshot_path_override": true,
 	"staging_dir_override":   true,
 	"appdata_path":           true,
+	// The vault.key copy record and the loaded key's fingerprint are written
+	// only by the download, the acknowledge endpoint and daemon start-up (#714).
+	serverKeySavedSetting:          true,
+	db.ServerKeyFingerprintSetting: true,
 }
 
 // Update accepts a JSON object of key-value pairs and upserts them.
@@ -505,7 +509,7 @@ func (h *SettingsHandler) GetServerKey(w http.ResponseWriter, _ *http.Request) {
 	}
 	// The Dashboard and Disaster Recovery stop warning that vault.key exists
 	// only on this server once a copy has been taken (#714).
-	if err := h.db.SetSetting(serverKeySavedSetting, time.Now().UTC().Format(time.RFC3339)); err != nil {
+	if err := recordServerKeyCopy(h.db, h.serverKey, time.Now()); err != nil {
 		log.Printf("settings: recording the vault.key download: %v", err)
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
@@ -513,6 +517,23 @@ func (h *SettingsHandler) GetServerKey(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Length", strconv.Itoa(len(h.serverKey)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(h.serverKey)
+}
+
+// AcknowledgeServerKey records the operator's confirmation that a copy of
+// this vault.key is kept off the server, clearing the Dashboard and Disaster
+// Recovery caution for this key only (#714).
+//
+//	POST /api/v1/settings/server-key/acknowledge
+func (h *SettingsHandler) AcknowledgeServerKey(w http.ResponseWriter, _ *http.Request) {
+	if len(h.serverKey) != crypto.ServerKeySize {
+		respondError(w, http.StatusServiceUnavailable, "server key is not configured")
+		return
+	}
+	if err := recordServerKeyCopy(h.db, h.serverKey, time.Now()); err != nil {
+		respondInternalError(w, fmt.Errorf("recording the vault.key copy: %w", err))
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"acknowledged": true})
 }
 
 // GetEncryptionPassphrase returns the recoverable encryption passphrase.

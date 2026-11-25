@@ -248,6 +248,8 @@ export const api = {
   // Settings
   getSettings: () => request('GET', '/settings'),
   updateSettings: (data) => request('PUT', '/settings', data),
+  // Confirms a copy of this server's vault.key is kept off the server (#714).
+  acknowledgeServerKey: () => request('POST', '/settings/server-key/acknowledge', {}),
   getEncryptionStatus: () => request('GET', '/settings/encryption'),
   setEncryption: (passphrase) => request('POST', '/settings/encryption', { passphrase }),
   verifyEncryption: (passphrase) => request('POST', '/settings/encryption/verify', { passphrase }),

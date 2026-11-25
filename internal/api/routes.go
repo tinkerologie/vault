@@ -303,6 +303,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			// Recovery copy of vault.key (#451): as sensitive as the API key,
 			// so it gets the same rate limit.
 			r.With(LocalOnly, httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Get("/server-key", settingsH.GetServerKey)
+			r.With(LocalOnly, httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Post("/server-key/acknowledge", settingsH.AcknowledgeServerKey)
 			r.Get("/staging", settingsH.GetStagingInfo)
 			r.Put("/staging", settingsH.SetStagingOverride)
 			r.Get("/appdata", settingsH.GetAppdataPath)

@@ -90,7 +90,7 @@
     keyAcknowledging = true
     keyAckError = ''
     try {
-      await api.updateSettings({ server_key_saved_at: new Date().toISOString() })
+      await api.acknowledgeServerKey()
       summary = await api.getHealthSummary()
     } catch (e) {
       keyAckError = e.message || 'Could not save'

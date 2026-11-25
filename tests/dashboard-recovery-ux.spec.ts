@@ -162,20 +162,20 @@ test.describe('Needs attention tile (#693)', () => {
 test.describe('vault.key caution (#714)', () => {
   test('shows on the Dashboard and Disaster Recovery when the key is at risk, and clears on acknowledgement', async ({ page }) => {
     let atRisk = true;
-    const posted: Record<string, string>[] = [];
+    const posted: string[] = [];
     await setupVaultMockApi(page, { healthSummary: summary(ALL_ITEM_KEYS), historyRuns: [run(1, 'completed')] });
     await page.route('**/api/v1/health/summary', (route) => route.fulfill(json(summary(ALL_ITEM_KEYS, { server_key_at_risk: atRisk }))));
-    await page.route('**/api/v1/settings', async (route) => {
-      if (route.request().method() === 'PUT') {
-        posted.push(route.request().postDataJSON());
+    await page.route('**/api/v1/settings/server-key/acknowledge', async (route) => {
+      if (route.request().method() === 'POST') {
+        posted.push(route.request().method());
         atRisk = false;
-        return route.fulfill(json({}));
+        return route.fulfill(json({ acknowledged: true }));
       }
       return route.fallback();
     });
     await page.goto('/#/');
     const save = banner(page).getByRole('link', { name: 'Save vault.key' });
-    await expect(save).toHaveAttribute('href', '#/settings');
+    await expect(save).toHaveAttribute('href', '#/settings/security');
     await expect(banner(page)).toContainText('vault.key is the only key to your deduplicated backups');
 
     await page.goto('/#/recovery');
@@ -183,7 +183,7 @@ test.describe('vault.key caution (#714)', () => {
     await expect(caution).toContainText('Save a copy of vault.key, or set a backup password');
     await caution.getByRole('button', { name: 'I keep a copy elsewhere' }).click();
     await expect(caution).toHaveCount(0);
-    expect(Object.keys(posted[0])).toEqual(['server_key_saved_at']);
+    expect(posted).toEqual(['POST']);
   });
 
   test('stays hidden when the key is not at risk', async ({ page }) => {

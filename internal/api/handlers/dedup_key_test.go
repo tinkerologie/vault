@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/runner"
@@ -38,9 +40,11 @@ func TestGetServerKeyDownload(t *testing.T) {
 		}
 	}
 
-	// The download is recorded, so the "save a copy" caution clears (#714).
-	if saved, _ := h.db.GetSetting(serverKeySavedSetting, ""); saved == "" {
-		t.Error("the download was not recorded")
+	// The download is recorded with the key's fingerprint, so the "save a copy"
+	// caution clears for this key only (#714).
+	saved, _ := h.db.GetSetting(serverKeySavedSetting, "")
+	if !strings.HasSuffix(saved, " "+crypto.ServerKeyFingerprint(h.serverKey)) {
+		t.Errorf("the download was recorded as %q, want a timestamp and this key's fingerprint", saved)
 	}
 
 	h.serverKey = nil
@@ -157,5 +161,41 @@ func TestRewrapDedupKeysWithoutRunner(t *testing.T) {
 	h.RewrapDedupKeys(w, httptest.NewRequest(http.MethodPost, "/api/v1/storage/dedup-keys/rewrap", strings.NewReader(`{}`)))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d", w.Code)
+	}
+}
+
+// TestAcknowledgeServerKey checks the "I keep a copy elsewhere" confirmation
+// records this key's fingerprint, and that the generic settings endpoint can't
+// write the record or the current-key fingerprint (#714).
+func TestAcknowledgeServerKey(t *testing.T) {
+	h := newTestSettingsHandler(t)
+	w := httptest.NewRecorder()
+	h.AcknowledgeServerKey(w, httptest.NewRequest(http.MethodPost, "/api/v1/settings/server-key/acknowledge", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	saved, _ := h.db.GetSetting(serverKeySavedSetting, "")
+	fields := strings.Fields(saved)
+	if len(fields) != 2 || fields[1] != crypto.ServerKeyFingerprint(h.serverKey) {
+		t.Fatalf("recorded %q, want a timestamp and this key's fingerprint", saved)
+	}
+	if _, err := time.Parse(time.RFC3339, fields[0]); err != nil {
+		t.Fatalf("recorded time %q: %v", fields[0], err)
+	}
+
+	for _, key := range []string{serverKeySavedSetting, db.ServerKeyFingerprintSetting} {
+		w = httptest.NewRecorder()
+		body := strings.NewReader(`{"` + key + `":"2026-11-25T10:00:00Z ffff"}`)
+		h.Update(w, httptest.NewRequest(http.MethodPut, "/api/v1/settings", body))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("PUT /settings %s: status %d, want 400", key, w.Code)
+		}
+	}
+
+	h.serverKey = nil
+	w = httptest.NewRecorder()
+	h.AcknowledgeServerKey(w, httptest.NewRequest(http.MethodPost, "/api/v1/settings/server-key/acknowledge", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no key: status %d, want 503", w.Code)
 	}
 }

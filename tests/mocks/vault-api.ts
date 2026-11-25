@@ -443,6 +443,11 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       });
     }
 
+    // Off-server copy of vault.key confirmed (#714).
+    if (path.endsWith('/settings/server-key/acknowledge') && method === 'POST') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ acknowledged: true }) });
+    }
+
     // Server key download (#451): the raw 32-byte vault.key file.
     if (path.endsWith('/settings/server-key')) {
       return route.fulfill({

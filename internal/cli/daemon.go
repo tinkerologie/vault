@@ -467,6 +467,11 @@ var daemonCmd = &cobra.Command{
 		// rewrite the older database copies. Backups matter more than this step,
 		// so a failure leaves the old state in place, is logged, and is retried
 		// at the next boot.
+		// Publish which key is loaded, so a confirmed off-server copy of an
+		// older key no longer silences the "save a copy" caution (#714).
+		if err := database.SetSetting(db.ServerKeyFingerprintSetting, crypto.ServerKeyFingerprint(serverKey)); err != nil {
+			log.Printf("Warning: recording the server key fingerprint: %v", err)
+		}
 		database.SetCredentialKey(serverKey)
 		if n, sealErr := database.SealSecretsAtRest(); sealErr != nil {
 			log.Printf("ERROR: sealing secrets at rest failed, will retry at next start: %v", sealErr)
