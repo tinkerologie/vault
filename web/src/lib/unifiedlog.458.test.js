@@ -314,3 +314,38 @@ describe('merge (poll) path', () => {
     expect(store.entries.map((e) => e.id)).toEqual([9])
   })
 })
+
+describe('live arrivals for the console announcement (#686)', () => {
+  it('reports live entries that pass the filters, and nothing else', () => {
+    const store = createUnifiedLogStore()
+    const onArrive = vi.fn()
+    store.setupWs(onArrive)
+    store.setLevelFilter('error')
+    wsHandler({ type: 'activity', entry: activity(1, 1, { level: 'info' }) })
+    wsHandler({ type: 'activity', entry: activity(2, 2, { level: 'error' }) })
+    wsHandler({ type: 'run_log', entry: runLine(3, 9, 3, { level: 'error' }) })
+    wsHandler({ type: 'activity', entry: activity(2, 2, { level: 'error' }) }) // replay
+    expect(onArrive.mock.calls.map(([n]) => n)).toEqual([0, 1, 1])
+  })
+
+  it('works without a callback', () => {
+    const store = createUnifiedLogStore()
+    store.setupWs()
+    wsHandler({ type: 'activity', entry: activity(1, 1) })
+    expect(store.entries).toHaveLength(1)
+  })
+})
+
+describe('initial filters', () => {
+  it('starts in the given category and filters', async () => {
+    api.getActivity.mockResolvedValue([])
+    const store = createUnifiedLogStore({ category: 'health', level: 'error', job: 'docker', search: 'disk' })
+    expect(store.category).toBe('health')
+    expect(store.levelFilter).toBe('error')
+    expect(store.jobFilter).toBe('docker')
+    expect(store.search).toBe('disk')
+    await store.load()
+    expect(api.getActivity).toHaveBeenCalledWith(expect.anything(), 'health')
+    store.dispose()
+  })
+})

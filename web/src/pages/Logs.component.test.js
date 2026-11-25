@@ -50,7 +50,7 @@ async function mountLogs({ entries = makeEntries(50), hasMore = false, before } 
   before?.(current.fixture.control)
   const view = render(Logs)
   await flush()
-  return { ...view, ...current.fixture, console: () => document.querySelector('[role="log"]') }
+  return { ...view, ...current.fixture, console: () => document.querySelector('[data-log-console]') }
 }
 
 /** Number of log rows currently rendered. */
@@ -314,7 +314,7 @@ describe('problem rows (#534)', () => {
     message: `Health check, container=c${i}, status=unhealthy, error=Timed out, retrying`,
     meta: { container_name: `c${i}`, status: 'unhealthy', error: 'SENTINEL-STRUCTURED' },
   }))
-  const text = () => document.querySelector('[role="log"]').textContent
+  const text = () => document.querySelector('[data-log-console]').textContent
   const row = (entry) => document.querySelector(`[data-entry-id="${entry.id}"]`)
 
   it('shows the summary with Details off and the canonical text with it on', async () => {
@@ -559,7 +559,7 @@ describe('anchoring an open row', () => {
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
       if (!this.dataset?.entryId) return { top: 0 }
       if (rowTop !== undefined) return { top: rowTop }
-      const log = this.closest('[role="log"]')
+      const log = this.closest('[data-log-console]')
       return { top: [...log.querySelectorAll('[data-entry-id]')].indexOf(this) * geo.rowHeight - log.scrollTop }
     })
   }
