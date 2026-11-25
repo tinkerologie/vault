@@ -28,7 +28,14 @@
   let triggerEl = $state(null)
   let tooltipEl = $state(null)
   let hoverTimeout = $state(null)
+  let hideTimeout = null
   let isTouch = $state(false)
+  // Opened by a click or Enter: stays until Escape, a click outside or blur,
+  // rather than closing when the pointer leaves (#691).
+  let pinned = false
+
+  // Time for the pointer to cross the gap between trigger and bubble (WCAG 1.4.13).
+  const HIDE_DELAY = 150
 
   const TOOLTIP_MAX_W = 260
   const VIEWPORT_PAD = 8
@@ -48,6 +55,8 @@
   }
   const _fallbackId = generateTooltipId()
   let tooltipId = $derived(id ?? _fallbackId)
+  // Always in the DOM, so the trigger is described before the tip opens (#691).
+  let descriptionId = $derived(`${tooltipId}-desc`)
 
   function updatePosition() {
     if (!triggerEl) return
@@ -73,32 +82,57 @@
     popupStyle = `left:${left}px;top:${top}px;`
   }
 
+  function cancelHide() {
+    clearTimeout(hideTimeout)
+    hideTimeout = null
+  }
+
+  function cancelShow() {
+    if (hoverTimeout) clearTimeout(hoverTimeout)
+    hoverTimeout = null
+  }
+
+  function close() {
+    cancelHide()
+    cancelShow()
+    pinned = false
+    visible = false
+  }
+
   function show() {
     if (isTouch) return
-    if (hoverTimeout) clearTimeout(hoverTimeout)
+    cancelHide()
+    if (visible) return
+    cancelShow()
     hoverTimeout = setTimeout(() => {
+      hoverTimeout = null
       updatePosition()
       visible = true
     }, 200)
   }
 
-  function hide() {
-    if (hoverTimeout) {
-      clearTimeout(hoverTimeout)
-      hoverTimeout = null
-    }
-    if (!isTouch) visible = false
+  // The pointer left the trigger or the bubble: close soon, unless it arrives
+  // on the other one first or the tip was opened on purpose.
+  function leave() {
+    cancelShow()
+    if (isTouch || pinned) return
+    cancelHide()
+    hideTimeout = setTimeout(close, HIDE_DELAY)
   }
 
-  function toggle(e) {
+  function onBlur() {
+    if (!isTouch) close()
+  }
+
+  // A click or Enter opens the tip and keeps it open; it never toggles it shut.
+  function open(e) {
     e.preventDefault()
     e.stopPropagation()
-    if (visible) {
-      visible = false
-    } else {
-      updatePosition()
-      visible = true
-    }
+    cancelHide()
+    cancelShow()
+    pinned = true
+    updatePosition()
+    visible = true
   }
 
   function onKeydown(e) {
@@ -106,14 +140,13 @@
       // Escape closes only the tip, not a dialog the tip sits in.
       e.preventDefault()
       e.stopPropagation()
-      visible = false
-      triggerEl?.focus()
+      close()
     }
   }
 
   function onClickOutside(e) {
     if (visible && triggerEl && !triggerEl.contains(e.target) && tooltipEl && !tooltipEl.contains(e.target)) {
-      visible = false
+      close()
     }
   }
 
@@ -150,7 +183,11 @@
 
   $effect(() => {
     window.addEventListener('touchstart', onTouchStart, { once: true })
-    return () => window.removeEventListener('touchstart', onTouchStart)
+    return () => {
+      window.removeEventListener('touchstart', onTouchStart)
+      cancelHide()
+      cancelShow()
+    }
   })
 </script>
 
@@ -159,12 +196,12 @@
     bind:this={triggerEl}
     type="button"
     class={children ? 'tooltip-trigger-custom' : 'tooltip-trigger hit-target hit-target-touch'}
-    aria-describedby={visible ? tooltipId : undefined}
+    aria-describedby={descriptionId}
     onmouseenter={show}
-    onmouseleave={hide}
+    onmouseleave={leave}
     onfocus={show}
-    onblur={hide}
-    onclick={toggle}
+    onblur={onBlur}
+    onclick={open}
   >
     {#if children}
       {@render children()}
@@ -176,6 +213,9 @@
       <span class="sr-only">{label ? `More info: ${label}` : 'More info'}</span>
     {/if}
   </button>
+  <!-- Hidden, so it adds nothing to a surrounding label or heading, but still
+       read as the trigger's description. -->
+  <span id={descriptionId} hidden>{text}</span>
 
   {#if visible}
     <span
@@ -185,6 +225,8 @@
       role="tooltip"
       class="tooltip-popup {position === 'above' ? 'tooltip-above' : 'tooltip-below'}"
       style="{popupStyle} --arrow-offset: {arrowOffset};"
+      onmouseenter={cancelHide}
+      onmouseleave={leave}
     >
       {text}
       <span class="tooltip-arrow {position === 'above' ? 'tooltip-arrow-down' : 'tooltip-arrow-up'}"></span>
@@ -205,15 +247,16 @@
     transition: color 0.15s;
     background: none;
     border: none;
-    outline: none;
     margin-left: 4px;
   }
   .tooltip-trigger:hover,
   .tooltip-trigger:focus-visible {
-    color: var(--color-vault);
+    color: var(--color-vault-text);
   }
+  /* An outline, not a box-shadow, so it survives forced-colors mode (#691). */
   .tooltip-trigger:focus-visible {
-    box-shadow: 0 0 0 2px var(--color-vault);
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
   }
 
   .tooltip-trigger-custom {
@@ -225,13 +268,12 @@
     border: none;
     padding: 0;
     margin: 0;
-    outline: none;
     text-align: left;
     color: inherit;
     font: inherit;
   }
   .tooltip-trigger-custom:focus-visible {
-    outline: 2px solid var(--color-vault);
+    outline: 2px solid var(--color-focus-ring);
     outline-offset: 2px;
     border-radius: 9999px;
   }
@@ -249,7 +291,6 @@
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     z-index: 9999;
-    pointer-events: none;
     animation: tooltip-in 0.15s ease-out;
     /* Force wrapping inside the bubble so long unbroken strings (e.g. URLs)
        don't overflow horizontally. `overflow-wrap: anywhere` allows breaks

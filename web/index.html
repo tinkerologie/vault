@@ -7,6 +7,43 @@
     <title>Vault</title>
   </head>
   <body>
+    <!-- Applies the saved theme before the first paint (#696), so a dark page
+         never flashes white. Mirrors initTheme in src/lib/theme.svelte.js and
+         is checked against it by src/lib/theme-prepaint.test.js. It sits in
+         <body> so the runtime config the servers inject before </head> is
+         already set. It only reads: initTheme still migrates and saves. -->
+    <script data-vault-theme-boot>
+      (function () {
+        try {
+          var get = function (k) {
+            try { return window.localStorage.getItem(k) } catch (e) { return null }
+          }
+          var styles = ['default', '1bit', 'retro', 'dracula', 'catppuccin']
+          var modes = ['light', 'system', 'dark']
+          var legacy = { light: ['default', 'light'], dark: ['default', 'dark'], system: ['default', 'system'], retro: ['retro', 'light'], 'retro-dark': ['retro', 'dark'] }
+          var old = get('vault-theme')
+          var migrated = Object.prototype.hasOwnProperty.call(legacy, old) ? legacy[old] : null
+          var style = migrated ? migrated[0] : get('vault-style')
+          if (style === '8bit' || style === '16bit') style = 'retro'
+          if (styles.indexOf(style) < 0) style = 'default'
+          var mode = migrated ? migrated[1] : get('vault-mode')
+          if (modes.indexOf(mode) < 0) {
+            mode = 'system'
+            // Unraid's theme is the starting point only when framed by it, as in isEmbedded().
+            var cfg = window.__VAULT_RUNTIME_CONFIG__ || {}
+            var framed = false
+            try { framed = window.self !== window.top && window.parent.location.origin === window.location.origin } catch (e) { framed = false }
+            if (!migrated && cfg.presentation === 'embedded' && framed && (cfg.hostTheme === 'light' || cfg.hostTheme === 'dark')) mode = cfg.hostTheme
+          }
+          var prefersDark = true
+          try { prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches } catch (e) { prefersDark = true }
+          var dark = style === 'dracula' || mode === 'dark' || (mode === 'system' && prefersDark)
+          var root = document.documentElement
+          root.classList.toggle('dark', dark)
+          if (style !== 'default') root.classList.add('theme-' + style)
+        } catch (e) { /* the app applies the theme on mount anyway */ }
+      })()
+    </script>
     <div id="app"></div>
     <script type="module" src="/src/main.js"></script>
   </body>

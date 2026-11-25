@@ -77,7 +77,7 @@ async function openEmbedded(page: Page, options: EmbedOptions = {}): Promise<Fra
     await page.route(`${frameOrigin}/**`, async (route) => {
       const { pathname, search } = new URL(route.request().url());
       if (pathname.startsWith('/api/')) return route.fallback();
-      await route.fulfill({ response: await route.fetch({ url: `http://127.0.0.1:4173${pathname}${search}` }) });
+      await route.fulfill({ response: await route.fetch({ url: `${new URL(test.info().project.use.baseURL ?? 'http://127.0.0.1:4173').origin}${pathname}${search}` }) });
     });
   }
   const frameSrc = `${crossOrigin ? frameOrigin : ''}/?embed=1${hash}`;
@@ -490,7 +490,8 @@ for (const viewport of VIEWPORTS) {
       await settledFrameHeight(page);
       await page.evaluate(() => window.scrollTo(0, 250));
       await frame.getByRole('button', { name: /run backup now/i }).first().click();
-      const toast = frame.getByRole('alert');
+      // A queued run is good news: a polite status toast (#685).
+      const toast = frame.getByRole('status').filter({ has: frame.locator('[data-toast-icon]') });
       await expect(toast).toBeVisible();
       await expectInParentViewport(page, await toast.boundingBox());
     });
@@ -582,7 +583,8 @@ for (const viewport of VIEWPORTS) {
       await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toBeVisible({ visible: !desktop });
       const state = await page.evaluate(() => ({
         embedded: document.documentElement.classList.contains('vault-embedded'),
-        shell: document.querySelector('#app > div')!.className,
+        // The shell is main's parent; the connection-banner region now precedes it (#686).
+        shell: document.getElementById('main-content')!.parentElement!.className,
         main: getComputedStyle(document.getElementById('main-content')!).overflowY,
         html: getComputedStyle(document.documentElement).overflow,
       }));

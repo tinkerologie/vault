@@ -251,6 +251,26 @@ describe('websocket mode', () => {
     expect(ws.getWsStatus()).toBe('connecting')
   })
 
+  it('stays reconnecting through each retry until a socket opens (#686)', async () => {
+    await loadWs()
+    ws.connectWs()
+    lastSocket().close()
+    const seen = []
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(30000)
+      seen.push(ws.getWsStatus())
+      lastSocket().close()
+      seen.push(ws.getWsStatus())
+    }
+    expect(seen.every((st) => st === 'reconnecting')).toBe(true)
+    await vi.advanceTimersByTimeAsync(30000)
+    lastSocket().open()
+    expect(ws.getWsStatus()).toBe('connected')
+    // A later drop starts over: the first attempt after a good connection retries.
+    lastSocket().close()
+    expect(ws.getWsStatus()).toBe('reconnecting')
+  })
+
   it('closes the socket on error, which schedules a reconnect', async () => {
     await loadWs()
     ws.connectWs()

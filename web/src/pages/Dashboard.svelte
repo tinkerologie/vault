@@ -1478,7 +1478,8 @@
         {#if health}
           <span class="inline-flex items-center gap-1.5 text-xs text-text-dim">
             <span class="w-1.5 h-1.5 rounded-full {health.status === 'ok' ? 'bg-success' : 'bg-danger'}"></span>
-            {health.status === 'ok' ? 'Online' : 'Offline'} · v{health.version || '?'}
+            {health.status === 'ok' ? 'Online' : 'Offline'}<!-- The desktop sidebar already shows the version (#715); embedded has no sidebar.
+            --><span data-dash-version class="lg:[html:not(.vault-embedded)_&]:hidden"> · v{health.version || '?'}</span>
           </span>
         {/if}
       </div>
