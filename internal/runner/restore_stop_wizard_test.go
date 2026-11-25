@@ -80,3 +80,42 @@ func TestStopRestoreRunWizardAfterTheRunFinished(t *testing.T) {
 		t.Fatalf("late stop: %v %v", ok, err)
 	}
 }
+
+// A plain Cancel already under way wins over a later operator stop: the stop
+// is not recorded, so the run's audit can't claim an operator stopped it while
+// the run ends with Cancel's outcome.
+func TestStopRestoreRunWizardAfterACancel(t *testing.T) {
+	r, database := newTestRunner(t)
+	jobID, err := database.CreateJob(db.Job{Name: "cancel then stop", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := database.CreateJobRun(db.JobRun{JobID: jobID, Status: "running", RunType: "restore"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	stopped := 0
+	r.publishRestoreCancellation(&RunStatus{Active: true, JobID: jobID, RunID: runID, RunType: "restore"}, func(cause error) {
+		stopped++
+		cancel(cause)
+	})
+	if err := r.CancelJob(jobID); err != nil {
+		t.Fatalf("CancelJob: %v", err)
+	}
+	before := stopped
+	if ok, err := r.StopRestoreRun(context.Background(), runID, "operator"); !ok || err != nil {
+		t.Fatalf("stop during cancel: %v %v", ok, err)
+	}
+	if stopped != before {
+		t.Fatalf("the operator stop ran after the cancel (%d extra calls)", stopped-before)
+	}
+	run, err := database.GetJobRun(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.StoppedBy != "" || run.StopRequestedAt != nil {
+		t.Fatalf("a stop was recorded after the cancel: %+v", run)
+	}
+}

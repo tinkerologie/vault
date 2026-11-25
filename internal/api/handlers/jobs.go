@@ -1488,22 +1488,25 @@ type restoreTarget struct {
 
 // resolveNamedRestoreTargets resolves each requested name to a type: the
 // job's item first, then the type the Restore Point recorded, so an item that
-// has left its job can still be restored from points that hold it (#669).
+// has left its job can still be restored from points that hold it (#669). A
+// name the job and the point record with different types is refused.
 // Membership of the point is still checked by validateRestorePointTargets.
 func resolveNamedRestoreTargets(jobItems []db.JobItem, point db.RestorePoint, names []string) ([]restoreTarget, error) {
 	types := make(map[string]string, len(jobItems))
 	for _, item := range jobItems {
 		types[item.ItemName] = item.ItemType
 	}
-	var recorded map[string]string
+	recorded := point.RecordedItemTypes()
 	targets := make([]restoreTarget, 0, len(names))
 	for _, name := range names {
 		itemType, ok := types[name]
+		pointType := recorded[name]
 		if !ok {
-			if recorded == nil {
-				recorded = point.RecordedItemTypes()
-			}
-			itemType, ok = recorded[name]
+			itemType, ok = pointType, pointType != ""
+		} else if pointType != "" && pointType != itemType {
+			// Browsing shows the point's recorded type; restoring the same data
+			// with the job's current type would write it in the wrong layout.
+			return nil, fmt.Errorf("item type changed since this backup: %s was a %s, the job now has a %s", name, pointType, itemType)
 		}
 		if !ok || itemType == "" {
 			return nil, fmt.Errorf("item not found in job or restore point: %s", name)

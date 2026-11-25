@@ -67,12 +67,16 @@ func (r *Runner) StopRestoreRun(ctx context.Context, runID int64, operator strin
 func (r *Runner) stopWizardRestoreLocked(ctx context.Context, runID int64, operator string) (bool, error) {
 	r.statusMu.RLock()
 	isRestore := r.currentRun != nil && r.currentRun.RunID == runID && r.currentRun.RunType == "restore"
+	cancelling := isRestore && r.currentRun.Cancelling
 	r.statusMu.RUnlock()
 	if !isRestore || r.restoreStopFn == nil {
 		r.cancelMu.Unlock()
 		return false, nil
 	}
-	if r.restoreStopRequested {
+	// A stop already requested, or a plain Cancel already under way, ends the
+	// run; recording an operator stop now would claim a stop that didn't decide
+	// the run's outcome.
+	if r.restoreStopRequested || cancelling {
 		r.cancelMu.Unlock()
 		return true, nil
 	}

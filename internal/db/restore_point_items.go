@@ -85,10 +85,17 @@ func (rp RestorePoint) RecordedItemTypes() map[string]string {
 	if err := json.Unmarshal([]byte(rp.Metadata), &meta); err != nil {
 		return types
 	}
+	conflicting := map[string]bool{}
 	for _, entry := range meta.ManifestItems {
-		if entry.Name != "" && entry.Type != "" {
-			types[entry.Name] = entry.Type
+		if entry.Name == "" || entry.Type == "" || conflicting[entry.Name] {
+			continue
 		}
+		if prev, seen := types[entry.Name]; seen && prev != entry.Type {
+			delete(types, entry.Name)
+			conflicting[entry.Name] = true
+			continue
+		}
+		types[entry.Name] = entry.Type
 	}
 	for name, checkpoint := range meta.VMCheckpoints {
 		if checkpoint != "" {

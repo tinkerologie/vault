@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/tinkerologie/vault/internal/db"
@@ -163,5 +164,46 @@ func TestJobList_HistoryListsItemsNoLongerInTheJob(t *testing.T) {
 	}
 	if counts["plex"] != 2 {
 		t.Fatalf("plex restore points = %d, want 2", counts["plex"])
+	}
+}
+
+// When the job's item and the Restore Point disagree on an item's type, the
+// restore is refused: browsing shows the point's recorded type, so restoring
+// with the job's type would write data in the wrong layout.
+func TestRestore_ItemTypeChangedSinceBackupIsRefused(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+	jobID := seedJob(t, d)
+	seedJobItem(t, d, jobID, "folder", "app")
+	rpID := seedHistoricalPoint(t, d, jobID, `{"item_sizes":{"app":10},"item_types":{"app":"container"}}`)
+	idStr := strconv.FormatInt(jobID, 10)
+
+	restore := postJSON(t, h.Restore, "/api/v1/jobs/"+idStr+"/restore",
+		map[string]any{"restore_point_id": rpID, "items": []string{"app"}}, "id", idStr)
+	if restore.Code != http.StatusBadRequest || !strings.Contains(restore.Body.String(), "type changed") {
+		t.Fatalf("restore: status = %d; body: %s", restore.Code, restore.Body.String())
+	}
+	preflight := postJSON(t, h.RestorePointPreflight,
+		"/api/v1/jobs/"+idStr+"/restore-points/"+strconv.FormatInt(rpID, 10)+"/preflight",
+		map[string]any{"items": []string{"app"}}, "id", idStr, "rpid", strconv.FormatInt(rpID, 10))
+	if preflight.Code != http.StatusBadRequest || !strings.Contains(preflight.Body.String(), "type changed") {
+		t.Fatalf("preflight: status = %d; body: %s", preflight.Code, preflight.Body.String())
+	}
+}
+
+func TestResolveNamedRestoreTargets(t *testing.T) {
+	t.Parallel()
+	point := db.RestorePoint{Metadata: `{"item_types":{"app":"container","plex":"container"}}`}
+	jobItems := []db.JobItem{{ItemName: "plex", ItemType: "container"}, {ItemName: "share", ItemType: "folder"}}
+
+	got, err := resolveNamedRestoreTargets(jobItems, point, []string{"plex", "share"})
+	if err != nil || len(got) != 2 || got[0].Type != "container" || got[1].Type != "folder" {
+		t.Fatalf("matching types: %+v %v", got, err)
+	}
+	if got, err := resolveNamedRestoreTargets(nil, point, []string{"app"}); err != nil || got[0].Type != "container" {
+		t.Fatalf("historical item: %+v %v", got, err)
+	}
+	if _, err := resolveNamedRestoreTargets([]db.JobItem{{ItemName: "app", ItemType: "folder"}}, point, []string{"app"}); err == nil || !strings.Contains(err.Error(), "type changed") {
+		t.Fatalf("type changed: %v", err)
 	}
 }
