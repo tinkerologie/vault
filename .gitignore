@@ -103,3 +103,6 @@ docs/reference/*.md
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Impeccable: per-developer settings
+.impeccable/config.local.json

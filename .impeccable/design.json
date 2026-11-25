@@ -1,0 +1,684 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-25T00:15:10+00:00",
+  "title": "Design System: Vault",
+  "extensions": {
+    "colorMeta": {
+      "guardian-amber": {
+        "role": "primary",
+        "displayName": "Guardian Amber",
+        "tonalRamp": [
+          "#78350f",
+          "#92400e",
+          "#b45309",
+          "#d97706",
+          "#f59e0b",
+          "#fbbf24",
+          "#fde68a",
+          "#fffbeb"
+        ]
+      },
+      "guardian-amber-deep": {
+        "role": "primary",
+        "displayName": "Deep Amber",
+        "tonalRamp": [
+          "#78350f",
+          "#92400e",
+          "#b45309",
+          "#d97706",
+          "#f59e0b",
+          "#fbbf24",
+          "#fde68a",
+          "#fffbeb"
+        ]
+      },
+      "amber-ink": {
+        "role": "primary",
+        "displayName": "Amber Ink",
+        "tonalRamp": [
+          "#78350f",
+          "#92400e",
+          "#b45309",
+          "#d97706",
+          "#f59e0b",
+          "#fbbf24",
+          "#fde68a",
+          "#fffbeb"
+        ]
+      },
+      "on-amber": {
+        "role": "neutral",
+        "displayName": "On Amber",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Page White",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "surface-raised": {
+        "role": "neutral",
+        "displayName": "Raised Paper",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "surface-sunken": {
+        "role": "neutral",
+        "displayName": "Sunken Grey",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "surface-hover": {
+        "role": "neutral",
+        "displayName": "Hover Grey",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "surface-strong": {
+        "role": "neutral",
+        "displayName": "Strong Grey",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "border-hover": {
+        "role": "neutral",
+        "displayName": "Hairline Hover",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "ink-dim": {
+        "role": "neutral",
+        "displayName": "Dim Ink",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "status-success": {
+        "role": "status",
+        "displayName": "Protected Green",
+        "tonalRamp": [
+          "#052e16",
+          "#14532d",
+          "#166534",
+          "#15803d",
+          "#16a34a",
+          "#4ade80",
+          "#bbf7d0",
+          "#f0fdf4"
+        ]
+      },
+      "status-danger": {
+        "role": "status",
+        "displayName": "Alarm Red",
+        "tonalRamp": [
+          "#450a0a",
+          "#7f1d1d",
+          "#991b1b",
+          "#b91c1c",
+          "#dc2626",
+          "#fca5a5",
+          "#fecaca",
+          "#fef2f2"
+        ]
+      },
+      "status-warning": {
+        "role": "status",
+        "displayName": "Caution Amber",
+        "tonalRamp": [
+          "#78350f",
+          "#92400e",
+          "#b45309",
+          "#d97706",
+          "#f59e0b",
+          "#fbbf24",
+          "#fde68a",
+          "#fffbeb"
+        ]
+      },
+      "status-info": {
+        "role": "status",
+        "displayName": "Signal Blue",
+        "tonalRamp": [
+          "#172554",
+          "#1e3a8a",
+          "#1d4ed8",
+          "#2563eb",
+          "#3b82f6",
+          "#93c5fd",
+          "#bfdbfe",
+          "#eff6ff"
+        ]
+      },
+      "night-surface": {
+        "role": "neutral",
+        "displayName": "Night Slate",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "night-surface-raised": {
+        "role": "neutral",
+        "displayName": "Night Panel",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "night-surface-sunken": {
+        "role": "neutral",
+        "displayName": "Night Well",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "night-ink": {
+        "role": "neutral",
+        "displayName": "Night Ink",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "night-ink-muted": {
+        "role": "neutral",
+        "displayName": "Night Muted",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "night-ink-dim": {
+        "role": "neutral",
+        "displayName": "Night Dim",
+        "tonalRamp": [
+          "#111827",
+          "#1f2937",
+          "#374151",
+          "#4b5563",
+          "#6b7280",
+          "#9ca3af",
+          "#d1d5db",
+          "#f3f4f6"
+        ]
+      },
+      "night-success": {
+        "role": "status",
+        "displayName": "Protected Green (night)",
+        "tonalRamp": [
+          "#052e16",
+          "#14532d",
+          "#166534",
+          "#15803d",
+          "#16a34a",
+          "#4ade80",
+          "#bbf7d0",
+          "#f0fdf4"
+        ]
+      },
+      "night-danger": {
+        "role": "status",
+        "displayName": "Alarm Red (night)",
+        "tonalRamp": [
+          "#450a0a",
+          "#7f1d1d",
+          "#991b1b",
+          "#b91c1c",
+          "#dc2626",
+          "#fca5a5",
+          "#fecaca",
+          "#fef2f2"
+        ]
+      },
+      "night-warning": {
+        "role": "status",
+        "displayName": "Caution Amber (night)",
+        "tonalRamp": [
+          "#78350f",
+          "#92400e",
+          "#b45309",
+          "#d97706",
+          "#f59e0b",
+          "#fbbf24",
+          "#fde68a",
+          "#fffbeb"
+        ]
+      },
+      "night-info": {
+        "role": "status",
+        "displayName": "Signal Blue (night)",
+        "tonalRamp": [
+          "#172554",
+          "#1e3a8a",
+          "#1d4ed8",
+          "#2563eb",
+          "#3b82f6",
+          "#93c5fd",
+          "#bfdbfe",
+          "#eff6ff"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page h1, one per route."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Dialog titles and major in-page sections."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default UI text, descriptions and form values."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Buttons, badges, helper text, meta rows; also uppercase eyebrows."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Paths, cron expressions, log lines and IDs."
+      }
+    },
+    "themes": [
+      {
+        "name": "Default",
+        "modes": [
+          "light",
+          "dark"
+        ],
+        "note": "Gray neutrals, Guardian Amber accent; tokens in @theme and .dark."
+      },
+      {
+        "name": "1-Bit",
+        "modes": [
+          "light",
+          "dark"
+        ],
+        "note": "Pure black/white; every status and hue maps to text colour; monospace nav and tables."
+      },
+      {
+        "name": "Retro",
+        "modes": [
+          "light",
+          "dark"
+        ],
+        "note": "Parchment light / night-sky dark, pixel fonts; redesign tracked in #618."
+      },
+      {
+        "name": "Dracula",
+        "modes": [
+          "dark"
+        ],
+        "note": "Dracula palette, purple accent."
+      },
+      {
+        "name": "Catppuccin",
+        "modes": [
+          "light (Latte)",
+          "dark (Mocha)"
+        ],
+        "note": "Mauve accent."
+      },
+      {
+        "name": "Unraid host",
+        "modes": [
+          "light",
+          "dark"
+        ],
+        "note": "Embedded view starts in the host mode until the user picks a theme."
+      }
+    ],
+    "shadows": [
+      {
+        "name": "overlay",
+        "value": "0 25px 50px -12px rgb(0 0 0 / 0.25)",
+        "purpose": "Dialog and sheet panels only."
+      },
+      {
+        "name": "float",
+        "value": "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+        "purpose": "Toasts and the sticky restore action bar."
+      },
+      {
+        "name": "hint",
+        "value": "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)",
+        "purpose": "Tooltips."
+      },
+      {
+        "name": "backdrop",
+        "value": "rgb(0 0 0 / 0.6) + backdrop-filter: blur(8px)",
+        "purpose": "Dialog backdrop."
+      }
+    ],
+    "motion": [
+      {
+        "name": "route-enter",
+        "value": "fade-up 8px, 250ms ease-out",
+        "purpose": "Page content on route change."
+      },
+      {
+        "name": "panel-enter",
+        "value": "rise 16px from scale .98, 250ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Dialog panels."
+      },
+      {
+        "name": "backdrop-enter",
+        "value": "fade 200ms ease-out",
+        "purpose": "Dialog backdrop."
+      },
+      {
+        "name": "stagger",
+        "value": "50ms per child, max 10",
+        "purpose": "List and grid entrances."
+      },
+      {
+        "name": "exit",
+        "value": "200ms ease-in",
+        "purpose": "Toast and overlay dismissal; exits faster than entrances."
+      },
+      {
+        "name": "state",
+        "value": "150ms colour transition",
+        "purpose": "Hover and active states."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "all durations 0.01ms",
+        "purpose": "prefers-reduced-motion: reduce, app-wide."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px",
+        "note": "sidebar ↔ bottom tab bar"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one action to take in a screen region.",
+      "html": "<button class=\"ds-btn-primary\"><svg aria-hidden=\"true\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" d=\"M12 5v14M5 12h14\"/></svg>New Job</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;font-size:14px;font-weight:500;border:0;border-radius:8px;cursor:pointer;transition:background-color .15s,color .15s;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:var(--color-vault,#f59e0b);color:var(--color-on-vault,#111827);}.ds-btn-primary:hover{background:var(--color-vault-dark,#d97706);}.ds-btn-primary:focus-visible{outline:2px solid var(--color-vault,#f59e0b);outline-offset:2px;}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Supporting actions beside a primary.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;font-size:14px;font-weight:500;border:0;border-radius:8px;cursor:pointer;transition:background-color .15s,color .15s;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:var(--color-surface-3,#f3f4f6);color:var(--color-text-muted,#4b5563);}.ds-btn-secondary:hover{background:var(--color-surface-4,#e5e7eb);color:var(--color-text,#111827);}.ds-btn-secondary:focus-visible{outline:2px solid var(--color-vault,#f59e0b);outline-offset:2px;}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Confirm button of a destructive dialog only.",
+      "html": "<button class=\"ds-btn-danger\">Delete Job</button>",
+      "css": ".ds-btn-danger{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;font-size:14px;font-weight:500;border:0;border-radius:8px;cursor:pointer;transition:background-color .15s,color .15s;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:var(--color-danger,#991b1b);color:var(--color-on-status,#fff);}.ds-btn-danger:hover{opacity:.9;}.ds-btn-danger:focus-visible{outline:2px solid var(--color-vault,#f59e0b);outline-offset:2px;}"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Sunken field with a visible label above.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">Destination name</span><input class=\"ds-input\" placeholder=\"My Backup Target\"><span class=\"ds-field-help\">Shown in jobs and history.</span></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:4px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:320px}.ds-field-label{font-size:14px;font-weight:500;color:var(--color-text,#111827)}.ds-field-help{font-size:12px;color:var(--color-text-dim,#5f6673)}.ds-input{padding:8px 12px;font-size:14px;background:var(--color-surface-3,#f3f4f6);border:1px solid var(--color-border,#e5e7eb);border-radius:8px;color:var(--color-text,#111827)}.ds-input::placeholder{color:var(--color-text-muted,#4b5563)}.ds-input:focus-visible{outline:2px solid var(--color-vault,#f59e0b);outline-offset:2px}"
+    },
+    {
+      "name": "Status Badges",
+      "kind": "chip",
+      "refersTo": "badge-success",
+      "description": "Status as tinted pill text, always with a word.",
+      "html": "<span class=\"ds-badge ds-ok\">Completed</span> <span class=\"ds-badge ds-bad\">Failed</span> <span class=\"ds-badge ds-warn\">Partial</span> <span class=\"ds-badge ds-neutral\">Skipped</span>",
+      "css": ".ds-badge{display:inline-flex;align-items:center;padding:2px 10px;border-radius:9999px;font-size:12px;font-weight:500;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}.ds-ok{color:var(--color-success,#166534);background:color-mix(in srgb,var(--color-success,#166534) 15%,transparent)}.ds-bad{color:var(--color-danger,#991b1b);background:color-mix(in srgb,var(--color-danger,#991b1b) 15%,transparent)}.ds-warn{color:var(--color-warning,#92400e);background:color-mix(in srgb,var(--color-warning,#92400e) 15%,transparent)}.ds-neutral{color:var(--color-text-muted,#4b5563);background:var(--color-surface-3,#f3f4f6)}"
+    },
+    {
+      "name": "Summary Tile",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat bordered dashboard tile; border warms on hover.",
+      "html": "<a class=\"ds-tile\" href=\"#\"><span class=\"ds-tile-eyebrow\">Protected</span><span class=\"ds-tile-value\">20<small>/25</small></span><span class=\"ds-tile-meta\">5 unprotected →</span></a>",
+      "css": ".ds-tile{display:flex;flex-direction:column;gap:4px;width:220px;padding:14px;background:var(--color-surface-2,#f9fafb);border:1px solid var(--color-border,#e5e7eb);border-radius:12px;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;transition:border-color .15s}.ds-tile:hover{border-color:color-mix(in srgb,var(--color-vault,#f59e0b) 40%,transparent)}.ds-tile:focus-visible{outline:2px solid var(--color-vault,#f59e0b);outline-offset:2px}.ds-tile-eyebrow{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--color-text-muted,#4b5563)}.ds-tile-value{font-size:24px;font-weight:700;color:var(--color-text,#111827);font-variant-numeric:tabular-nums}.ds-tile-value small{font-size:14px;font-weight:400;color:var(--color-text-dim,#5f6673)}.ds-tile-meta{font-size:12px;color:var(--color-vault-text,#92400e)}"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Grouped sidebar; active item tinted amber with aria-current.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Sidebar\"><span class=\"ds-nav-group\">Protect</span><a class=\"ds-nav-item\" aria-current=\"page\" href=\"#\">Jobs</a><a class=\"ds-nav-item\" href=\"#\">Storage</a><span class=\"ds-nav-group\">Recover</span><a class=\"ds-nav-item\" href=\"#\">Restore</a></nav>",
+      "css": ".ds-nav{display:flex;flex-direction:column;gap:2px;width:232px;padding:12px;background:var(--color-surface-2,#f9fafb);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}.ds-nav-group{margin:12px 12px 4px;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--color-text-muted,#4b5563)}.ds-nav-item{padding:10px 12px;border-radius:8px;font-size:14px;font-weight:500;text-decoration:none;color:var(--color-text-muted,#4b5563);transition:background-color .15s,color .15s}.ds-nav-item:hover{background:var(--color-surface-3,#f3f4f6);color:var(--color-text,#111827)}.ds-nav-item[aria-current=page]{background:color-mix(in srgb,var(--color-vault,#f59e0b) 10%,transparent);color:var(--color-vault-text,#92400e)}.ds-nav-item:focus-visible{outline:2px solid var(--color-vault,#f59e0b);outline-offset:2px}"
+    },
+    {
+      "name": "Segmented Filter",
+      "kind": "chip",
+      "refersTo": "button-primary",
+      "description": "Sunken track; selected segment is an amber fill with aria-pressed.",
+      "html": "<div class=\"ds-seg\" role=\"group\" aria-label=\"Status\"><button aria-pressed=\"true\">All</button><button aria-pressed=\"false\">Enabled</button><button aria-pressed=\"false\">Disabled</button></div>",
+      "css": ".ds-seg{display:inline-flex;gap:2px;padding:3px;background:var(--color-surface-3,#f3f4f6);border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}.ds-seg button{padding:4px 10px;font-size:12px;font-weight:500;border:0;border-radius:6px;background:transparent;color:var(--color-text-muted,#4b5563);cursor:pointer}.ds-seg button:hover{color:var(--color-text,#111827)}.ds-seg button[aria-pressed=true]{background:var(--color-vault,#f59e0b);color:var(--color-on-vault,#111827)}.ds-seg button:focus-visible{outline:2px solid var(--color-vault,#f59e0b);outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Guardian",
+    "overview": "**Creative North Star: \"The Quiet Guardian\"**\n\nVault watches over a server most owners would rather not think about. The interface is calm and steady, and stays out of the way while everything is protected. When something needs attention, it says so plainly and with colour. Most of the time the screen is neutral grey and white (or deep slate at night), set in the system font, with one warm amber for what you can act on and what you have chosen: buttons, Run actions, selected filters, days and modes, switches when on, and the active page. Amber never decorates. Headings, borders, icons and backgrounds stay neutral.\n\nThe guardian is warm rather than severe. Corners are gently rounded, status uses soft tints rather than loud fills, and empty states are friendly. It is also exact: sizes, times, counts and paths are shown precisely, in tabular figures, with no rounding off of what will change. It lives inside Unraid, so it uses the host's conventions (system type, ordinary controls, the host's light or dark mode) and doesn't try to stand out from the pages around it.\n\nDensity sits in the middle. A set-and-forget owner gets the answer to \"am I protected?\" first. A power user finds every option one disclosure away, never crammed onto the first screen.",
+    "keyCharacteristics": [
+      "Neutral tonal surfaces with 1px borders; one amber accent for action and selection.",
+      "The system font stack at a compact 14px body; hierarchy from weight and size, never from colour alone.",
+      "Flat at rest; only overlays (dialogs, toasts, the command palette) float, with a shadow and a blurred backdrop.",
+      "Gently rounded: 8px controls, 12px containers, full pills for badges and switches.",
+      "Every visual decision is a semantic token, so five theme styles (Default, 1-Bit, Retro, Dracula, Catppuccin) can re-skin the whole UI by overriding tokens alone."
+    ],
+    "rules": [
+      {
+        "name": "The Amber Means Act or Chosen Rule",
+        "body": "Amber fills are for things the user can act on (primary buttons, Save and Apply, Run Now) and for what they have chosen (selected filters, segments, day pills and type cards, switches when on, the active page). This is a deliberate decision (#709, declined 2026-11-25): screens may carry several amber controls. Amber is never decoration: headings, borders at rest, icons, backgrounds and status meaning use neutral or status tokens.",
+        "section": "colors"
+      },
+      {
+        "name": "The Status Speaks Twice Rule",
+        "body": "A status colour never appears alone. Pair it with a word (\"Failed\", \"Protected\") or an icon, so the meaning survives 1-Bit, colour blindness and screen readers.",
+        "section": "colors"
+      },
+      {
+        "name": "The Unknown Is Not Green Rule",
+        "body": "Green means verified protected. Loading, unknown or unavailable states use neutral ink and say what's unknown. Never default to a success colour or a zero.",
+        "section": "colors"
+      },
+      {
+        "name": "The Token-Only Rule",
+        "body": "Components use only semantic tokens (`surface-*`, `text*`, `border*`, `vault*`, status, `hue-*`). Raw palette classes (`amber-500`, `gray-700`) and hex values in components break the five theme styles.",
+        "section": "colors"
+      },
+      {
+        "name": "The 12px Floor Rule",
+        "body": "No readable text below 12px (0.75rem), and sizes are set in rem so the browser's font-size setting still works. The existing `text-[11px]`, `text-[10px]` and SVG labels below 12px are debt to remove (#698, #690), not a pattern to copy.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Truth Rule",
+        "body": "Counts, sizes, durations, percentages and times use `tabular-nums` and locale formatting, so live-updating values don't jitter and columns line up.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-By-Default Rule",
+        "body": "Surfaces are flat at rest. A shadow means \"this is floating above the page and can be dismissed\". Never put one on a card to make it look more important.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** answer \"am I protected?\" first on any status surface, using the Status Banner pattern.",
+      "**Do** use Guardian Amber for actions and selected states, as Vault does today (The Amber Means Act or Chosen Rule).",
+      "**Do** pair every status colour with a word or icon (The Status Speaks Twice Rule).",
+      "**Do** use semantic tokens only, and check new UI in all five theme styles in light and dark (the Playwright contrast suite covers each).",
+      "**Do** show exact values (paths, sizes, counts, times) in tabular figures, and wrap long paths and names rather than overflowing.",
+      "**Do** keep surfaces flat with 1px hairlines, 8px control radius and 12px container radius.",
+      "**Do** inherit Unraid's light or dark mode when embedded, until the user picks a Vault theme.",
+      "**Do** meet WCAG 2.2 AA: 4.5:1 text, 3:1 for focus rings and control boundaries, 24px minimum targets (44px on touch), and visible labels."
+    ],
+    "donts": [
+      "**Don't** use amber as decoration: not for headings, resting borders, icons, backgrounds or status meaning.",
+      "**Don't** show green, \"All clear\" or a zero when data failed to load or is unknown.",
+      "**Don't** put shadows on cards or add gradients or glassmorphism to surfaces. Backdrop blur is for the dialog backdrop only.",
+      "**Don't** set text below 12px or in fixed pixel sizes.",
+      "**Don't** use raw Tailwind palette classes or hex values in components.",
+      "**Don't** use emoji as icons; use the 24px outline icon set with `aria-hidden` when decorative.",
+      "**Don't** put white text on Guardian Amber.",
+      "**Don't** add webfonts to the Default style; the system stack is the brand's typeface."
+    ]
+  }
+}
