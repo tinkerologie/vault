@@ -77,6 +77,33 @@ describe('createFileTreeModel', () => {
     expect(m.isDir[find(m, 'logs')]).toBe(1)
   })
 
+  it('ignores blank entries and treats a path used as a folder as one', () => {
+    const m = createFileTreeModel([null, { path: '' }, { path: '///' }, { path: 'a', size: 3 }, { path: 'a/b.txt', size: 1 }])
+    const a = find(m, 'a')
+    expect(m.isDir[a]).toBe(1)
+    expect(m.hasChildren(a)).toBe(true)
+    expect(m.totalLeaves).toBe(1)
+  })
+
+  it('reports expansion, opening folders that hold a filter match', () => {
+    const m = createFileTreeModel(FILES)
+    const config = find(m, 'config')
+    expect(m.isExpanded(config)).toBe(false)
+    expect(m.isExpanded(config, 'wal')).toBe(true)
+    m.setExpanded(find(m, 'readme.txt'), true) // a file never expands
+    expect(m.isExpanded(find(m, 'readme.txt'))).toBe(false)
+    expect(m.hasChildren(find(m, 'logs'))).toBe(false)
+  })
+
+  it('ignores out-of-range toggles and treats an empty filter as all', () => {
+    const m = createFileTreeModel(FILES)
+    m.toggle(-1)
+    m.toggle(99)
+    expect(m.selectedCount()).toBe(5)
+    m.setMatching('  ', false)
+    expect(m.selectedCount()).toBe(0)
+  })
+
   it('handles an empty listing', () => {
     const m = createFileTreeModel([])
     expect(m.totalLeaves).toBe(0)
