@@ -62,7 +62,15 @@ const CASES: Case[] = [
   { name: 'Import Backups', hash: '#/storage', opener: (p) => p.getByRole('button', { name: 'Import backups' }).first(), dialog: /Import Backups/ },
   { name: 'Storage browser', hash: '#/storage', opener: (p) => p.getByRole('button', { name: /browse destination files/i }).first(), dialog: /Browse Local Array Backup/ },
   { name: 'Purge logs', hash: '#/logs', opener: (p) => p.getByRole('button', { name: /purge/i }).first(), dialog: 'Purge All Logs' },
-  { name: 'Purge history', hash: '#/history', opener: (p) => p.getByRole('button', { name: /purge/i }).first(), dialog: 'Purge All History' },
+  // Purge lives in History's More actions menu (#699), which stays open behind
+  // the dialog so focus returns to the menu item.
+  {
+    name: 'Purge history',
+    hash: '#/history',
+    prepare: async (p) => { await p.getByRole('button', { name: 'More actions' }).click(); },
+    opener: (p) => p.getByRole('menuitem', { name: /purge/i }),
+    dialog: 'Purge All History',
+  },
   {
     name: 'Cancel queued operation',
     hash: '#/history',

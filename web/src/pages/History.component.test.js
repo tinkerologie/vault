@@ -174,8 +174,9 @@ describe('hierarchy (#699)', () => {
 
     await fireEvent.click(more)
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Purge history…' }))
-    expect(screen.queryByRole('menu')).toBeNull()
     expect(await screen.findByRole('dialog', { name: 'Purge All History' })).toBeTruthy()
+    // The menu stays behind the modal, so cancelling returns focus to Purge.
+    expect(screen.getByRole('menu', { hidden: true })).toBeTruthy()
   })
 })
 

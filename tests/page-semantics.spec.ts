@@ -530,7 +530,7 @@ test.describe('screen-reader state and names (#529)', () => {
       severity: 'warning', state: 'open', detected_at: '2026-10-01T02:20:00Z',
     }] } }));
     await page.goto('/#/history');
-    const run = page.getByRole('button', { name: 'Docker & Appdata completed', exact: true });
+    const run = page.getByRole('button', { name: 'Docker & Appdata Completed', exact: true });
     await expect(run).toHaveAttribute('aria-expanded', 'false');
     await expect(page.locator('main [role="button"]')).toHaveCount(0);
     expect(await run.locator(WIDGETS).count()).toBe(0);

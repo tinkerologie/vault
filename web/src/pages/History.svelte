@@ -217,13 +217,17 @@
   }
 
   function moreFocusOut(event) {
-    if (moreOpen && !event.currentTarget.contains(event.relatedTarget)) moreOpen = false
+    if (!moreOpen || confirmPurge) return
+    const next = event.relatedTarget
+    if (event.currentTarget.contains(next)) return
+    // Focus moving into the confirmation dialog isn't leaving the menu.
+    if (next instanceof Element && next.closest('dialog[open]')) return
+    moreOpen = false
   }
 
   function startPurge() {
-    // The trigger holds focus while the dialog opens, so closing the dialog
-    // returns focus there rather than to a menu item that no longer exists.
-    closeMore()
+    // The menu stays open behind the modal confirmation, so Cancel or Escape
+    // returns focus to Purge itself, as every other dialog returns to its opener.
     confirmPurge = true
   }
 
@@ -456,6 +460,7 @@
       // closing after the reload sends focus to the page instead of a dead control.
       await loadData()
       confirmPurge = false
+      moreOpen = false
     } catch (e) {
       // A failed purge leaves the history as it was, so say so without
       // replacing the list with a load error.
