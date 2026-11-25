@@ -167,6 +167,27 @@ export const mockJob2Points = [
 /**
  * Tar-index listing returned for an item's restore-point contents.
  */
+// The pre-flight's per-item write targets (#716) for the mock containers and
+// VM. A custom destination remaps each data path under it, as the server does.
+export const mockWriteTargets = (name: string, destination: string) => {
+  const under = (path: string) => destination ? `${destination.replace(/\/+$/, '')}/${path.split('/').pop()}` : path;
+  const containers: Record<string, string> = { plex: '/mnt/user/appdata/plex', nextcloud: '/mnt/user/appdata/nextcloud' };
+  if (containers[name]) {
+    return { name, type: 'container', status: 'resolved', write_targets: [
+      { kind: 'volume', path: under(containers[name]), mount: '/config', clearable: true },
+      { kind: 'template', path: `/boot/config/plugins/dockerMan/templates-user/my-${name}.xml` },
+    ] };
+  }
+  if (name === 'home-assistant') {
+    return { name, type: 'vm', status: 'resolved', write_targets: [
+      { kind: 'disk', path: under('/mnt/user/domains/home-assistant/vdisk1.img'), mount: 'vda' },
+      { kind: 'nvram', path: under('/etc/libvirt/qemu/nvram/home-assistant_VARS-pure-efi.fd') },
+      { kind: 'domain', name },
+    ] };
+  }
+  return null;
+};
+
 export const mockRestorePointContents = (item: string) => ({
   version: 1,
   archive: `${item}.tar.zst`,
@@ -458,13 +479,18 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       });
     }
 
-    // Restore Preflight
+    // Restore Preflight. Scoped requests also list each selected container's
+    // and VM's exact host paths (#716), remapped under a custom destination.
     if (path.includes('/preflight')) {
+      let selection: { items?: string[]; destination?: string } = {};
+      try { selection = request.postDataJSON() || {}; } catch { /* empty body */ }
+      const items = (selection.items || []).map(name => mockWriteTargets(name, selection.destination || '')).filter(Boolean);
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
           ok: true,
+          ...(items.length ? { items } : {}),
           checks: [
             { id: 'reachable', label: 'Storage reachable', status: 'ok', detail: 'Main Storage' },
             { id: 'present', label: 'Backup present on storage', status: 'ok', detail: '1 file' },
