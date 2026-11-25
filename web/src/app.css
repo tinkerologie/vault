@@ -74,6 +74,12 @@
   --color-hue-orange: var(--color-orange-800);
   /* Input placeholder text; preflight's 50% currentcolor falls below AA. */
   --color-placeholder: var(--color-text-muted);
+  /* Keyboard focus ring (#684). Amber is 2.1:1 on the light surfaces, so light
+     mode uses amber-700 (5:1); every other style maps it back to its accent. */
+  --color-focus-ring: #b45309;
+  /* Edge of an off switch's track and thumb (#684): 3:1 against the card and
+     the pale track. web/src/lib/palette-contrast.test.js checks every style. */
+  --color-switch-edge: var(--color-text-dim);
   /* Light mode (default) */
   --color-surface: #ffffff;
   --color-surface-2: #f9fafb;
@@ -94,6 +100,7 @@
 /* Dark mode overrides */
 .dark {
   --color-vault-text: var(--color-vault);
+  --color-focus-ring: var(--color-vault);
   --color-on-status: #111827;
   --color-hue-blue: var(--color-blue-300);
   --color-hue-purple: var(--color-purple-300);
@@ -125,6 +132,7 @@
 /* 1-Bit Light: white bg, black text */
 .theme-1bit {
   --color-vault-text: var(--color-vault);
+  --color-focus-ring: var(--color-vault);
   --color-on-vault: #ffffff;
   --color-on-status: #ffffff;
   --color-hue-blue: var(--color-text);
@@ -182,6 +190,7 @@
 
 /* Retro Light: warm parchment + cartridge red */
 .theme-retro {
+  --color-focus-ring: var(--color-vault);
   --color-vault: #b0002c;
   --color-vault-dark: #8c0022;
   --color-vault-text: #8c0022;
@@ -256,6 +265,8 @@
   --color-hue-rose: #ff92d0;        /* derived: lighter pink */
   --color-hue-orange: #ffb86c;      /* orange */
   --color-placeholder: var(--color-text-muted);
+  --color-focus-ring: var(--color-vault);
+  --color-switch-edge: var(--color-text-dim);
   --color-surface: #282a36;         /* background */
   --color-surface-2: #21222c;       /* derived: darker background for raised panels */
   --color-surface-3: #343746;       /* derived: between background and current line */
@@ -309,6 +320,8 @@
   --color-hue-rose: #952d36;        /* derived: darker maroon */
   --color-hue-orange: #8e3806;      /* derived: darker peach */
   --color-placeholder: var(--color-text-muted);
+  --color-focus-ring: var(--color-vault);
+  --color-switch-edge: var(--color-text-dim);
   --color-surface: #eff1f5;         /* base */
   --color-surface-2: #e6e9ef;       /* mantle */
   --color-surface-3: #dce0e8;       /* crust */
@@ -361,6 +374,8 @@
   --color-hue-rose: #eba0ac;        /* maroon */
   --color-hue-orange: #fab387;      /* peach */
   --color-placeholder: var(--color-text-muted);
+  --color-focus-ring: var(--color-vault);
+  --color-switch-edge: var(--color-text-dim);
   --color-surface: #1e1e2e;         /* base */
   --color-surface-2: #181825;       /* mantle */
   --color-surface-3: #313244;       /* surface0 */
@@ -402,11 +417,34 @@
 .theme-catppuccin dialog.vault-dialog::backdrop { background: rgb(76 79 105 / 0.5); }
 .theme-catppuccin.dark dialog.vault-dialog::backdrop { background: rgb(17 17 27 / 0.7); }
 
-/* Latte's switch thumb and off track are both pale, so the thumb gets a ring
-   that reaches 3:1 against each. */
-.theme-catppuccin:not(.dark) [class~="bg-white"],
-.theme-catppuccin:not(.dark) [class~="after:bg-white"]::after {
-  box-shadow: 0 0 0 1px var(--color-text-dim);
+/* Switch boundaries (#684). A pale thumb on a pale off track, or a white thumb
+   on light amber, falls under 3:1 in several styles, so each part gets an edge
+   that reaches it: the off track and its thumb in switch-edge, the on track in
+   focus-ring (the accent itself outside Default light) and the on thumb in
+   on-vault. Covers both switch markups: a role="switch" button, and a visually
+   hidden .peer checkbox followed by its track. */
+[role="switch"][aria-checked="false"].bg-surface-4,
+[role="switch"][aria-checked="false"] > .bg-surface-4,
+input.peer:not(:checked) + .bg-surface-4 {
+  box-shadow: inset 0 0 0 1px var(--color-switch-edge);
+}
+[role="switch"][aria-checked="true"].bg-vault,
+[role="switch"][aria-checked="true"] > .bg-vault,
+input.peer:checked + .bg-surface-4 {
+  box-shadow: inset 0 0 0 1px var(--color-focus-ring);
+}
+[role="switch"][aria-checked="false"] [class~="bg-white"],
+input.peer:not(:checked) + [class~="after:bg-white"]::after {
+  box-shadow: 0 0 0 1px var(--color-switch-edge);
+}
+[role="switch"][aria-checked="true"] [class~="bg-white"],
+input.peer:checked + [class~="after:bg-white"]::after {
+  box-shadow: 0 0 0 1px var(--color-on-vault);
+}
+/* The checkbox is visually hidden, so its focus shows on the track. */
+input.peer:focus-visible + div {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
 }
 
 html {
@@ -499,7 +537,7 @@ html.vault-embedded .sticky.bottom-4 { bottom: calc(var(--vault-visible-bottom) 
 
   /* Square focus ring */
   & *:focus-visible {
-    outline: 2px solid var(--color-vault);
+    outline: 2px solid var(--color-focus-ring);
     outline-offset: 0;
     border-radius: 0;
   }
@@ -707,7 +745,7 @@ html.vault-embedded .sticky.bottom-4 { bottom: calc(var(--vault-visible-bottom) 
 
 /* Focus ring */
 *:focus-visible {
-  outline: 2px solid var(--color-vault);
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
 }
 
