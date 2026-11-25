@@ -5,11 +5,12 @@
   // currentColor, so it sits correctly next to button labels.
   // It is decorative (#698): the label beside it ("Saving…") says what is
   // happening, and a name here would be merged into it ("Loading Saving…").
-  let { size = 'sm' } = $props()
-  const sizes = { sm: 'w-4 h-4', md: 'w-5 h-5' }
+  // `class` adds a colour (the ring is currentColor) or spacing.
+  let { size = 'sm', class: className = '' } = $props()
+  const sizes = { xs: 'w-3.5 h-3.5', sm: 'w-4 h-4', md: 'w-5 h-5' }
 </script>
 
 <span
-  class="inline-block {sizes[size] || sizes.sm} border-2 border-current/30 border-t-current rounded-full animate-spin align-[-0.125em]"
+  class="inline-block shrink-0 {sizes[size] || sizes.sm} {className} border-2 border-current/30 border-t-current rounded-full animate-spin align-[-0.125em]"
   aria-hidden="true"
 ></span>

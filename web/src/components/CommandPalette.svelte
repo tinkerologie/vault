@@ -6,6 +6,7 @@
   import Modal from './Modal.svelte'
   import Toast from './Toast.svelte'
   import { shortcutModifier } from '../lib/shortcuts.js'
+  import { ICONS, ITEM_TYPE_ICONS, PAGE_ICONS } from '../lib/icons.js'
 
   /** @typedef {{ path: string, label: string, icon: string, external?: boolean, href?: string }} Page */
   /** @type {{ show?: boolean, onclose?: () => void, pages?: Page[] }} */
@@ -36,10 +37,6 @@
     toastKey++
   }
 
-  const ICON_CONTAINER = 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'
-  const ICON_VM = 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z'
-  const ICON_FOLDER = 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z'
-  const ICON_CLOCK = 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z'
 
   // Page commands come from the shell's own navigation (#691), so the palette
   // offers exactly the pages the sidebar shows, with the same icons, and
@@ -114,9 +111,9 @@
     const cmds = []
     // Backup items — jump straight to the item's restore view (issue #210 / E9).
     const items = [
-      ...containers.map(c => ({ name: c.name, type: 'container', icon: ICON_CONTAINER })),
-      ...vms.map(v => ({ name: v.name, type: 'vm', icon: ICON_VM })),
-      ...folders.map(f => ({ name: f.name, type: 'folder', icon: ICON_FOLDER })),
+      ...containers.map(c => ({ name: c.name, type: 'container', icon: ITEM_TYPE_ICONS.container })),
+      ...vms.map(v => ({ name: v.name, type: 'vm', icon: ITEM_TYPE_ICONS.vm })),
+      ...folders.map(f => ({ name: f.name, type: 'folder', icon: ITEM_TYPE_ICONS.folder })),
     ]
     for (const it of items) {
       if (!it.name) continue
@@ -135,7 +132,7 @@
         id: `rp-${p.jobId}`,
         label: `Restore: ${p.jobName}`,
         meta: p.date ? formatDate(p.date) : 'latest',
-        icon: ICON_CLOCK,
+        icon: PAGE_ICONS['/restore'],
         category: 'Restore Points',
         action: () => navigate(`/restore?job=${p.jobId}`),
       })
@@ -144,7 +141,7 @@
       cmds.push({
         id: `job-${job.id}`,
         label: `Run Job: ${job.name}`,
-        icon: 'M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z',
+        icon: ICONS.play,
         category: 'Jobs',
         action: async () => {
           try {
@@ -161,7 +158,7 @@
       cmds.push({
         id: `storage-${s.id}`,
         label: `Test Storage: ${s.name}`,
-        icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
+        icon: ICONS.bolt,
         category: 'Storage',
         action: async () => {
           try {
@@ -271,7 +268,7 @@
       <!-- Search input -->
       <div class="flex items-center gap-3 px-4 py-3 border-b border-border">
         <svg aria-hidden="true" class="w-5 h-5 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.search}/>
         </svg>
         <input
           data-autofocus
@@ -286,7 +283,7 @@
           spellcheck="false"
           bind:value={query}
           placeholder="Type a command or search..."
-          class="flex-1 bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none"
+          class="flex-1 bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none max-lg:min-h-11"
         />
         <kbd class="text-xs text-text-muted bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">Esc</kbd>
       </div>

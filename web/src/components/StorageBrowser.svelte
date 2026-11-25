@@ -4,6 +4,7 @@
   import { formatBytes, relTime } from '../lib/utils.js'
   import InlineSpinner from './InlineSpinner.svelte'
   import Modal from './Modal.svelte'
+  import { ICONS } from '../lib/icons.js'
 
   let { destId, destName = '', onclose = () => {}, ontoast = () => {} } = $props()
 
@@ -74,7 +75,7 @@
     <div class="flex items-center justify-between px-5 py-3 border-b border-border">
       <h3 id={titleId} class="text-base font-semibold text-text">Browse {destName || 'destination'}</h3>
       <button type="button" onclick={() => onclose()} class="text-text-muted hover:text-text p-1" aria-label="Close browser">
-        <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/></svg>
       </button>
     </div>
 
@@ -99,12 +100,12 @@
           {#if entry.is_dir}
             <button type="button" onclick={() => browse(entry.path)}
               class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-text hover:bg-surface-3 transition-colors text-left">
-              <svg aria-hidden="true" class="w-4 h-4 text-vault shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 text-vault shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ICONS.folder}/></svg>
               <span class="truncate">{baseName(entry.path)}</span>
             </button>
           {:else}
             <div class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-text-muted hover:bg-surface-3/40 transition-colors">
-              <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ICONS.file}/></svg>
               <span class="truncate flex-1">{baseName(entry.path)}</span>
               <span class="text-xs text-text-dim tabular-nums shrink-0">{formatBytes(entry.size)}</span>
               {#if entry.mod_time}<span class="text-xs text-text-dim shrink-0">{relTime(entry.mod_time)}</span>{/if}
@@ -119,7 +120,7 @@
                 {#if downloadingPaths.has(entry.path)}
                   <InlineSpinner size="sm" />
                 {:else}
-                  <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                  <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.download} /></svg>
                 {/if}
               </button>
             </div>
@@ -129,7 +130,7 @@
     </div>
 
     <div class="px-5 py-2.5 border-t border-border">
-      <p class="text-[11px] text-text-dim">View and download files Vault sees on this destination.</p>
+      <p class="text-2xs text-text-dim">View and download files Vault sees on this destination.</p>
     </div>
   </div>
 </Modal>

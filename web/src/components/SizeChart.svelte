@@ -1,6 +1,8 @@
 <script>
   import { formatBytes, formatInt } from '../lib/utils.js'
   import { CHART_HEIGHT_CLASS, barSlot, niceTicks, xLabelIndexes } from '../lib/chartScale.js'
+  import { ICONS } from '../lib/icons.js'
+  import { sizeTrendClass } from '../lib/outcome-colour.js'
 
   let { buckets = [], bucket = 'day' } = $props()
 
@@ -116,13 +118,13 @@
         {#if trend}
           <div class="flex items-center gap-1.5 text-xs pl-3 border-l border-border tabular-nums">
             {#if trend.direction === 'up'}
-              <svg aria-hidden="true" class="w-3.5 h-3.5 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
-              <span class="text-warning">+{formatInt(trend.pct)}%</span>
+              <svg aria-hidden="true" class="w-3.5 h-3.5 {sizeTrendClass(trend.direction)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronUp}/></svg>
+              <span class={sizeTrendClass(trend.direction)}>+{formatInt(trend.pct)}%</span>
             {:else if trend.direction === 'down'}
-              <svg aria-hidden="true" class="w-3.5 h-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-              <span class="text-success">-{formatInt(trend.pct)}%</span>
+              <svg aria-hidden="true" class="w-3.5 h-3.5 {sizeTrendClass(trend.direction)}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronDown}/></svg>
+              <span class={sizeTrendClass(trend.direction)}>-{formatInt(trend.pct)}%</span>
             {:else}
-              <svg aria-hidden="true" class="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14"/></svg>
+              <svg aria-hidden="true" class="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.minus}/></svg>
               <span class="text-text-muted">Stable</span>
             {/if}
           </div>

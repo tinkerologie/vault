@@ -1,5 +1,6 @@
 <script>
   import { isEmbedded } from '../lib/runtime-config.js'
+  import InlineSpinner from './InlineSpinner.svelte'
 
   let { onrefresh = async () => {}, children } = $props()
 
@@ -49,7 +50,7 @@
   {#if pullDistance > 0 || refreshing}
     <div class="flex justify-center items-center py-3 transition-all" style="height: {refreshing ? 40 : pullDistance}px">
       {#if refreshing}
-        <div class="w-5 h-5 border-2 border-vault/30 border-t-vault rounded-full animate-spin"></div>
+        <InlineSpinner size="md" class="text-vault" />
       {:else}
         <div class="w-5 h-5 text-vault-text transition-transform"
           style="transform: rotate({(pullDistance / threshold) * 360}deg); opacity: {pullDistance / threshold}">

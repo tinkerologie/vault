@@ -78,7 +78,8 @@ const SEMANTIC = [
   'vault', 'vault-dark', 'vault-text', 'vault-light', 'on-vault', 'on-status', 'placeholder', 'focus-ring', 'switch-edge',
   'surface', 'surface-2', 'surface-3', 'surface-4', 'surface-5', 'border', 'border-hover',
   'text', 'text-muted', 'text-dim', 'success', 'danger', 'warning', 'info',
-  ...['blue', 'purple', 'emerald', 'cyan', 'amber', 'rose', 'orange'].map((h) => `hue-${h}`),
+  ...['blue', 'purple', 'emerald', 'cyan', 'amber', 'rose', 'orange'].flatMap((h) => [`hue-${h}`, `hue-${h}-bg`]),
+  'switch-thumb',
 ]
 
 const FAMILIES = 'slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose'
@@ -92,7 +93,7 @@ function sources(dir) {
   })
 }
 
-/** Every Tailwind palette colour a component paints with, e.g. bg-amber-500/15 -> amber-500. */
+/** Every raw Tailwind palette colour a component paints with, e.g. bg-amber-500/15 -> amber-500. */
 function paletteShadesInUse() {
   const shades = new Set()
   for (const file of sources(SRC)) {
@@ -153,20 +154,18 @@ function pairs(c) {
   // Selected tiles (bg-vault/10, /20) with their label.
   for (const a of [0.1, 0.2]) for (const s of ['surface', 'surface-2']) add(`vault-text on vault/${a * 100} tile over ${s}`, c('vault-text'), over(c('vault'), a, c(s)), 4.5)
 
-  // Categorical chips: hue text on its palette tint, and other fixed palette tints.
+  // Categorical chips: hue text on its tint base (#698).
   const chips = [
-    ...['blue', 'purple', 'emerald', 'cyan', 'amber', 'orange'].map((h) => [`hue-${h}`, `${h}-500`, 0.15]),
-    ['hue-purple', 'purple-500', 0.1], ['hue-rose', 'rose-500', 0.1], ['hue-amber', 'amber-500', 0.25],
-    ['text', 'amber-500', 0.1], ['text-muted', 'amber-500', 0.1],
-    ['success', 'green-500', 0.15], ['success', 'green-500', 0.1], ['warning', 'yellow-500', 0.15],
-    ['text-muted', 'gray-500', 0.15], ['danger', 'red-500', 0.1],
+    ...['blue', 'purple', 'emerald', 'cyan', 'amber', 'orange'].map((h) => [`hue-${h}`, `hue-${h}-bg`, 0.15]),
+    ['hue-purple', 'hue-purple-bg', 0.1], ['hue-rose', 'hue-rose-bg', 0.1], ['hue-amber', 'hue-amber-bg', 0.25],
+    ['hue-amber', 'hue-amber-bg', 0.1], ['text', 'hue-amber-bg', 0.1], ['text-muted', 'hue-amber-bg', 0.1],
   ]
   for (const [t, tint, a] of chips) {
     for (const s of ['surface', 'surface-2']) add(`${t} on ${tint}/${a * 100} over ${s}`, c(t), over(c(tint), a, c(s)), 4.5)
   }
-  // TypePicker: the type's badge on its selected card's /5 tint.
+  // TypePicker (#710): the type's badge on the shared selected card (vault/10).
   for (const h of ['blue', 'purple', 'amber', 'emerald', 'cyan']) {
-    add(`hue-${h} badge on a selected ${h} card`, c(`hue-${h}`), over(c(`${h}-500`), 0.15, over(c(`${h}-400`), 0.05, c('surface-2'))), 4.5)
+    add(`hue-${h} badge on a selected card`, c(`hue-${h}`), over(c(`hue-${h}-bg`), 0.15, over(c('vault'), 0.1, c('surface-2'))), 4.5)
   }
 
   // Labels on solid fills.
@@ -180,13 +179,11 @@ function pairs(c) {
   list.push(...controlPairs(c))
   add('unprotected status dot', c('surface-5'), c('surface-3'), 3)
   add('protected status dot', c('success'), over(c('success'), 0.05, c('surface-2')), 3)
-  add('pending status dot', c('amber-500'), over(c('amber-500'), 0.05, c('surface-2')), 3)
-  for (const fill of ['vault', 'amber-500', 'rose-500']) add(`capacity fill ${fill} on its track`, c(fill), c('surface-3'), 3)
-  add('dedup fill on its track', c('vault'), over(c('emerald-500'), 0.2, c('surface-2')), 3)
-  for (const h of ['blue', 'purple', 'amber', 'emerald', 'cyan']) {
-    add(`selected ${h} card border`, c(`${h}-400`), over(c(`${h}-400`), 0.05, c('surface-2')), 3)
-  }
-  add('active-run dot', c('orange-400'), c('surface-2'), 3)
+  add('pending status dot', c('hue-amber-bg'), over(c('hue-amber-bg'), 0.05, c('surface-2')), 3)
+  for (const fill of ['vault', 'hue-amber-bg', 'hue-rose-bg']) add(`capacity fill ${fill} on its track`, c(fill), c('surface-3'), 3)
+  add('dedup fill on its track', c('vault'), over(c('hue-emerald-bg'), 0.2, c('surface-2')), 3)
+  add('selected card border', c('vault'), over(c('vault'), 0.1, c('surface-2')), 3)
+  add('active-run dot', c('hue-orange-bg'), c('surface-2'), 3)
   return list
 }
 
@@ -196,11 +193,6 @@ describe.each(Object.entries(THEMES))('%s palette', (name, chain) => {
 
   it('defines every semantic token itself, so no Default value leaks through', () => {
     expect(SEMANTIC.filter((t) => !own.has(`--color-${t}`))).toEqual([])
-  })
-
-  it('defines every Tailwind palette shade a component uses', () => {
-    const missing = paletteShadesInUse().filter((shade) => !own.has(`--color-${shade}`))
-    expect(missing, 'add these to the style block in app.css').toEqual([])
   })
 
   it('resolves every token to a hard-coded hex value', () => {
@@ -237,21 +229,28 @@ describe('focus ring and switch rules', () => {
     expect(rule('*:focus-visible {')).toMatch(/outline: 2px solid var\(--color-focus-ring\)/)
   })
 
-  it('outlines off tracks and rings thumbs in every switch markup', () => {
-    expect(rule('[role="switch"][aria-checked="false"] > .bg-surface-4')).toMatch(/inset 0 0 0 1px var\(--color-switch-edge\)/)
-    expect(rule('input.peer:not(:checked) + .bg-surface-4')).toMatch(/inset 0 0 0 1px var\(--color-switch-edge\)/)
-    expect(rule('[role="switch"][aria-checked="true"] > .bg-vault')).toMatch(/inset 0 0 0 1px var\(--color-focus-ring\)/)
-    expect(rule('[role="switch"][aria-checked="false"] [class~="bg-white"]')).toMatch(/0 0 0 1px var\(--color-switch-edge\)/)
-    expect(rule('[role="switch"][aria-checked="true"] [class~="bg-white"]')).toMatch(/0 0 0 1px var\(--color-on-vault\)/)
+  it('outlines off tracks and rings thumbs in the one Switch', () => {
+    const sw = readFileSync(join(SRC, 'components/Switch.svelte'), 'utf8')
+    expect(sw).toContain("'bg-surface-4 shadow-[inset_0_0_0_1px_var(--color-switch-edge)]'")
+    expect(sw).toContain("'bg-vault shadow-[inset_0_0_0_1px_var(--color-focus-ring)]'")
+    expect(sw).toContain('shadow-[0_0_0_1px_var(--color-on-vault)]')
+    expect(sw).toContain("'shadow-[0_0_0_1px_var(--color-switch-edge)]'")
+    expect(sw).toContain('bg-switch-thumb')
     // The visually hidden checkbox's focus shows on its track.
-    expect(rule('input.peer:focus-visible + div')).toMatch(/outline: 2px solid var\(--color-focus-ring\)/)
+    expect(rule('input.peer:focus-visible + .switch-track')).toMatch(/outline: 2px solid var\(--color-focus-ring\)/)
+  })
+})
+
+describe('Token-Only rule (#698)', () => {
+  it('leaves no raw Tailwind palette class in any component', () => {
+    expect(paletteShadesInUse(), 'use a semantic token (surface-*, text*, status, hue-*, hue-*-bg) instead').toEqual([])
   })
 })
 
 describe.each([['dracula'], ['catppuccin mocha']])('%s switch thumbs', (name) => {
   it('stand out from the off track at 3:1', () => {
     const c = palette(THEMES[name])
-    expect(ratio(c('white'), c('surface-4'))).toBeGreaterThanOrEqual(3)
+    expect(ratio(c('switch-thumb'), c('surface-4'))).toBeGreaterThanOrEqual(3)
   })
 })
 

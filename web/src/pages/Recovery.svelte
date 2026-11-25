@@ -3,10 +3,11 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { formatBytes, formatDate, formatInt, relTime } from '../lib/utils.js'
-  import { classifyProtection, protectedPercent } from '../lib/protection.js'
+  import { classifyProtection, protectedPercent, protectionDot } from '../lib/protection.js'
   import { SERVER_KEY_HREF } from '../lib/backupStatus.js'
   import Spinner from '../components/Spinner.svelte'
   import LoadError from '../components/LoadError.svelte'
+  import { ICONS } from '../lib/icons.js'
 
   let loading = $state(true)
   let retrying = $state(false)
@@ -110,9 +111,9 @@
   }
 
   const STEP_STATUS = {
-    ready: { label: 'Ready', cls: 'text-success', path: 'M5 13l4 4L19 7' },
-    warning: { label: 'Needs attention', cls: 'text-warning', path: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
-    not_available: { label: 'Not available', cls: 'text-danger', path: 'M6 18L18 6M6 6l12 12' },
+    ready: { label: 'Ready', cls: 'text-success', path: ICONS.check },
+    warning: { label: 'Needs attention', cls: 'text-warning', path: ICONS.warning },
+    not_available: { label: 'Not available', cls: 'text-danger', path: ICONS.close },
   }
   const stepStatus = (status) => STEP_STATUS[status] ?? STEP_STATUS.not_available
   const TYPE_TAGS = { container: 'Container', vm: 'VM', folder: 'Folder' }
@@ -251,7 +252,7 @@
               <span class="text-xs text-text-dim shrink-0 tabular-nums">{formatBytes(step.total_size)}</span>
             {/if}
             {#if expandable}
-              <svg aria-hidden="true" class="w-4 h-4 text-text-muted transition-transform shrink-0 {expanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 text-text-muted transition-transform shrink-0 {expanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronDown}/></svg>
             {/if}
           </div>
           {#if expandable && expanded}
@@ -309,7 +310,7 @@
     {/snippet}
 
     <!-- Pending and unprotected are different problems, listed apart (#694). -->
-    {@render itemList('Pending first backup', 'In a backup job, but not in any restore point yet. They are backed up on the next run.', pendingItems, 'bg-info', 'bg-surface-3')}
-    {@render itemList('Unprotected Items', 'These items are not included in any backup job.', unprotectedItems, 'bg-danger', 'bg-danger/5')}
+    {@render itemList('Pending first backup', 'In a backup job, but not in any restore point yet. They are backed up on the next run.', pendingItems, protectionDot('pending'), 'bg-surface-3')}
+    {@render itemList('Unprotected Items', 'These items are not included in any backup job.', unprotectedItems, protectionDot('unprotected'), 'bg-surface-3')}
   {/if}
 </div>

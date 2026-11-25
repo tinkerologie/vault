@@ -11,6 +11,7 @@
   import LoadError from '../components/LoadError.svelte'
   import { getAnomalyEnabled, getFeatureFlagsLoaded } from '../lib/settings.svelte.js'
   import { readHashFilters, writeHashFilters } from '../lib/urlFilters.js'
+  import { ICONS } from '../lib/icons.js'
 
   // --- Filter state ---
   // Filters live in the hash query (#693) so a reload, a shared link or Back
@@ -380,7 +381,7 @@
 
   {#if isReplicaMode()}
     <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
-      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/></svg>
       <span>Read-only replica — write actions are disabled on this instance.</span>
     </div>
   {/if}
@@ -397,7 +398,7 @@
     <div class="flex flex-wrap gap-3 items-end">
       <div>
         <label for="filter-state" class="block text-xs font-medium text-text-muted mb-1">State</label>
-        <select id="filter-state" bind:value={filterState} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+        <select id="filter-state" bind:value={filterState} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text max-lg:min-h-11">
           <option value="">All</option>
           <option value="open">Open</option>
           <option value="acknowledged">Acknowledged</option>
@@ -407,7 +408,7 @@
       </div>
       <div>
         <label for="filter-severity" class="block text-xs font-medium text-text-muted mb-1">Severity</label>
-        <select id="filter-severity" bind:value={filterSeverity} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+        <select id="filter-severity" bind:value={filterSeverity} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text max-lg:min-h-11">
           <option value="">All</option>
           <option value="critical">Critical</option>
           <option value="warning">Warning</option>
@@ -416,7 +417,7 @@
       </div>
       <div>
         <label for="filter-scope" class="block text-xs font-medium text-text-muted mb-1">Scope</label>
-        <select id="filter-scope" bind:value={filterScope} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+        <select id="filter-scope" bind:value={filterScope} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text max-lg:min-h-11">
           <option value="">All</option>
           <option value="job">Job</option>
           <option value="destination">Destination</option>
@@ -424,7 +425,7 @@
       </div>
       <div>
         <label for="filter-since" class="block text-xs font-medium text-text-muted mb-1">Since</label>
-        <select id="filter-since" bind:value={filterSince} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
+        <select id="filter-since" bind:value={filterSince} onchange={onFilterChange} class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text max-lg:min-h-11">
           <option value="-7d">Last 7 days</option>
           <option value="-30d">Last 30 days</option>
           <option value="-90d">Last 90 days</option>
@@ -443,7 +444,7 @@
         type="text"
         bind:value={bulkReason}
         placeholder="Reason (optional)"
-        class="px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted flex-1 min-w-[160px]"
+        class="px-3 py-1.5 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted flex-1 min-w-[160px] max-lg:min-h-11"
       />
       <button
         onclick={() => bulkAck('dismiss')}
@@ -477,7 +478,7 @@
     <div class="bg-surface-2 border border-border rounded-xl px-5 py-12 text-center">
       <div class="w-12 h-12 rounded-full bg-success/10 flex items-center justify-center mx-auto mb-4">
         <svg aria-hidden="true" class="w-6 h-6 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.check}/>
         </svg>
       </div>
       <p class="text-base font-semibold text-text">No anomalies found</p>
@@ -561,7 +562,7 @@
               <!-- State -->
               <span class="w-20 shrink-0 hidden md:block">
                 <span class="sr-only">State: </span>
-                <span class="text-[11px] px-2 py-0.5 rounded-full font-medium {stateBadgeClass(anomaly.state)}">
+                <span class="text-2xs px-2 py-0.5 rounded-full font-medium {stateBadgeClass(anomaly.state)}">
                   {stateLabel[anomaly.state] ?? anomaly.state}
                 </span>
               </span>
@@ -610,7 +611,7 @@
                   {#if details}
                     <details class="mt-1">
                       <summary class="cursor-pointer text-text-dim hover:text-text">Raw details</summary>
-                      <pre class="mt-1 whitespace-pre-wrap break-all text-[10px] font-mono">{JSON.stringify(details, null, 2)}</pre>
+                      <pre class="mt-1 whitespace-pre-wrap break-all text-2xs font-mono">{JSON.stringify(details, null, 2)}</pre>
                     </details>
                   {/if}
                 </div>

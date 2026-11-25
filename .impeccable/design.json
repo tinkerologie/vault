@@ -641,12 +641,12 @@
       },
       {
         "name": "The Token-Only Rule",
-        "body": "Components use only semantic tokens (`surface-*`, `text*`, `border*`, `vault*`, status, `hue-*`). Raw palette classes (`amber-500`, `gray-700`) and hex values in components break the five theme styles.",
+        "body": "Components use only semantic tokens (`surface-*`, `text*`, `border*`, `vault*`, status, `hue-*`, `hue-*-bg`, `switch-*`). Raw palette classes (`amber-500`, `gray-700`, `bg-white`) and hex values in components break the five theme styles; `web/src/lib/palette-contrast.test.js` fails on any that come back.",
         "section": "colors"
       },
       {
         "name": "The 12px Floor Rule",
-        "body": "No readable text below 12px (0.75rem), and sizes are set in rem so the browser's font-size setting still works. The existing `text-[11px]`, `text-[10px]` and SVG labels below 12px are debt to remove (#698, #690), not a pattern to copy.",
+        "body": "No readable text below 12px (0.75rem), and sizes are set in rem so the browser's font-size setting still works. `text-2xs` is the floor; there are no pixel font sizes (`text-[11px]`) and no SVG text below it. `web/src/lib/design-guards.test.js` rejects pixel font sizes, and `tests/design-system.spec.ts` measures rendered text.",
         "section": "typography"
       },
       {

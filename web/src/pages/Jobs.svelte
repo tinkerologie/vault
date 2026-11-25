@@ -29,6 +29,9 @@
   import TypedConfirmField from '../components/TypedConfirmField.svelte'
   import { snapshot, isDirty, createDialogHistory, guardUnload } from '../lib/unsaved.js'
   import { configuredSections, readFormMode, writeFormMode, nameFieldError } from '../lib/jobForm.js'
+  import InlineSpinner from '../components/InlineSpinner.svelte'
+  import { ICONS, PAGE_ICONS } from '../lib/icons.js'
+  import Switch from '../components/Switch.svelte'
 
   let loading = $state(true)
   let jobs = $state([])
@@ -1362,7 +1365,7 @@
     </div>
     {#if !loading && jobs.length > 0}
       <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
-        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.plus}/></svg>
         New Job
       </button>
     {/if}
@@ -1372,7 +1375,7 @@
     <!-- Find / filter / sort toolbar -->
     <div class="flex flex-wrap items-center gap-2 mb-3">
       <div class="relative flex-1 min-w-[12rem]">
-        <svg aria-hidden="true" class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-text-dim pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <svg aria-hidden="true" class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-text-dim pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.search}/></svg>
         <input type="search" bind:value={search} placeholder="Search jobs"
           aria-label="Search jobs by name or description"
           class="w-full pl-8 pr-3 py-1.5 max-lg:min-h-11 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault" />
@@ -1387,14 +1390,14 @@
         {/each}
       </div>
       <select bind:value={storageFilter} aria-label="Filter by storage destination"
-        class="px-2.5 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
+        class="px-2.5 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer max-lg:min-h-11">
         <option value={0}>All storage</option>
         {#each storageList as s (s.id)}
           <option value={s.id}>{s.name}</option>
         {/each}
       </select>
       <select bind:value={sortBy} aria-label="Sort jobs"
-        class="px-2.5 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
+        class="px-2.5 py-1.5 bg-surface-3 border border-border rounded-lg text-xs text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer max-lg:min-h-11">
         <option value="name">Name (A–Z)</option>
         <option value="next">Next run</option>
         <option value="created">Recently created</option>
@@ -1421,12 +1424,12 @@
   {:else if jobs.length === 0}
     <EmptyState title="No backup jobs" subtitle="Step 1: Set up a job" description="Create your first backup job to get started." actionLabel="Create Job" onaction={() => openCreate()}>
       {#snippet iconSlot()}
-        <svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+        <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={PAGE_ICONS['/jobs']}/></svg>
       {/snippet}
     </EmptyState>
   {:else if filteredJobs.length === 0}
     <div class="text-center py-12">
-      <div class="mb-3 opacity-30 flex justify-center"><svg class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg></div>
+      <div class="mb-3 opacity-30 flex justify-center"><svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ICONS.search}/></svg></div>
       <p class="text-sm text-text-muted">No jobs match these filters.</p>
       <button type="button" onclick={clearFilters} class="mt-2 text-sm text-vault-text hover:underline cursor-pointer">Clear filters</button>
     </div>
@@ -1439,7 +1442,7 @@
               <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <!-- Bulk checkbox -->
                 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-                <label class="hit-target shrink-0 cursor-pointer" onclick={(e) => e.stopPropagation()}>
+                <label class="inline-flex items-center justify-center min-w-6 min-h-6 max-lg:min-w-11 max-lg:min-h-11 shrink-0 cursor-pointer" onclick={(e) => e.stopPropagation()}>
                   <input
                     type="checkbox"
                     checked={selectedJobs.has(job.id)}
@@ -1450,15 +1453,13 @@
                   />
                 </label>
                 <!-- Toggle switch -->
-                <button
-                  onclick={(e) => { e.stopPropagation(); toggleEnabled(job) }}
-                  class="relative w-9 h-5 rounded-full transition-colors shrink-0 {job.enabled ? 'bg-vault' : 'bg-surface-4'}"
-                  aria-label="Enable {job.name}"
-                  role="switch"
-                  aria-checked={job.enabled}
-                >
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform {job.enabled ? 'translate-x-4' : ''}"></span>
-                </button>
+                <Switch
+                  checked={job.enabled}
+                  onchange={() => toggleEnabled(job)}
+                  stopPropagation
+                  label="Enable {job.name}"
+                  class="justify-center max-lg:min-w-11 max-lg:min-h-11"
+                />
                 <!-- Inline editable name -->
                 {#if editingNameId === job.id}
                   <!-- svelte-ignore a11y_autofocus -->
@@ -1501,16 +1502,16 @@
                   <button
                     type="button"
                     onclick={() => openRemediate(job)}
-                    class="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-hue-amber font-medium shrink-0 hover:bg-amber-500/25 transition-colors"
+                    class="flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full bg-hue-amber-bg/15 text-hue-amber font-medium shrink-0 hover:bg-hue-amber-bg/25 transition-colors"
                     title="Some items in this job no longer exist on the system"
                   >
-                    <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                    <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
                     {jobStaleCount(job.id)} missing
                   </button>
                 {/if}
                 <!-- Baseline learning indicator (hidden when anomaly detection is off) -->
                 {#if getAnomalyEnabled() && baselineSamples(job.id) < 10}
-                  <span class="text-[11px] px-2 py-0.5 rounded-full bg-surface-4 text-text-muted font-medium shrink-0">
+                  <span class="text-2xs px-2 py-0.5 rounded-full bg-surface-4 text-text-muted font-medium shrink-0">
                     Learning baseline ({baselineSamples(job.id)}/10)
                   </span>
                 {/if}
@@ -1520,22 +1521,22 @@
               {/if}
               <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-text-muted">
                 <span class="flex items-center gap-1" class:text-text-dim={!job.schedule}>
-                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.clock}/></svg>
                   {describeSchedule(job.schedule)}
                 </span>
                 {#if nextRuns[String(job.id)]}
                   <span class="flex items-center gap-1 text-vault-text font-medium">
-                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.bolt}/></svg>
                     Next: {relTimeUntil(nextRuns[String(job.id)])}
                   </span>
                 {/if}
                 <span class="flex items-center gap-1">
-                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={PAGE_ICONS['/storage']}/></svg>
                   {getStorageName(job.storage_dest_id)}
                 </span>
                 <span class="flex items-center gap-1">
-                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-                  {job.compression || 'none'} · {job.backup_type_chain || 'full'}{#if job.encryption === 'age'} · <svg aria-hidden="true" class="w-3 h-3 inline-block align-text-bottom text-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>{/if}
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.shield}/></svg>
+                  {job.compression || 'none'} · {job.backup_type_chain || 'full'}{#if job.encryption === 'age'} · <svg aria-hidden="true" class="w-3 h-3 inline-block align-text-bottom text-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/></svg>{/if}
                 </span>
               </div>
             </div>
@@ -1559,23 +1560,23 @@
                   aria-label="Run Now: {job.name}"
                 >
                   {#if runningJob === job.id}
-                    <svg aria-hidden="true" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    <InlineSpinner size="xs" />
                   {:else}
-                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.play}/></svg>
                   {/if}
                   <span class="max-sm:sr-only">Run Now</span>
                 </button>
               {/if}
               <button onclick={() => duplicateJob(job)} class="p-2 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Duplicate" aria-label="Duplicate job: {job.name}">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.copy}/></svg>
               </button>
               <button onclick={() => openEdit(job.id)} class="p-2 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit" aria-label="Edit job: {job.name}">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.edit}/></svg>
               </button>
               <!-- Set apart from the other actions so it isn't hit by mistake (#699). -->
               <span class="w-px h-5 bg-border mx-1.5" aria-hidden="true"></span>
               <button onclick={() => deleteJob(job.id, job.name)} class="p-2 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete" aria-label="Delete job: {job.name}">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.trash}/></svg>
               </button>
             </div>
           </div>
@@ -1595,7 +1596,7 @@
       disabled={bulkRunning}
       class="flex items-center gap-1.5 px-3 py-1.5 max-lg:min-h-11 text-xs font-medium text-success hover:bg-success/10 rounded-lg transition-colors disabled:opacity-40"
     >
-      <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+      <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.check}/></svg>
       Enable
     </button>
     <button
@@ -1611,7 +1612,7 @@
       disabled={bulkRunning}
       class="flex items-center gap-1.5 px-3 py-1.5 max-lg:min-h-11 text-xs font-medium text-vault-text hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40"
     >
-      <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+      <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.play}/></svg>
       Run
     </button>
     <button
@@ -1619,7 +1620,7 @@
       disabled={bulkRunning}
       class="flex items-center gap-1.5 px-3 py-1.5 max-lg:min-h-11 text-xs font-medium text-danger hover:bg-danger/10 rounded-lg transition-colors disabled:opacity-40"
     >
-      <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+      <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.trash}/></svg>
       Delete
     </button>
     <div class="w-px h-6 bg-border max-sm:hidden" aria-hidden="true"></div>
@@ -1657,7 +1658,7 @@
             >
               <div aria-hidden="true" class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n < step ? 'bg-vault text-on-vault' : s.n === step ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted'}">
                 {#if s.n < step}
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check}/></svg>
                 {:else}
                   {s.n}
                 {/if}
@@ -1731,7 +1732,7 @@
           {#if storageList.length === 0}
             <div class="mt-2 bg-vault/5 border border-vault/30 rounded-lg p-4">
               <div class="flex items-start gap-3">
-                <svg aria-hidden="true" class="w-5 h-5 text-vault shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <svg aria-hidden="true" class="w-5 h-5 text-vault shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.info}/></svg>
                 <div>
                   <p class="text-sm font-medium text-text">No storage destinations configured</p>
                   <p class="text-xs text-text-muted mt-0.5">You need at least one storage destination before creating a backup job. Your choices so far are kept.</p>
@@ -1740,7 +1741,7 @@
                     onclick={() => { addingStorage = true }}
                     class="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors"
                   >
-                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.plus}/></svg>
                     Add storage
                   </button>
                 </div>
@@ -1844,7 +1845,7 @@
           {@render summaryTip("Retention Policy", "'Keep Last N' retains only the most recent N backups. 'Keep For N Days' removes backups older than N days. Both limits apply – whichever triggers first will prune old backups.")}
           <details class="group" open>
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
               Retention Policy
               {#if configured.retention}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
             </summary>
@@ -1874,7 +1875,7 @@
           {@render summaryTip("Long-Term Retention (LTR)", "Keep N latest, plus the most recent backup per day/week/month/year. A single backup can fill multiple buckets. If any of these is > 0, the simple Retention Policy above is ignored for this job.")}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
               Long-Term Retention (LTR)
               {#if configured.ltr}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
             </summary>
@@ -1936,7 +1937,7 @@
           {@render summaryTip("Scheduled verification", "Periodically checks that your latest backup is still intact on its destination. Quick: confirms the files exist at the right size (no download). Deep: re-downloads and checksums everything to catch silent corruption. Recommended: Quick, or Deep for critical data.")}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
               Scheduled verification
               {#if configured.verifySchedule}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
             </summary>
@@ -1968,7 +1969,7 @@
             {@render summaryTip("Scheduled full backup", "Runs a full backup on its own cadence, in addition to this job's schedule. Incremental and differential runs chain from the most recent full, so a periodic full keeps restore chains short and bounds how much a single damaged archive can cost you. Without this you need a duplicate job that differs only in backup type.")}
             <details class="group">
               <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-                <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
                 Scheduled full backup
                 {#if configured.fullSchedule}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
               </summary>
@@ -1997,7 +1998,7 @@
           {@render summaryTip("Scripts", "Pre-backup scripts run before any containers are stopped. Post-backup scripts run after all items are backed up. Environment variables like VAULT_JOB_NAME and VAULT_STATUS are available.")}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
               Scripts
               {#if configured.scripts}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
             </summary>
@@ -2013,7 +2014,7 @@
           {@render summaryTip("Notifications", "Always and On Failure set the job’s Unraid backup alerts. Never mutes the job on both Unraid and Discord. Discord backup alerts have their own Notify On control in Settings.")}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
               Notifications
               {#if configured.notifications}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
             </summary>
@@ -2037,23 +2038,20 @@
           {@render summaryTip("Backup Verification", "Right after each backup, re-reads the archive and checksums it to confirm nothing was corrupted in transit. Adds time but catches problems while you can still re-run. Recommended: on for important jobs.")}
           <details class="group" open>
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
               Backup Verification
               {#if configured.verification}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Off</span>{/if}
             </summary>
             <div class="mt-3 pl-6">
               <div class="flex items-start gap-3">
-                <label class="relative inline-flex items-center cursor-pointer mt-0.5">
-                  <input
-                    type="checkbox"
-                    bind:checked={form.verify_backup}
-                    class="sr-only peer"
-                    id="job-verify-backup"
-                    aria-labelledby="verify-backup-label"
-                    aria-describedby={verifyCost ? 'verify-backup-help verify-backup-warning' : 'verify-backup-help'}
-                  />
-                  <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
-                </label>
+                <Switch
+                  native
+                  bind:checked={form.verify_backup}
+                  id="job-verify-backup"
+                  aria-labelledby="verify-backup-label"
+                  aria-describedby={verifyCost ? 'verify-backup-help verify-backup-warning' : 'verify-backup-help'}
+                  class="mt-0.5"
+                />
                 <div>
                   <label for="job-verify-backup" id="verify-backup-label" class="block text-sm text-text">Verify backups after writing</label>
                   <p id="verify-backup-help" class="text-xs text-text-dim mt-0.5">Reads each file back from storage and validates SHA-256 checksums. Adds a small amount of time but ensures backup integrity.</p>
@@ -2071,7 +2069,7 @@
           {@render summaryTip("Override retry policy", "Per-job retry settings that override the global defaults in Settings. Leave blank to use the global values. Failed runs are retried in the background after each delay.")}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
               Override retry policy
               {#if configured.retry}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
             </summary>
@@ -2102,7 +2100,7 @@
           {@render summaryTip("Anomaly sensitivity", "Override the global anomaly detection sensitivity for this job. '(default)' uses the value configured in Settings → General.")}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
               Anomaly sensitivity
               {#if configured.anomaly}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
             </summary>
@@ -2130,7 +2128,7 @@
           {@render summaryTip("Upload concurrency", "How many files upload to the destination at once. Higher is faster on fast links; set to 1 for fragile or rate-limited remotes.")}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
               Upload concurrency
               {#if configured.concurrency}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
             </summary>
@@ -2159,16 +2157,22 @@
             {@render summaryTip("Deferred Remote Upload", "Best for slow upload links. Stops, backs up, and restarts each container locally first, then uploads everything to the remote destination after all containers are running again. Requires sufficient local staging space.")}
             <details class="group">
               <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-                <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
                 Deferred Remote Upload
                 {#if configured.deferred}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
               </summary>
               <div class="mt-3 pl-6">
                 <div class="flex items-start gap-3">
-                  <label class="relative inline-flex items-center cursor-pointer mt-0.5" class:opacity-50={_isLocalDest} class:cursor-not-allowed={_isLocalDest} title={_isLocalDest ? 'Only available when destination is remote' : ''}>
-                    <input type="checkbox" bind:checked={form.defer_remote_upload} disabled={_isLocalDest} id="job-defer-upload" aria-labelledby="defer-upload-label" aria-describedby="defer-upload-description" class="sr-only peer" />
-                    <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
-                  </label>
+                  <Switch
+                    native
+                    bind:checked={form.defer_remote_upload}
+                    disabled={_isLocalDest}
+                    id="job-defer-upload"
+                    aria-labelledby="defer-upload-label"
+                    aria-describedby="defer-upload-description"
+                    class="mt-0.5"
+                    title={_isLocalDest ? 'Only available when destination is remote' : ''}
+                  />
                   <div>
                     <label for="job-defer-upload" id="defer-upload-label" class="block text-sm text-text">Defer remote upload until all backups complete</label>
                     <p id="defer-upload-description" class="text-xs text-text-dim mt-0.5">Backs up every container to local staging first and brings them all online before any data is sent to the remote destination. {_isLocalDest ? 'Only available when destination is remote (SFTP, SMB, NFS, S3, WebDAV).' : 'Per-file uploads are retried up to 3 times with exponential backoff (5s → 30s → 2m).'}</p>
@@ -2183,16 +2187,18 @@
           {@render summaryTip("Adaptive Backup", "Checks whether this job's containers, VMs, or folders are actively in use before each scheduled run. Busy workloads (e.g. Plex mid-stream, a folder still being written to) postpone the backup, re-checking every few minutes until idle — or until the max-postpone window elapses, when the backup runs anyway. Manual Run Now always runs immediately. Idle thresholds are configured in Settings.")}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
               Adaptive Backup
               {#if configured.adaptive}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
             </summary>
             <div class="mt-3 pl-6">
               <div class="flex items-start gap-3">
-                <label class="relative inline-flex items-center cursor-pointer mt-0.5">
-                  <input type="checkbox" bind:checked={form.adaptive_enabled} aria-label="Only back up when workloads are idle" class="sr-only peer" />
-                  <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
-                </label>
+                <Switch
+                  native
+                  bind:checked={form.adaptive_enabled}
+                  label="Only back up when workloads are idle"
+                  class="mt-0.5"
+                />
                 <div>
                   <p class="text-sm text-text">Only back up when workloads are idle</p>
                   <p class="text-xs text-text-dim mt-0.5">Scheduled runs are postponed while containers or VMs are busy (CPU/network) or folders were recently written to, and retried automatically once things quiet down.</p>
@@ -2207,19 +2213,21 @@
             {@render summaryTip("Auto-Include New Containers", "Automatically adds newly created Docker containers to this job on each backup run, and automatically prunes deleted containers.")}
             <details class="group">
               <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-                <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
                 Auto-Include New Containers
                 {#if configured.autoInclude}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
               </summary>
               <div class="mt-3 pl-6">
                 <div class="flex items-start gap-3">
-                  <label class="relative inline-flex items-center cursor-pointer mt-0.5">
-                    <input type="checkbox" bind:checked={form.auto_include_containers} aria-label="Automatically back up new containers" class="sr-only peer" />
-                    <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
-                  </label>
+                  <Switch
+                    native
+                    bind:checked={form.auto_include_containers}
+                    label="Automatically back up new containers"
+                    class="mt-0.5"
+                  />
                   <div>
                     <p class="text-sm text-text">Automatically back up newly discovered containers</p>
-                    <p class="text-xs text-text-dim mt-0.5">New Docker containers on this server are automatically enrolled into this job on each backup run. Auto-added containers default to backing up appdata mounts and named volumes; non-appdata bind mounts (e.g. large media shares) are excluded by default until reviewed under Container Mounts &amp; Exclusions. Containers carrying the <code class="text-vault-text font-mono text-[11px]">vault.exclude</code> label are skipped.</p>
+                    <p class="text-xs text-text-dim mt-0.5">New Docker containers on this server are automatically enrolled into this job on each backup run. Auto-added containers default to backing up appdata mounts and named volumes; non-appdata bind mounts (e.g. large media shares) are excluded by default until reviewed under Container Mounts &amp; Exclusions. Containers carrying the <code class="text-vault-text font-mono text-2xs">vault.exclude</code> label are skipped.</p>
                   </div>
                 </div>
               </div>
@@ -2232,7 +2240,7 @@
             {@render summaryTip("VM Restore Verification", "After restoring a VM that was running at backup time, Vault auto-starts it and checks that it came up successfully.")}
             <details class="group" open>
               <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-                <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
                 VM Restore Verification
                 {#if configured.vmVerify}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
               </summary>
@@ -2322,7 +2330,7 @@
         {#if hasContainers}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
               Container Mounts &amp; Exclusions
               {#if configured.containers}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
             </summary>
@@ -2398,12 +2406,12 @@
                             <span class="flex items-center gap-2 flex-wrap">
                               <span class="text-sm font-mono text-text">{mount.destination}</span>
                               {#if isOverridable && included}
-                                <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-vault/15 text-vault-text border border-vault/30 font-medium">included (override)</span>
+                                <span class="text-2xs uppercase tracking-wide px-1.5 py-0.5 rounded bg-vault/15 text-vault-text border border-vault/30 font-medium">included (override)</span>
                               {:else if mount.auto_skip}
-                                <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-muted border border-border">auto-excluded</span>
+                                <span class="text-2xs uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-muted border border-border">auto-excluded</span>
                               {/if}
                               {#if mount.type === 'volume'}
-                                <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-muted border border-border">named volume</span>
+                                <span class="text-2xs uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-4 text-text-muted border border-border">named volume</span>
                               {/if}
                             </span>
                             <span class="block text-xs text-text-dim font-mono truncate" title={mount.source}>{mount.source}{#if mount.auto_skip && mount.skip_reason} · {mount.skip_reason}{/if}</span>
@@ -2419,7 +2427,7 @@
                     {#each meta.warnings as warning, warningIndex (`${warning}:${warningIndex}`)}
                       <div class="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
                         <svg aria-hidden="true" class="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/>
                         </svg>
                         <span>{warning}</span>
                       </div>
@@ -2441,7 +2449,7 @@
                           const merged = [...new Set([...currentExclusions, ...preset])]
                           updateExclusionPaths('container', cItem.item_name, merged)
                         }}
-                        class="text-xs px-3 py-1.5 rounded-lg border transition-colors {allPresetLoaded ? 'border-green-500/30 text-success bg-green-500/10 cursor-default' : 'border-vault/30 text-vault-text hover:bg-vault/10 cursor-pointer'}"
+                        class="text-xs px-3 py-1.5 rounded-lg border transition-colors {allPresetLoaded ? 'border-success/30 text-success bg-success/10 cursor-default' : 'border-vault/30 text-vault-text hover:bg-vault/10 cursor-pointer'}"
                       >
                         {allPresetLoaded ? 'Recommended exclusions loaded' : 'Load recommended exclusions'}
                       </button>
@@ -2470,7 +2478,7 @@
         {#if hasFolders || hasFlash}
           <details class="group">
             <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
               Folder Path Exclusions
               {#if configured.folders}<span class="ml-auto shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-surface-4 text-text-muted">Configured</span>{/if}
             </summary>
@@ -2624,10 +2632,11 @@
 
         <!-- Enabled toggle -->
         <div class="flex items-center gap-3">
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" bind:checked={form.enabled} aria-labelledby="job-enabled-label" class="sr-only peer" />
-            <div class="w-9 h-5 bg-surface-4 peer-checked:bg-vault rounded-full peer peer-focus:ring-2 peer-focus:ring-vault/50 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
-          </label>
+          <Switch
+            native
+            bind:checked={form.enabled}
+            aria-labelledby="job-enabled-label"
+          />
           <span id="job-enabled-label" class="text-sm text-text-muted">Enable scheduled execution</span>
         </div>
       </div>
@@ -2639,7 +2648,7 @@
            only after an attempt to continue, never on first render. -->
       <p id="{uid}-step-hint" role="status" class="text-xs text-warning flex items-center gap-1.5">
         {#if attempted && navBlocked && navHint}
-          <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+          <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
           {navHint}
         {/if}
       </p>
@@ -2780,6 +2789,7 @@
   message="They are removed from Vault. Backup files remain on storage and can be imported later."
   confirmLabel={selectedJobs.size === 1 ? 'Delete 1 Job' : `Delete ${selectedJobs.size} Jobs`}
   busy={bulkRunning}
+  busyLabel="Deleting…"
   onconfirm={bulkDelete}
   oncancel={() => { confirmBulkDelete = false }}
 />

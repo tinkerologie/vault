@@ -156,6 +156,8 @@ A neutral grey world with one warm amber voice and four status colours that alwa
 ### Status
 - **Protected Green** (#166534 / night #4ade80), **Alarm Red** (#991b1b / night #fca5a5), **Caution Amber** (#92400e / night #fbbf24), **Signal Blue** (#1d4ed8 / night #93c5fd). These are used as text, and as tinted badge backgrounds at 15% opacity. Use solid fills only for the danger button and toast icons.
 - **Categorical hues** (`hue-blue`, `hue-purple`, `hue-emerald`, `hue-cyan`, `hue-amber`, `hue-rose`, `hue-orange`): tell item and storage types apart (container, VM, folder, ZFS, plugin; S3, SMB…). They are 800-weight in light mode and 300-weight in dark.
+- **Tint bases** (`hue-blue-bg` … `hue-orange-bg`): the colour behind a categorical chip, icon tile or fill, used with an opacity (`bg-hue-blue-bg/15` for a chip) or solid for a capacity bar or an active-run dot. Every theme style defines them: the 500 shades in Default and Retro, black or white in 1-Bit, the palette's own colours in Dracula and Catppuccin. Status tints use the status tokens themselves (`bg-success/15`, `bg-warning/10`).
+- **One meaning per colour:** text links are Amber Ink (danger and warning actions keep their status colour); "Verified" is success and "Recommended" neutral; a protection state has the same dot on every page (`protectionDot()` in `lib/protection.js`: unprotected is neutral, never red or green); a count or trend is coloured only when its direction is clearly good or bad (`lib/outcome-colour.js`), so a cancelled run's "0/10" and a size change stay neutral.
 
 ### Named Rules
 **The Amber Means Act or Chosen Rule.** Amber fills are for things the user can act on (primary buttons, Save and Apply, Run Now) and for what they have chosen (selected filters, segments, day pills and type cards, switches when on, the active page). This is a deliberate decision (#709, declined 2026-11-25): screens may carry several amber controls. Amber is never decoration: headings, borders at rest, icons, backgrounds and status meaning use neutral or status tokens.
@@ -164,7 +166,7 @@ A neutral grey world with one warm amber voice and four status colours that alwa
 
 **The Unknown Is Not Green Rule.** Green means verified protected. Loading, unknown or unavailable states use neutral ink and say what's unknown. Never default to a success colour or a zero.
 
-**The Token-Only Rule.** Components use only semantic tokens (`surface-*`, `text*`, `border*`, `vault*`, status, `hue-*`). Raw palette classes (`amber-500`, `gray-700`) and hex values in components break the five theme styles.
+**The Token-Only Rule.** Components use only semantic tokens (`surface-*`, `text*`, `border*`, `vault*`, status, `hue-*`, `hue-*-bg`, `switch-*`). Raw palette classes (`amber-500`, `gray-700`, `bg-white`) and hex values in components break the five theme styles; `web/src/lib/palette-contrast.test.js` fails on any that come back.
 
 ## Typography
 
@@ -180,10 +182,12 @@ A neutral grey world with one warm amber voice and four status colours that alwa
 - **Card title** (500–600, 14px): card and row names, item and job names.
 - **Body** (400, 14px, 20px line): the default for UI text, descriptions and form values.
 - **Label** (500, 12px, 16px line): buttons in small sizes, badges, form helper text, meta rows.
+- **Meta** (`text-2xs`, 12px / 0.75rem, 16px line): the smallest size, for timestamps, counts, chips and chart labels.
+- **Metric** (`text-metric`, 700, 26px / 1.625rem, line height 1): the Dashboard tile figures.
 - **Eyebrow** (500–600, 12px, uppercase, wide tracking): tile and section captions such as "HEALTH SCORE" and "BACKUP JOBS". Use sparingly.
 
 ### Named Rules
-**The 12px Floor Rule.** No readable text below 12px (0.75rem), and sizes are set in rem so the browser's font-size setting still works. The existing `text-[11px]`, `text-[10px]` and SVG labels below 12px are debt to remove (#698, #690), not a pattern to copy.
+**The 12px Floor Rule.** No readable text below 12px (0.75rem), and sizes are set in rem so the browser's font-size setting still works. `text-2xs` is the floor; there are no pixel font sizes (`text-[11px]`) and no SVG text below it. `web/src/lib/design-guards.test.js` rejects pixel font sizes, and `tests/design-system.spec.ts` measures rendered text.
 
 **The Tabular Truth Rule.** Counts, sizes, durations, percentages and times use `tabular-nums` and locale formatting, so live-updating values don't jitter and columns line up.
 
@@ -241,7 +245,15 @@ Quiet and plain: a small rounded rectangle, a medium-weight 14px label, and a co
 - **Focus:** the global accent outline.
 - **Error:** a danger-coloured border and 12px danger message under the field, linked with `aria-describedby` and `aria-invalid` (being adopted, #688).
 - **Checkboxes and radios:** native, tinted with `accent-vault`.
-- **Switches:** a full-pill 36 × 20px track, amber when on; the off track needs a 3:1 boundary.
+- **Switches:** one `Switch` component (`components/Switch.svelte`): a full-pill 36 × 20px track (44 × 24px with `size="md"`), amber when on, with a `switch-thumb` thumb. It draws its own 3:1 edges: the off track and its thumb in `switch-edge`, the on track in `focus-ring` and the on thumb in `on-vault`. The default is a controlled `button role="switch"` whose caller saves in `onchange`; `native` renders a visually hidden checkbox (for `bind:checked` and `<label for>`), whose focus ring shows on the track. Below 1024px a row switch gets a 44px target.
+- **Touch size:** below 1024px every visible text field and select is at least 44px tall (`max-lg:min-h-11`).
+- **Choice cards:** type cards, storage-type cards and radio cards share one selected style (`cardClass()` in `lib/selectable.js`): a Guardian Amber border over a 10% amber tint, neutral Sunken Grey at rest. A category hue may colour the card's icon, never its selection.
+
+### Icons
+One icon module, `web/src/lib/icons.js`: `ICONS` (close, warning, check, chevrons and other shared actions), `PAGE_ICONS` (one per route, read by the sidebar, the mobile bar and More sheet, the command palette and page art), `ITEM_TYPE_ICONS` and `STORAGE_TYPE_ICONS` (a disk for Local Path, a terminal for SFTP, a server for SMB, a network share for NFS, a cloud for WebDAV and a bucket for S3). Each is the `d` of a 24px outline path. Every `<svg>` is `aria-hidden="true"` unless it has its own accessible name; the label beside it or the control's name carries the meaning (`design-guards.test.js` enforces this).
+
+### Loading
+`Spinner` is a section loader with `role="status"` and its text. `InlineSpinner` is the only inline ring: decorative, coloured by `currentColor`, placed beside a progress word ("Saving…"). No component draws its own `animate-spin` ring. A busy `ConfirmDialog` shows the spinner and its `busyLabel` and stays aria-disabled so focus holds.
 
 ### Navigation
 - **Sidebar item:** 14px medium, 8px radius, 20px outline icon plus label. Inactive items are Muted Ink, with Sunken Grey and Ink on hover. The active item gets a 10% amber tint, Amber Ink text and `aria-current="page"`, and its pill slides in over 200ms.

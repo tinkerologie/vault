@@ -90,7 +90,7 @@ test('Anomalies with detection off explains why instead of redirecting (#695)', 
   await expect(page.getByRole('heading', { name: 'Anomaly detection is off' })).toBeVisible();
   await page.waitForTimeout(300);
   await expect(page).toHaveURL(/#\/anomalies$/);
-  await expect(page.getByRole('link', { name: /Settings/ }).last()).toHaveAttribute('href', '#/settings');
+  await expect(page.getByRole('link', { name: /Settings/ }).last()).toHaveAttribute('href', '#/settings/general');
 });
 
 test('the Logs console is a labelled region, not a live log (#686)', async ({ page }) => {

@@ -2,6 +2,8 @@
   import { onMount } from 'svelte'
   import { api } from '../lib/api.js'
   import Spinner from './Spinner.svelte'
+  import { ICONS, ITEM_TYPE_ICONS } from '../lib/icons.js'
+  import { cardClass } from '../lib/selectable.js'
 
   let { selectedTypes = $bindable([]) } = $props()
 
@@ -14,61 +16,55 @@
       id: 'containers',
       label: 'Containers',
       description: 'Docker containers on this server',
-      colorBorder: 'border-blue-400',
-      colorBg: 'bg-blue-400/5',
       colorText: 'text-hue-blue',
-      colorBadge: 'bg-blue-500/15 text-hue-blue',
-      icon: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4',
+      colorBadge: 'bg-hue-blue-bg/15 text-hue-blue',
+      colorTile: 'bg-hue-blue-bg/15',
+      icon: ITEM_TYPE_ICONS.container,
     },
     {
       id: 'vms',
       label: 'Virtual Machines',
       description: 'Libvirt VMs and their disk images',
-      colorBorder: 'border-purple-400',
-      colorBg: 'bg-purple-400/5',
       colorText: 'text-hue-purple',
-      colorBadge: 'bg-purple-500/15 text-hue-purple',
-      icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
+      colorBadge: 'bg-hue-purple-bg/15 text-hue-purple',
+      colorTile: 'bg-hue-purple-bg/15',
+      icon: ITEM_TYPE_ICONS.vm,
     },
     {
       id: 'folders',
       label: 'Folders & Files',
       description: 'Custom paths on the array',
-      colorBorder: 'border-amber-400',
-      colorBg: 'bg-amber-400/5',
       colorText: 'text-hue-amber',
-      colorBadge: 'bg-amber-500/15 text-hue-amber',
-      icon: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z',
+      colorBadge: 'bg-hue-amber-bg/15 text-hue-amber',
+      colorTile: 'bg-hue-amber-bg/15',
+      icon: ITEM_TYPE_ICONS.folder,
     },
     {
       id: 'flash',
       label: 'Flash Drive',
       description: 'Unraid USB boot drive configuration',
-      colorBorder: 'border-amber-400',
-      colorBg: 'bg-amber-400/5',
       colorText: 'text-hue-amber',
-      colorBadge: 'bg-amber-500/15 text-hue-amber',
-      icon: 'M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2',
+      colorBadge: 'bg-hue-amber-bg/15 text-hue-amber',
+      colorTile: 'bg-hue-amber-bg/15',
+      icon: ITEM_TYPE_ICONS.flash,
     },
     {
       id: 'plugins',
       label: 'Plugins',
       description: 'Installed Unraid plugin configs',
-      colorBorder: 'border-emerald-400',
-      colorBg: 'bg-emerald-400/5',
       colorText: 'text-hue-emerald',
-      colorBadge: 'bg-emerald-500/15 text-hue-emerald',
-      icon: 'M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z',
+      colorBadge: 'bg-hue-emerald-bg/15 text-hue-emerald',
+      colorTile: 'bg-hue-emerald-bg/15',
+      icon: ITEM_TYPE_ICONS.plugin,
     },
     {
       id: 'zfs',
       label: 'ZFS Datasets',
       description: 'ZFS datasets and volumes',
-      colorBorder: 'border-cyan-400',
-      colorBg: 'bg-cyan-400/5',
       colorText: 'text-hue-cyan',
-      colorBadge: 'bg-cyan-500/15 text-hue-cyan',
-      icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4',
+      colorBadge: 'bg-hue-cyan-bg/15 text-hue-cyan',
+      colorTile: 'bg-hue-cyan-bg/15',
+      icon: ITEM_TYPE_ICONS.zfs,
     },
   ]
 
@@ -161,17 +157,17 @@
           onclick={() => toggle(type.id)}
           aria-pressed={sel}
           disabled={!avail && count === 0}
-          class="relative flex flex-col items-start gap-2 p-4 rounded-xl border-2 transition-all text-left
-            {sel ? `${type.colorBorder} ${type.colorBg}` : 'border-border hover:border-border-hover bg-surface-3/50'}
+          class="relative flex flex-col items-start gap-2 p-4 rounded-xl border transition-colors text-left
+            {cardClass(sel)}
             {!avail && count === 0 ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}"
         >
           <div class="flex items-center gap-2.5">
-            <div class="w-8 h-8 rounded-lg {sel ? type.colorBg : 'bg-surface-4/80'} flex items-center justify-center shrink-0">
+            <div class="w-8 h-8 rounded-lg {sel ? type.colorTile : 'bg-surface-4/80'} flex items-center justify-center shrink-0">
               <svg aria-hidden="true" class="w-4.5 h-4.5 {sel ? type.colorText : 'text-text-muted'}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={type.icon} />
               </svg>
             </div>
-            <span class="text-sm font-semibold {sel ? 'text-text' : 'text-text'}">{type.label}</span>
+            <span class="text-sm font-semibold text-text">{type.label}</span>
           </div>
           <p class="text-xs text-text-muted leading-relaxed">{type.description}</p>
           {#if count > 0}
@@ -182,7 +178,7 @@
           {#if sel}
             <div class="absolute top-2 right-2">
               <svg aria-hidden="true" class="w-5 h-5 {type.colorText}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d={ICONS.check} />
               </svg>
             </div>
           {/if}

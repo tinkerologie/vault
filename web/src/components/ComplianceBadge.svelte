@@ -1,5 +1,6 @@
 <script>
   import { SvelteSet } from 'svelte/reactivity'
+  import { ICONS } from '../lib/icons.js'
 
   let {
     storage = [],
@@ -99,8 +100,8 @@
   }
 </script>
 
-{#snippet checkIcon()}<svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>{/snippet}
-{#snippet xMark()}<svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>{/snippet}
+{#snippet checkIcon()}<svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check}/></svg>{/snippet}
+{#snippet xMark()}<svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/></svg>{/snippet}
 
 {#snippet goalPicker()}
   <div class="inline-flex items-center gap-1 bg-surface-3 rounded-lg p-0.5" role="group" aria-label="Backup goal">
@@ -145,7 +146,7 @@
           {@render xMark()}
         </button>
       {/if}
-      <svg aria-hidden="true" class="w-4 h-4 text-text-muted transition-transform {expanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+      <svg aria-hidden="true" class="w-4 h-4 text-text-muted transition-transform {expanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronDown}/></svg>
     </div>
   </div>
   {#if expanded}

@@ -102,7 +102,7 @@
     {:else if loadError}
       <div class="flex flex-wrap items-center gap-3 text-sm">
         <p role="alert" class="text-danger">{loadError}</p>
-        <button type="button" onclick={load} class="hit-target font-medium text-info hover:underline">Retry</button>
+        <button type="button" onclick={load} class="hit-target font-medium text-vault-text hover:underline">Retry</button>
       </div>
     {:else if keys.length === 0}
       <p class="text-sm text-text-muted">No Assistant Keys</p>
@@ -141,7 +141,7 @@
         <p role="status" class="text-sm text-text">Copy this Assistant Key now. Vault shows it once.</p>
         <code class="mt-2 block break-all select-all text-sm text-text">{issued.token}</code>
         <div class="mt-2 flex flex-wrap gap-3">
-          <button type="button" onclick={copy} class="hit-target text-sm font-medium text-info hover:underline">Copy Assistant Key</button>
+          <button type="button" onclick={copy} class="hit-target text-sm font-medium text-vault-text hover:underline">Copy Assistant Key</button>
           <button type="button" onclick={() => issued = null} class="hit-target text-sm font-medium text-text-muted hover:underline">Dismiss Assistant Key</button>
         </div>
       </div>
@@ -167,5 +167,6 @@
   source={selected ? [{ label: 'Assistant', value: selected.name }] : []}
   confirmLabel="Revoke key"
   busy={revoking}
+  busyLabel="Revoking…"
   onconfirm={revoke}
   oncancel={() => selected = null} />

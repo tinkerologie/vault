@@ -1,6 +1,7 @@
 <script>
   import { statusBadge, relTime, formatBytes, runSpeed, formatDurationFromDates, getFailureReason, formatDate } from '../lib/utils.js'
   import { runStatusLabel } from '../lib/statusLabels.js'
+  import { ICONS } from '../lib/icons.js'
 
   let { runs = [], maxItems = 8 } = $props()
 
@@ -107,11 +108,11 @@
                           <!-- Neutral dash: the backup succeeded but captured no
                                changed content, so neither a tick nor a cross is
                                honest (issue #326). -->
-                          <svg aria-hidden="true" class="w-3 h-3 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 12h14"/></svg>
+                          <svg aria-hidden="true" class="w-3 h-3 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d={ICONS.minus}/></svg>
                         {:else if item.status === 'ok'}
-                          <svg aria-hidden="true" class="w-3 h-3 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                          <svg aria-hidden="true" class="w-3 h-3 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d={ICONS.check}/></svg>
                         {:else}
-                          <svg aria-hidden="true" class="w-3 h-3 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+                          <svg aria-hidden="true" class="w-3 h-3 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d={ICONS.close}/></svg>
                         {/if}
                         {item.name}
                         {#if item.status === 'ok' && item.unchanged}

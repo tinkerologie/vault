@@ -29,7 +29,7 @@
     autocomplete="new-password"
     autocapitalize="off"
     spellcheck="false"
-    class="{inputClass} pr-11"
+    class="{inputClass} pr-11 max-lg:min-h-11"
   />
   <button
     type="button"

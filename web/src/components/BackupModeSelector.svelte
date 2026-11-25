@@ -17,6 +17,7 @@
   } = $props()
 
   import Tooltip from './Tooltip.svelte'
+  import { cardClass } from '../lib/selectable.js'
 
   const containerModes = [
     {
@@ -58,9 +59,7 @@
       <div class="grid grid-cols-1 gap-2">
         {#each containerModes as mode (mode.value)}
           <label
-            class="flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left cursor-pointer {containerMode === mode.value
-              ? 'border-vault bg-vault/5'
-              : 'border-border hover:border-border-hover bg-surface-3/50'}"
+            class="flex items-start gap-3 p-3 rounded-lg border transition-colors text-left cursor-pointer {cardClass(containerMode === mode.value)}"
           >
             <input
               type="radio"
@@ -92,9 +91,7 @@
       <div class="grid grid-cols-1 gap-2">
         {#each vmModes as mode (mode.value)}
           <label
-            class="flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left cursor-pointer {vmMode === mode.value
-              ? 'border-vault bg-vault/5'
-              : 'border-border hover:border-border-hover bg-surface-3/50'}"
+            class="flex items-start gap-3 p-3 rounded-lg border transition-colors text-left cursor-pointer {cardClass(vmMode === mode.value)}"
           >
             <input
               type="radio"

@@ -101,3 +101,26 @@ export function classifyProtection({ summary, discovered = {}, available = {}, e
 export function protectedPercent(counts) {
   return counts.total > 0 ? Math.round((counts.protected / counts.total) * 100) : 0
 }
+
+/**
+ * Status dot colour per protection state (#710), shared by the Dashboard and
+ * Disaster Recovery so a state looks the same on both. Unprotected and unknown
+ * are neutral: green is only for verified protection, and an item waiting to be
+ * added to a job is not yet a failure. Every dot sits beside its state's word.
+ * @type {Readonly<Record<ProtectionState, string>>}
+ */
+export const PROTECTION_DOT = Object.freeze({
+  protected: 'bg-success',
+  out_of_date: 'bg-warning',
+  pending: 'bg-info',
+  unprotected: 'bg-surface-5',
+  unknown: 'bg-surface-5',
+})
+
+/**
+ * @param {ProtectionState | string} state
+ * @returns {string}
+ */
+export function protectionDot(state) {
+  return PROTECTION_DOT[/** @type {ProtectionState} */ (state)] || PROTECTION_DOT.unknown
+}

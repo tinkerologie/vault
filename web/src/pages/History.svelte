@@ -22,6 +22,9 @@
   import Toast from '../components/Toast.svelte'
   import AnomalyBadge from '../components/AnomalyBadge.svelte'
   import { setOpenList, getAnomalyCounts, formatAnomalyTooltip } from '../lib/anomalies.svelte.js'
+  import InlineSpinner from '../components/InlineSpinner.svelte'
+  import { ICONS } from '../lib/icons.js'
+  import { doneCountClass } from '../lib/outcome-colour.js'
 
   /** Count open anomalies associated with a specific job run. */
   function runAnomalyCounts(runId) {
@@ -452,15 +455,15 @@
       case 'partial': case 'pending':
         // Partial/pending are neither clean success nor outright failure —
         // amber warning triangle to match the amber status badge.
-        return { d: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z', cls: 'text-warning' }
+        return { d: ICONS.warning, cls: 'text-warning' }
       case 'running':
-        return { d: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15', cls: 'text-info' }
+        return { d: ICONS.refresh, cls: 'text-info' }
       case 'skipped':
         // Skipped runs are neither failures nor successes – render them
         // neutrally with a forward-skip icon to make the distinction clear.
         return { d: 'M13 5l7 7-7 7M5 5l7 7-7 7', cls: 'text-text-muted' }
       default:
-        return { d: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', cls: 'text-text-muted' }
+        return { d: ICONS.clock, cls: 'text-text-muted' }
     }
   }
 
@@ -516,7 +519,7 @@
             class="absolute right-0 sm:right-0 left-0 sm:left-auto z-20 mt-1 min-w-48 bg-surface-2 border border-border rounded-lg shadow-lg p-1">
             <button type="button" role="menuitem" onclick={startPurge} disabled={allRuns.length === 0}
               class="w-full min-h-[36px] px-3 py-2 rounded-md text-left text-sm text-text-muted hover:text-text hover:bg-surface-3 focus-visible:bg-surface-3 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
-              <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.trash}/></svg>
               Purge history…
             </button>
           </div>
@@ -527,7 +530,7 @@
 
   {#if isReplicaMode()}
     <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
-      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/></svg>
       <span>Read-only replica — write actions are disabled on this instance.</span>
     </div>
   {/if}
@@ -554,13 +557,13 @@
             <div class="py-2.5 flex items-center justify-between gap-3 text-sm">
               <div class="flex items-center gap-2.5 min-w-0">
                 {#if progress.activeRun.run_type === 'restore'}
-                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-purple-500/10 text-hue-purple border border-purple-500/20 shrink-0">Restore</span>
+                  <span class="px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider rounded-md bg-hue-purple-bg/10 text-hue-purple border border-hue-purple-bg/20 shrink-0">Restore</span>
                 {:else}
-                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 shrink-0">Backup</span>
+                  <span class="px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 shrink-0">Backup</span>
                 {/if}
 
-                <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 flex items-center gap-1 shrink-0">
-                  <svg aria-hidden="true" class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                <span class="px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 flex items-center gap-1 shrink-0">
+                  <InlineSpinner size="xs" />
                   Running
                 </span>
 
@@ -575,20 +578,20 @@
             <div class="py-2.5 flex items-center justify-between gap-3 text-sm">
               <div class="flex items-center gap-2.5 min-w-0">
                 {#if entry.kind === 'restore'}
-                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-purple-500/10 text-hue-purple border border-purple-500/20 shrink-0">Restore</span>
+                  <span class="px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider rounded-md bg-hue-purple-bg/10 text-hue-purple border border-hue-purple-bg/20 shrink-0">Restore</span>
                 {:else if entry.kind === 'delete'}
-                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-rose-500/10 text-hue-rose border border-rose-500/20 shrink-0">Cleanup</span>
+                  <span class="px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider rounded-md bg-hue-rose-bg/10 text-hue-rose border border-hue-rose-bg/20 shrink-0">Cleanup</span>
                 {:else}
-                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 shrink-0">Backup</span>
+                  <span class="px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 shrink-0">Backup</span>
                 {/if}
 
                 {#if entry.status === 'running'}
-                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 flex items-center gap-1 shrink-0">
-                    <svg aria-hidden="true" class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  <span class="px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 flex items-center gap-1 shrink-0">
+                    <InlineSpinner size="xs" />
                     Running
                   </span>
                 {:else}
-                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-warning/10 text-warning border border-warning/20 shrink-0">Queued</span>
+                  <span class="px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider rounded-md bg-warning/10 text-warning border border-warning/20 shrink-0">Queued</span>
                 {/if}
 
                 <span class="font-medium text-text truncate">{entry.job_name || `Job #${entry.job_id}`}</span>
@@ -606,7 +609,7 @@
                     title="Cancel queued operation"
                   >
                     <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/>
                     </svg>
                     Cancel
                   </button>
@@ -638,11 +641,11 @@
       <!-- Search -->
       <div class="relative flex-1 min-w-[12rem] max-w-xs">
         <svg aria-hidden="true" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.search}/>
         </svg>
         <input type="text" bind:value={searchQuery} placeholder="Search runs..."
           aria-label="Search runs"
-          class="w-full pl-9 pr-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+          class="w-full pl-9 pr-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11" />
       </div>
 
       <!-- Status filter pills -->
@@ -673,7 +676,7 @@
 
       <select bind:value={selectedJob}
         aria-label="Filter by job"
-        class="px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text">
+        class="px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text max-lg:min-h-11">
         <option value={0}>All Jobs</option>
         {#each jobs as job (job.id)}
           <option value={job.id}>{job.name}</option>
@@ -703,7 +706,7 @@
         {/if}
         <input type="text" bind:value={acknowledgeReason} disabled={acknowledging}
           aria-label="Acknowledgement reason (optional)" placeholder="Reason (optional)"
-          class="flex-1 min-w-[10rem] max-w-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+          class="flex-1 min-w-[10rem] max-w-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text max-lg:min-h-11" />
         <button type="button" class="btn btn-primary" onclick={() => acknowledgeRuns([...selectedRunIds])}
           disabled={acknowledging}>
           Acknowledge selected
@@ -720,13 +723,13 @@
         <div class="relative">
           <select value={trendMetric} onchange={(e) => selectTrendMetric(e.currentTarget.value)}
             aria-label="Trend metric"
-            class="appearance-none pl-3 pr-9 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text cursor-pointer">
+            class="appearance-none pl-3 pr-9 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text cursor-pointer max-lg:min-h-11">
             <option value="size">Backup size</option>
             <option value="duration">Job duration</option>
           </select>
           <svg aria-hidden="true" class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-dim"
             fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronDown}/>
           </svg>
         </div>
         <div role="group" aria-label="Trend period" class="flex items-center rounded-lg border border-border bg-surface-3 p-0.5 text-xs">
@@ -755,7 +758,7 @@
       <EmptyState title="No runs yet"
         description={jobs.length > 0 ? 'Backup and restore runs appear here once a job runs. Run a job now, or wait for its schedule.' : 'Create a backup job, and its runs will appear here.'}>
         {#snippet iconSlot()}
-          <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ICONS.clock}/></svg>
         {/snippet}
         {#if !isReplicaMode()}
           <a href="#/jobs" class="mt-4 px-4 py-2 text-sm font-medium text-on-vault bg-vault hover:bg-vault-dark rounded-lg transition-colors">
@@ -766,7 +769,7 @@
     {:else if filteredRuns.length === 0}
       <EmptyState title="No matching runs" description="No runs match these filters.">
         {#snippet iconSlot()}
-          <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ICONS.search}/></svg>
         {/snippet}
         {#if filtersActive}
           <button type="button" onclick={clearFilters} class="mt-4 px-4 py-2 text-sm font-medium text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">Clear filters</button>
@@ -844,7 +847,7 @@
                             </span>
                           {/if}
                           {#if (run.run_type || 'backup') === 'restore'}
-                            <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-purple-500/15 text-hue-purple">restore</span>
+                            <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-hue-purple-bg/15 text-hue-purple">restore</span>
                           {:else}
                             <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-vault/15 text-vault-text">backup</span>
                           {/if}
@@ -871,7 +874,7 @@
                           <span>{duration(run)}</span>
                           {#if run.items_total}
                             <span>
-                              <span class="text-success">{formatInt(run.items_done)}</span>/{formatInt(run.items_total)} {runItemNoun(run, run.items_total)}
+                              <span class={doneCountClass(run)}>{formatInt(run.items_done)}</span>/{formatInt(run.items_total)} {runItemNoun(run, run.items_total)}
                               {#if run.items_failed > 0}
                                 <span class="text-danger">({formatInt(run.items_failed)} failed)</span>
                               {/if}
@@ -894,7 +897,7 @@
                     </div>
                     {#if expandable}
                       <svg aria-hidden="true" class="w-4 h-4 text-text-dim shrink-0 transition-transform {expandedRunIds.has(run.id) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/>
                       </svg>
                     {/if}
                   </div>
@@ -920,11 +923,11 @@
                           {#each items as item, i (i)}
                             <div class="flex items-center gap-2 text-sm">
                               {#if item.status === 'ok' && item.unchanged}
-                                <svg aria-hidden="true" class="w-4 h-4 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14"/></svg>
+                                <svg aria-hidden="true" class="w-4 h-4 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.minus}/></svg>
                               {:else if item.status === 'ok'}
-                                <svg aria-hidden="true" class="w-4 h-4 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                <svg aria-hidden="true" class="w-4 h-4 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.check}/></svg>
                               {:else}
-                                <svg aria-hidden="true" class="w-4 h-4 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                <svg aria-hidden="true" class="w-4 h-4 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/></svg>
                               {/if}
                               <span class="font-medium text-text truncate min-w-0" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
                               {#if item.size_bytes}
@@ -995,7 +998,8 @@
   show={confirmPurge}
   title="Purge All History"
   message="Permanently delete all job-run history and their restore points, the recoverable backups Vault tracks?"
-  confirmLabel={purging ? 'Purging…' : 'Purge Everything'}
+  confirmLabel="Purge Everything"
+  busyLabel="Purging…"
   variant="danger"
   confirmWord="PURGE"
   source={PURGE_HISTORY_SUMMARY.source}
@@ -1009,7 +1013,9 @@
   show={!!entryToCancel}
   title="Cancel Queued Operation"
   message={`Are you sure you want to cancel the queued ${entryToCancel?.kind || 'operation'} for "${entryToCancel?.job_name || ''}"?`}
-  confirmLabel={cancelInProgress ? 'Cancelling…' : 'Cancel Operation'}
+  confirmLabel="Cancel Operation"
+  busy={cancelInProgress}
+  busyLabel="Cancelling…"
   variant="danger"
   onconfirm={confirmCancelQueue}
   oncancel={() => entryToCancel = null}
