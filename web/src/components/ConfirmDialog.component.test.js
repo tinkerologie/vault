@@ -153,10 +153,14 @@ describe('ConfirmDialog', () => {
       const { rerender } = await open({ ...typedProps, onconfirm, oncancel })
       await fireEvent.input(field(), { target: { value: 'PURGE' } })
       await rerender({ busy: true })
-      expect(field().disabled).toBe(true)
-      expect(confirmButton().disabled).toBe(true)
-      expect(screen.getByRole('button', { name: 'Cancel' }).disabled).toBe(true)
+      // aria-disabled rather than disabled, so focus stays where it was (#698).
+      expect(field().getAttribute('aria-disabled')).toBe('true')
+      expect(field().readOnly).toBe(true)
+      expect(confirmButton().getAttribute('aria-disabled')).toBe('true')
+      expect(screen.getByRole('button', { name: 'Cancel' }).getAttribute('aria-disabled')).toBe('true')
       expect(screen.getByRole('dialog').querySelector('[aria-busy="true"]')).not.toBeNull()
+      await fireEvent.click(confirmButton())
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
       await enter(field())
       document.querySelector('dialog').dispatchEvent(new Event('cancel', { cancelable: true }))
       expect(onconfirm).not.toHaveBeenCalled()
@@ -171,6 +175,39 @@ describe('ConfirmDialog', () => {
       await tick()
       await tick()
       expect(dialog.open).toBe(true)
+    })
+  })
+
+  describe('busy state (#698)', () => {
+    it('shows a spinner and the busy label on the confirm button, and announces it', async () => {
+      const { rerender } = await open({ busyLabel: 'Deleting…' })
+      await rerender({ busy: true })
+      const confirm = screen.getByRole('button', { name: 'Deleting…' })
+      expect(confirm.querySelector('.animate-spin')).not.toBeNull()
+      expect(screen.getByRole('status').textContent.trim()).toBe('Deleting…')
+    })
+
+    it('keeps the confirm label when no busy label is given', async () => {
+      const { rerender } = await open()
+      await rerender({ busy: true })
+      const confirm = screen.getByRole('button', { name: 'Delete' })
+      expect(confirm.querySelector('.animate-spin')).not.toBeNull()
+      expect(screen.getByRole('status').textContent.trim()).toBe('Delete')
+    })
+
+    it('keeps focus on the button that was pressed', async () => {
+      const { rerender } = await open()
+      const confirm = screen.getByRole('button', { name: 'Delete' })
+      confirm.focus()
+      await rerender({ busy: true })
+      expect(confirm.disabled).toBe(false)
+      expect(document.activeElement).toBe(confirm)
+    })
+
+    it('announces nothing and shows no spinner while idle', async () => {
+      await open({ busyLabel: 'Deleting…' })
+      expect(screen.getByRole('status').textContent.trim()).toBe('')
+      expect(document.querySelector('dialog .animate-spin')).toBeNull()
     })
   })
 
