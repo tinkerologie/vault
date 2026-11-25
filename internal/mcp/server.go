@@ -13,10 +13,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/tinkerologie/vault/internal/api/handlers"
 	"github.com/tinkerologie/vault/internal/credentials"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/engine"
+	"github.com/tinkerologie/vault/internal/health"
 	jobintake "github.com/tinkerologie/vault/internal/jobs"
 	"github.com/tinkerologie/vault/internal/restorerequest"
 	"github.com/tinkerologie/vault/internal/runner"
@@ -913,7 +913,7 @@ func (s *MCPServer) addGetHealthSummaryTool() {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ getHealthSummaryInput) (*mcp.CallToolResult, any, error) {
 		// One computation with GET /health/summary, so assistants and the
 		// Dashboard never disagree about what is protected (#708).
-		result, err := handlers.BuildHealthSummary(ctx, s.db, time.Now())
+		result, err := health.BuildSummary(ctx, s.db, time.Now())
 		if err != nil {
 			return nil, nil, fmt.Errorf("building health summary: %w", err)
 		}

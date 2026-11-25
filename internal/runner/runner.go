@@ -2653,6 +2653,9 @@ func (r *Runner) ensureDedupEscrow(repo *dedup.Repo, dest db.StorageDestination)
 	confirmed := subtle.ConstantTimeCompare([]byte(r.escrowed[dest.ID]), []byte(pass)) == 1
 	r.escrowMu.Unlock()
 	if confirmed {
+		// Saving the same passphrase again makes a new hash: keep the record
+		// in step even when the escrow itself needs no check.
+		r.recordEscrowConfirmed(dest)
 		return
 	}
 	// The scrypt check runs without the lock so destinations do not wait on
@@ -2669,16 +2672,28 @@ func (r *Runner) ensureDedupEscrow(repo *dedup.Repo, dest db.StorageDestination)
 	}
 	r.escrowed[dest.ID] = pass
 	r.escrowMu.Unlock()
-	// Record which passphrase the escrow opens with, so the Dashboard keeps
-	// warning about vault.key until the passphrase really protects this
-	// destination (#714).
-	if hash, _ := r.db.GetSetting("encryption_passphrase_hash", ""); hash != "" {
-		if err := r.db.SetSetting(db.DedupEscrowConfirmedPrefix+strconv.FormatInt(dest.ID, 10), hash); err != nil {
-			log.Printf("runner: dedup: recording the escrow for destination %q: %v", dest.Name, err)
-		}
-	}
+	r.recordEscrowConfirmed(dest)
 	if wrote {
 		log.Printf("runner: dedup: destination %q can now also be unlocked with the backup passphrase", dest.Name)
+	}
+}
+
+// recordEscrowConfirmed notes which passphrase this destination's escrow opens
+// with, so the Dashboard keeps warning about vault.key until the passphrase
+// really protects it (#714). It stores a marker of the passphrase hash, never
+// the hash, and writes only when the marker changed.
+func (r *Runner) recordEscrowConfirmed(dest db.StorageDestination) {
+	hash, _ := r.db.GetSetting("encryption_passphrase_hash", "")
+	want := db.EscrowConfirmation(hash)
+	if want == "" {
+		return
+	}
+	key := db.DedupEscrowConfirmedPrefix + strconv.FormatInt(dest.ID, 10)
+	if got, _ := r.db.GetSetting(key, ""); got == want {
+		return
+	}
+	if err := r.db.SetSetting(key, want); err != nil {
+		log.Printf("runner: dedup: recording the escrow for destination %q: %v", dest.Name, err)
 	}
 }
 

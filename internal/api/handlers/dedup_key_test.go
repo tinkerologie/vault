@@ -14,6 +14,7 @@ import (
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/health"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/storage"
 )
@@ -43,7 +44,7 @@ func TestGetServerKeyDownload(t *testing.T) {
 
 	// The download is recorded with the key's fingerprint, so the "save a copy"
 	// caution clears for this key only (#714).
-	saved, _ := h.db.GetSetting(serverKeySavedSetting, "")
+	saved, _ := h.db.GetSetting(health.ServerKeySavedSetting, "")
 	if !strings.HasSuffix(saved, " "+crypto.ServerKeyFingerprint(h.serverKey)) {
 		t.Errorf("the download was recorded as %q, want a timestamp and this key's fingerprint", saved)
 	}
@@ -175,7 +176,7 @@ func TestAcknowledgeServerKey(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
-	saved, _ := h.db.GetSetting(serverKeySavedSetting, "")
+	saved, _ := h.db.GetSetting(health.ServerKeySavedSetting, "")
 	fields := strings.Fields(saved)
 	if len(fields) != 2 || fields[1] != crypto.ServerKeyFingerprint(h.serverKey) {
 		t.Fatalf("recorded %q, want a timestamp and this key's fingerprint", saved)
@@ -184,7 +185,7 @@ func TestAcknowledgeServerKey(t *testing.T) {
 		t.Fatalf("recorded time %q: %v", fields[0], err)
 	}
 
-	for _, key := range []string{serverKeySavedSetting, db.ServerKeyFingerprintSetting} {
+	for _, key := range []string{health.ServerKeySavedSetting, db.ServerKeyFingerprintSetting} {
 		w = httptest.NewRecorder()
 		body := strings.NewReader(`{"` + key + `":"2026-11-25T10:00:00Z ffff"}`)
 		h.Update(w, httptest.NewRequest(http.MethodPut, "/api/v1/settings", body))
@@ -209,7 +210,7 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("client w
 func TestGetServerKeyFailedWriteIsNotRecorded(t *testing.T) {
 	h := newTestSettingsHandler(t)
 	h.GetServerKey(failingWriter{httptest.NewRecorder()}, httptest.NewRequest(http.MethodGet, "/api/v1/settings/server-key", nil))
-	if saved, _ := h.db.GetSetting(serverKeySavedSetting, ""); saved != "" {
+	if saved, _ := h.db.GetSetting(health.ServerKeySavedSetting, ""); saved != "" {
 		t.Fatalf("a failed download was recorded as a saved copy: %q", saved)
 	}
 }
