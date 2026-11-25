@@ -125,8 +125,8 @@ test.describe('Activity Logs & Run Log Viewer', () => {
 
     await page.goto('/#/logs');
 
-    // Initial rows render in the role="log" console
-    const logConsole = page.getByRole('log');
+    // Initial rows render in the Log console region
+    const logConsole = page.getByRole('region', { name: 'Log console' });
     await expect(logConsole.locator('[data-entry-id="60"]')).toBeVisible();
 
     // "Loading logs..." spinner disappears
@@ -180,7 +180,7 @@ test.describe('Logs render window (#507)', () => {
     });
 
     await page.goto('/#/logs');
-    const consoleBox = page.getByRole('log');
+    const consoleBox = page.getByRole('region', { name: 'Log console' });
     await expect(consoleBox.locator('[data-entry-id="1500"]')).toBeVisible();
     const rendered = () => consoleBox.locator('[data-entry-id]').count();
     // The background full-history load fills the store; the window stays at
@@ -278,7 +278,7 @@ test.describe('Logs render window (#507)', () => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) });
     });
     await page.goto('/#/logs');
-    const consoleBox = page.getByRole('log');
+    const consoleBox = page.getByRole('region', { name: 'Log console' });
     const rendered = () => consoleBox.locator('[data-entry-id]').count();
     await expect.poll(rendered, { timeout: 15000 }).toBe(120); // all fit in the window
 
@@ -317,7 +317,7 @@ test.describe('Logs render window (#507)', () => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) });
     });
     await page.goto('/#/logs');
-    const consoleBox = page.getByRole('log');
+    const consoleBox = page.getByRole('region', { name: 'Log console' });
     const rendered = () => consoleBox.locator('[data-entry-id]').count();
     await expect.poll(rendered, { timeout: 15000 }).toBe(199);
 
@@ -365,7 +365,7 @@ test.describe('Logs with history whose runs are gone', () => {
     page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
 
     await page.goto('/#/logs');
-    const box = page.getByRole('log');
+    const box = page.getByRole('region', { name: 'Log console' });
     await expect(box.getByText('Backup finished 30')).toBeVisible();
     await expect(box.getByText('Backup finished 20')).toBeVisible();
     await expect(box.getByText('Live run line')).toBeVisible();

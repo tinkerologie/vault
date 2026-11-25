@@ -34,7 +34,7 @@ func (h *RestoreRequestHandler) StopRun(w http.ResponseWriter, r *http.Request) 
 	result, err := h.service.StopRun(r.Context(), runID, action.Operator)
 	switch {
 	case errors.Is(err, db.ErrNotFound):
-		respondError(w, http.StatusNotFound, "Approved Restore Run not found")
+		respondError(w, http.StatusNotFound, "Restore Run not found")
 	case errors.Is(err, restorerequest.ErrStopPersistence):
 		respondError(w, http.StatusServiceUnavailable, restorerequest.ErrStopPersistence.Error())
 	case err != nil:

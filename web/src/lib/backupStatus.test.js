@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { announcementKey, attentionCaption, countRunOutcomes, deriveBackupStatus, healthText, healthTone, isDiscoveryIncomplete, mergeRunCounts, unhealthyStorage } from './backupStatus.js'
+import { announcementKey, attentionCaption, attentionHref, countRunOutcomes, deriveBackupStatus, healthText, healthTone, isDiscoveryIncomplete, mergeRunCounts, unhealthyStorage } from './backupStatus.js'
 
 // The Dashboard's single verdict (#527).
 const SUMMARY = { health_score: 100, protected_items: 7, recent_success: 5, recent_failed: 0, last_success_at: '2026-10-06T02:15:00Z' }
@@ -186,7 +186,7 @@ describe('isDiscoveryIncomplete', () => {
 describe('healthText', () => {
   it('reproduces the audit: score 100 with items unprotected is qualified', () => {
     const text = healthText(SUMMARY, { unprotected: 3 })
-    expect(text).toBe('Backups OK · 3 unprotected')
+    expect(text).toBe('Jobs OK · 3 items in no job')
     expect(text).not.toMatch(/healthy/i)
   })
 
@@ -198,11 +198,11 @@ describe('healthText', () => {
     ['failures from the summary when no count is given', { ...SUMMARY, recent_failed: 2 }, {}, '2 recent failures'],
     ['nothing has run', FRESH, {}, 'No backups completed yet'],
     ['a fresh install with unprotected items', FRESH, { unprotected: 2 }, 'No backups completed yet'],
-    ['warnings', SUMMARY, { warnings: 1 }, 'Backups OK · 1 with warnings'],
-    ['pending', SUMMARY, { pending: 2 }, 'Backups OK · 2 pending'],
-    ['every qualifier', SUMMARY, { unprotected: 1, warnings: 2, pending: 3 }, 'Backups OK · 1 unprotected · 2 with warnings · 3 pending'],
+    ['warnings', SUMMARY, { warnings: 1 }, 'Jobs OK · 1 with warnings'],
+    ['pending', SUMMARY, { pending: 2 }, 'Jobs OK · 2 pending'],
+    ['every qualifier', SUMMARY, { unprotected: 1, warnings: 2, pending: 3 }, 'Jobs OK · 1 item in no job · 2 with warnings · 3 pending'],
     ['a middling score', { ...SUMMARY, health_score: 60 }, {}, 'Needs attention'],
-    ['a middling score with unprotected items', { ...SUMMARY, health_score: 60 }, { unprotected: 2 }, 'Needs attention · 2 unprotected'],
+    ['a middling score with unprotected items', { ...SUMMARY, health_score: 60 }, { unprotected: 2 }, 'Needs attention · 2 items in no job'],
     ['a low score', { ...SUMMARY, health_score: 10 }, {}, 'Needs attention'],
     ['a missing score', { recent_success: 1 }, {}, 'Needs attention'],
   ])('%s', (_name, summary, counts, expected) => {
@@ -283,7 +283,7 @@ describe('false "Backups healthy" (#527)', () => {
   it('a score with no runs behind it is not a low score', () => {
     const summary = { ...SUMMARY, health_score: 40, recent_success: 0, last_success_at: null }
     expect(deriveBackupStatus({ ...READY, summary }).state).toBe('healthy')
-    expect(healthText(summary)).toBe('Backups OK · no recent runs')
+    expect(healthText(summary)).toBe('Jobs OK · no recent runs')
     expect(healthTone(summary)).toBe('warning')
   })
 
@@ -304,7 +304,7 @@ describe('false "Backups healthy" (#527)', () => {
       const summary = { protected_items: 5, recent_success: 0, recent_cancelled: 2, outstanding_cancelled: 0, health_score: 40 }
       const counts = mergeRunCounts(NONE, summary)
       expect(deriveBackupStatus({ ...READY, ...counts, summary }).issues).toEqual([])
-      expect(healthText(summary, counts)).toBe('Backups OK · no scored runs')
+      expect(healthText(summary, counts)).toBe('Jobs OK · no scored runs')
     })
 
     it('keeps what only the sample saw, and copes with no summary', () => {
@@ -378,7 +378,61 @@ describe('attentionCaption with other issues', () => {
   it.each([
     [{ other: 2 }, 'No failures · 2 other issues'],
     [{ failures: 1, other: 1 }, '1 recent failure · 0 unprotected · 1 other issue'],
+    [{ outOfDate: 3 }, 'No failures · 3 out of date'],
+    [{ unprotected: 1, outOfDate: 2, other: 1 }, '0 recent failures · 1 unprotected · 2 out of date · 1 other issue'],
   ])('%j', (input, expected) => {
     expect(attentionCaption(input)).toBe(expected)
+  })
+})
+
+describe('out-of-date items (#708)', () => {
+  it('needs attention and leads to Disaster Recovery', () => {
+    const status = deriveBackupStatus({ ...READY, outOfDate: 2, protectedCount: 5 })
+    expect(status.state).toBe('attention')
+    expect(status.tone).toBe('warning')
+    expect(status.detail).toBe('2 of 7 items out of date')
+    expect(status.issues.find((issue) => issue.key === 'outOfDate')?.href).toBe('/recovery')
+  })
+
+  it('leads to History on a replica, which has no Disaster Recovery page', () => {
+    const status = deriveBackupStatus({ ...READY, replica: true, outOfDate: 1 })
+    expect(hrefs(status)).toEqual(['/history'])
+  })
+
+  it('is unknown, not a problem, without a summary', () => {
+    expect(deriveBackupStatus({ ...READY, summary: null, outOfDate: 2 }).state).toBe('unknown')
+  })
+
+  it('qualifies the Job health text and tone', () => {
+    expect(healthText(SUMMARY, { outOfDate: 2 })).toBe('Jobs OK · 2 out of date')
+    expect(healthTone(SUMMARY, { outOfDate: 2 })).toBe('warning')
+  })
+})
+
+describe('vault.key caution (#714)', () => {
+  it('asks for a saved copy when the key is at risk', () => {
+    const status = deriveBackupStatus({ ...READY, summary: { ...SUMMARY, server_key_at_risk: true } })
+    expect(status.state).toBe('attention')
+    expect(status.tone).toBe('warning')
+    const issue = status.issues.find((it) => it.key === 'serverKey')
+    expect(issue).toMatchObject({ action: 'Save vault.key', href: '/settings' })
+    expect(status.detail).toMatch(/vault\.key is the only key/)
+  })
+
+  it('stays quiet when the key is not at risk, or on a replica', () => {
+    expect(deriveBackupStatus(READY).state).toBe('healthy')
+    expect(deriveBackupStatus({ ...READY, replica: true, summary: { ...SUMMARY, server_key_at_risk: true } }).state).toBe('healthy')
+  })
+})
+
+describe('attentionHref (#693)', () => {
+  it.each([
+    [{ failures: 2, unprotected: 1 }, '/history?status=failed&review=outstanding'],
+    [{ unprotected: 1 }, '/recovery'],
+    [{ outOfDate: 1 }, '/recovery'],
+    [{ outOfDate: 1, replica: true }, '/history'],
+    [{}, '/history'],
+  ])('%j leads to %s', (input, href) => {
+    expect(attentionHref(input)).toBe(href)
   })
 })

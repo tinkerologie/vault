@@ -1,7 +1,7 @@
 // jsdom has no layout: scrollHeight/clientHeight are always 0 and setting
 // scrollTop does nothing. The Logs console's behaviour hangs entirely on that
 // geometry, so the component tests (#509) install controllable getters for
-// the console element (role="log") only. Every other element keeps jsdom's
+// the console element (data-log-console) only. Every other element keeps jsdom's
 // behaviour.
 //
 // The content height follows the rendered rows (rowHeight px per
@@ -32,7 +32,7 @@ export function installScrollBox({ clientHeight = 400, rowHeight = 20 } = {}) {
     writes: [], // every scrollTop assignment, in order
     scrollToCalls: [],
   }
-  const isLog = (el) => el?.getAttribute?.('role') === 'log'
+  const isLog = (el) => el?.hasAttribute?.('data-log-console')
   const contentHeight = (el) =>
     geo.forcedHeight ?? Math.max(geo.clientHeight, el.querySelectorAll('[data-entry-id]').length * geo.rowHeight)
   const clamp = (el, v) => Math.max(0, Math.min(v, contentHeight(el) - geo.clientHeight))

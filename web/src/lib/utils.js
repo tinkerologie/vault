@@ -500,6 +500,25 @@ export function itemTypeLabel(type) {
   return ITEM_TYPE_LABELS[t] || (type ? type + 's' : 'Items')
 }
 
+const ITEM_TYPE_SINGULAR_LABELS = {
+  container: 'Container',
+  vm: 'VM',
+  folder: 'Folder',
+  flash: 'Flash drive',
+  plugin: 'Plugin',
+  zfs: 'ZFS dataset',
+}
+
+/**
+ * The singular label for one item's type badge ("Container", not
+ * "CONTAINERS"). Filter tabs keep the plural itemTypeLabel (#705).
+ * @param {string | null | undefined} type
+ * @returns {string}
+ */
+export function itemTypeSingularLabel(type) {
+  return ITEM_TYPE_SINGULAR_LABELS[normaliseItemType(type)] || 'Item'
+}
+
 /**
  * Detects whether an item is specifically the Unraid flash drive backup.
  * @param {{ item_type?: string, type?: string, settings?: any } | null | undefined} item

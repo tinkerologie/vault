@@ -38,6 +38,11 @@ func TestGetServerKeyDownload(t *testing.T) {
 		}
 	}
 
+	// The download is recorded, so the "save a copy" caution clears (#714).
+	if saved, _ := h.db.GetSetting(serverKeySavedSetting, ""); saved == "" {
+		t.Error("the download was not recorded")
+	}
+
 	h.serverKey = nil
 	w = httptest.NewRecorder()
 	h.GetServerKey(w, httptest.NewRequest(http.MethodGet, "/api/v1/settings/server-key", nil))

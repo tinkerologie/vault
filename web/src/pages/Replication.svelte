@@ -4,17 +4,20 @@
   import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getLiveMode } from '../lib/runtime-config.js'
-  import { formatDate, describeSchedule, formatBytes } from '../lib/utils.js'
+  import { formatDate, describeSchedule, formatBytes, relTime } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
+  import LoadError from '../components/LoadError.svelte'
   import ScheduleBuilder from '../components/ScheduleBuilder.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import Tooltip from '../components/Tooltip.svelte'
 
   let loading = $state(true)
   let sources = $state([])
+  // A failed load must never read as "no targets" (#681).
+  let loadError = $state('')
   let showModal = $state(false)
   let editing = $state(null)
   let testing = $state(null)
@@ -91,8 +94,11 @@
     try {
       const srcs = await api.listReplicationSources()
       sources = srcs || []
+      loadError = ''
     } catch (e) {
-      if (!background) showToast(e.message, 'error')
+      // A background refresh keeps the list it already has; with nothing
+      // loaded yet the error replaces the empty state.
+      if (!background || sources.length === 0) loadError = e.message || 'Request failed'
     } finally {
       loading = false
     }
@@ -279,7 +285,7 @@
       <h1 class="text-2xl font-bold text-text">Replication</h1>
       <p class="text-sm text-text-muted mt-1">Pull backups from remote Vault servers for disaster recovery</p>
     </div>
-    {#if sources.length > 0 && !isReplicaMode()}
+    {#if sources.length > 0 && !loadError && !isReplicaMode()}
       <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
         <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
         Add Target
@@ -296,6 +302,8 @@
 
   {#if loading}
     <Spinner text="Loading replication targets..." />
+  {:else if loadError}
+    <LoadError title="Couldn't load replication targets" message={loadError} onretry={() => loadData()} />
   {:else if sources.length === 0}
     <EmptyState title="No replication targets" description="Add a remote Vault server to replicate backups for disaster recovery." actionLabel={isReplicaMode() ? null : "Add Target"} onaction={isReplicaMode() ? null : () => openCreate()}>
       {#snippet iconSlot()}
@@ -308,19 +316,17 @@
         {@const badge = statusBadge(src)}
         <div class="bg-surface-2 border border-border rounded-xl overflow-hidden hover:border-vault/30 hover:shadow-sm transition-all">
           <div class="p-5">
-            <div class="flex items-start justify-between">
-              <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-surface-3 flex items-center justify-center">
+            <div class="flex items-start justify-between gap-3">
+              <div class="flex items-center gap-3 min-w-0">
+                <div class="w-10 h-10 rounded-lg bg-surface-3 flex items-center justify-center shrink-0">
                   <svg aria-hidden="true" class="w-5 h-5 {typeColors[src.type] || 'text-vault'}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="{typeIcons[src.type] || typeIcons.remote_vault}"/></svg>
                 </div>
-                <div>
-                  <h2 class="font-semibold text-text">{src.name}</h2>
-                  <p class="text-xs text-text-dim mt-0.5 font-mono">
-                      {src.url}
-                  </p>
+                <div class="min-w-0">
+                  <h2 class="font-semibold text-text break-words">{src.name}</h2>
+                  <p class="text-xs text-text-dim mt-0.5 font-mono break-all">{src.url}</p>
                 </div>
               </div>
-              <span class="text-xs font-medium px-2.5 py-1 rounded-full {badge.cls}">{badge.label}</span>
+              <span class="shrink-0 text-xs font-medium px-2.5 py-1 rounded-full {badge.cls}">{badge.label}</span>
             </div>
 
             <div class="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
@@ -334,7 +340,11 @@
               </div>
               <div>
                 <span class="text-text-dim text-xs">Last Sync</span>
-                <p class="text-text font-medium">{src.last_sync_at ? formatDate(src.last_sync_at) : 'Never'}</p>
+                {#if src.last_sync_at}
+                  <p class="text-text font-medium tabular-nums" title={formatDate(src.last_sync_at)}>{relTime(src.last_sync_at)}</p>
+                {:else}
+                  <p class="text-text font-medium">Never</p>
+                {/if}
               </div>
               <div>
                 <span class="text-text-dim text-xs">Created</span>
@@ -353,7 +363,7 @@
               </div>
             {/if}
 
-            <div class="flex items-center gap-2 mt-4 pt-4 border-t border-border">
+            <div class="flex flex-wrap items-center gap-2 mt-4 pt-4 border-t border-border">
               {#if !isReplicaMode()}
               <button onclick={() => syncNow(src.id)} disabled={syncing === src.id}
                 class="px-3 py-1.5 bg-vault/10 hover:bg-vault/20 text-vault-text text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5">
@@ -381,6 +391,7 @@
               </button>
               <div class="ml-auto flex items-center gap-2">
                 <button onclick={() => toggleExpand(src.id)}
+                  aria-expanded={expandedSource === src.id} aria-controls={expandedSource === src.id ? `repl-jobs-${src.id}` : undefined} aria-label="Jobs: {src.name}"
                   class="px-3 py-1.5 bg-surface-3 hover:bg-surface-4 text-text text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5">
                   <svg aria-hidden="true" class="w-3 h-3 transition-transform {expandedSource === src.id ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                   Jobs
@@ -388,12 +399,12 @@
                 {#if !isReplicaMode()}
                 <button onclick={() => openEdit(src)}
                   class="px-3 py-1.5 bg-surface-3 hover:bg-surface-4 text-text text-xs font-medium rounded-lg transition-colors"
-                  aria-label="Edit replication target">
+                  aria-label="Edit: {src.name}">
                   Edit
                 </button>
                 <button onclick={() => confirmDelete = { show: true, id: src.id, name: src.name }}
                   class="px-3 py-1.5 bg-danger/10 hover:bg-danger/20 text-danger text-xs font-medium rounded-lg transition-colors"
-                  aria-label="Delete replication target">
+                  aria-label="Delete: {src.name}">
                   Delete
                 </button>
                 {/if}
@@ -402,7 +413,7 @@
           </div>
 
           {#if expandedSource === src.id}
-            <div class="border-t border-border bg-surface px-5 py-4">
+            <div id="repl-jobs-{src.id}" class="border-t border-border bg-surface px-5 py-4">
               {#if loadingJobs}
                 <div class="flex items-center gap-2 text-sm text-text-muted">
                   <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>

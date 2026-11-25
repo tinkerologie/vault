@@ -223,7 +223,7 @@ func TestRecoveryGetPlan458(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 			t.Fatal(err)
 		}
-		if len(resp.Warnings) != 1 || !strings.Contains(resp.Warnings[0], ">7 days ago") {
+		if len(resp.Warnings) != 1 || !strings.Contains(resp.Warnings[0], "is out of date") {
 			t.Errorf("warnings = %v", resp.Warnings)
 		}
 	})

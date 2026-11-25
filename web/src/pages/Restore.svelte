@@ -129,7 +129,7 @@
 
   async function loadJobs() {
     try {
-      jobs = (await api.listJobs(true)) || []
+      jobs = (await api.listJobsForRestore()) || []
     } catch (e) {
       showToast(e.message, 'error')
     } finally {

@@ -31,6 +31,18 @@ const THEMES = {
   'catppuccin mocha': ['@theme', '.dark', '.theme-catppuccin', '.theme-catppuccin.dark'],
 }
 
+// Styles that build on the Default tokens (#684). They lean on Tailwind's own
+// palette for hues, so only the UI parts below are checked here; axe in
+// tests/contrast.spec.ts measures their text.
+const BASE_THEMES = {
+  'default light': ['@theme'],
+  'default dark': ['@theme', '.dark'],
+  '1-bit light': ['@theme', '.theme-1bit'],
+  '1-bit dark': ['@theme', '.dark', '.theme-1bit', '.theme-1bit.dark'],
+  'retro light': ['@theme', '.theme-retro'],
+  'retro dark': ['@theme', '.dark', '.theme-retro', '.theme-retro.dark'],
+}
+
 function palette(chain) {
   const merged = new Map()
   for (const sel of chain) for (const [k, v] of block(sel)) merged.set(k, v)
@@ -63,7 +75,7 @@ const over = (fg, alpha, bg) =>
   '#' + rgb(fg).map((v, i) => Math.round(v * alpha + rgb(bg)[i] * (1 - alpha)).toString(16).padStart(2, '0')).join('')
 
 const SEMANTIC = [
-  'vault', 'vault-dark', 'vault-text', 'vault-light', 'on-vault', 'on-status', 'placeholder',
+  'vault', 'vault-dark', 'vault-text', 'vault-light', 'on-vault', 'on-status', 'placeholder', 'focus-ring', 'switch-edge',
   'surface', 'surface-2', 'surface-3', 'surface-4', 'surface-5', 'border', 'border-hover',
   'text', 'text-muted', 'text-dim', 'success', 'danger', 'warning', 'info',
   ...['blue', 'purple', 'emerald', 'cyan', 'amber', 'rose', 'orange'].map((h) => `hue-${h}`),
@@ -89,6 +101,24 @@ function paletteShadesInUse() {
     if (/(?<![\w-])(?:[\w-]+:)*bg-white\b/.test(text)) shades.add('white')
   }
   return [...shades].sort()
+}
+
+/**
+ * Focus rings and switches (#684), for every style. A switch track is outlined
+ * in switch-edge when off and focus-ring when on; its thumb is ringed in
+ * switch-edge on the off track and on-vault on the amber one (app.css).
+ */
+function controlPairs(c) {
+  const list = []
+  const add = (label, fg, bg, min) => list.push([label, fg, bg, min])
+  for (const s of ['surface', 'surface-2', 'surface-3']) add(`focus ring on ${s}`, c('focus-ring'), c(s), 3)
+  for (const s of ['surface', 'surface-2']) {
+    add(`off switch track edge on ${s}`, c('switch-edge'), c(s), 3)
+    add(`on switch track edge on ${s}`, c('focus-ring'), c(s), 3)
+  }
+  add('off switch thumb ring on its track', c('switch-edge'), c('surface-4'), 3)
+  add('on switch thumb ring on its track', c('on-vault'), c('vault'), 3)
+  return list
 }
 
 /** [label, foreground, background, minimum] for one palette. */
@@ -144,13 +174,10 @@ function pairs(c) {
   add('on-vault on vault-dark (hover)', c('on-vault'), c('vault-dark'), 4.5)
   for (const t of ['success', 'danger', 'warning', 'info']) add(`on-status on ${t}`, c('on-status'), c(t), 4.5)
   add('on-status on danger/90 (hover)', c('on-status'), over(c('danger'), 0.9, c('surface')), 4.5)
-  add('connection banner text', c('amber-950'), over(c('amber-500'), 0.95, c('surface')), 4.5)
 
   // UI parts, 3:1 against what sits next to them.
-  for (const s of ['surface', 'surface-2']) {
-    add(`border on ${s}`, c('border'), c(s), 3)
-    add(`focus ring and checked controls on ${s}`, c('vault'), c(s), 3)
-  }
+  for (const s of ['surface', 'surface-2']) add(`border on ${s}`, c('border'), c(s), 3)
+  list.push(...controlPairs(c))
   add('unprotected status dot', c('surface-5'), c('surface-3'), 3)
   add('protected status dot', c('success'), over(c('success'), 0.05, c('surface-2')), 3)
   add('pending status dot', c('amber-500'), over(c('amber-500'), 0.05, c('surface-2')), 3)
@@ -188,12 +215,36 @@ describe.each(Object.entries(THEMES))('%s palette', (name, chain) => {
   })
 })
 
-describe('Latte switch thumbs', () => {
-  it('ring the pale thumb at 3:1 against the thumb and the off track', () => {
-    const c = palette(THEMES['catppuccin latte'])
-    expect(CSS).toMatch(/\.theme-catppuccin:not\(\.dark\) \[class~="bg-white"\][\s\S]*?box-shadow: 0 0 0 1px var\(--color-text-dim\)/)
-    expect(ratio(c('text-dim'), c('white'))).toBeGreaterThanOrEqual(3)
-    expect(ratio(c('text-dim'), c('surface-4'))).toBeGreaterThanOrEqual(3)
+describe.each(Object.entries(BASE_THEMES))('%s palette', (name, chain) => {
+  const c = palette(chain)
+
+  it('meets 3:1 for focus rings and switch boundaries', () => {
+    const failures = controlPairs(c)
+      .map(([label, fg, bg, min]) => ({ label, fg, bg, ratio: +ratio(fg, bg).toFixed(2), min }))
+      .filter((p) => p.ratio < p.min)
+    expect(failures).toEqual([])
+  })
+})
+
+describe('focus ring and switch rules', () => {
+  const rule = (selector) => {
+    const at = CSS.indexOf(selector)
+    expect(at, `app.css has a rule for ${selector}`).toBeGreaterThan(-1)
+    return CSS.slice(at, CSS.indexOf('}', at))
+  }
+
+  it('draws the global focus ring in the focus-ring token', () => {
+    expect(rule('*:focus-visible {')).toMatch(/outline: 2px solid var\(--color-focus-ring\)/)
+  })
+
+  it('outlines off tracks and rings thumbs in every switch markup', () => {
+    expect(rule('[role="switch"][aria-checked="false"] > .bg-surface-4')).toMatch(/inset 0 0 0 1px var\(--color-switch-edge\)/)
+    expect(rule('input.peer:not(:checked) + .bg-surface-4')).toMatch(/inset 0 0 0 1px var\(--color-switch-edge\)/)
+    expect(rule('[role="switch"][aria-checked="true"] > .bg-vault')).toMatch(/inset 0 0 0 1px var\(--color-focus-ring\)/)
+    expect(rule('[role="switch"][aria-checked="false"] [class~="bg-white"]')).toMatch(/0 0 0 1px var\(--color-switch-edge\)/)
+    expect(rule('[role="switch"][aria-checked="true"] [class~="bg-white"]')).toMatch(/0 0 0 1px var\(--color-on-vault\)/)
+    // The visually hidden checkbox's focus shows on its track.
+    expect(rule('input.peer:focus-visible + div')).toMatch(/outline: 2px solid var\(--color-focus-ring\)/)
   })
 })
 

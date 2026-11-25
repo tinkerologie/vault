@@ -44,6 +44,7 @@ export function createFixtureStore({ entries = [], hasMore = false } = {}) {
   let olderBatch = null // entries appended when the next loadOlder settles
 
   const unsubscribe = vi.fn()
+  let onArrive = null // the page's live-arrival callback, from setupWs (#686)
 
   const store = {
     get entries() { return _entries },
@@ -88,7 +89,7 @@ export function createFixtureStore({ entries = [], hasMore = false } = {}) {
     setJobFilter: vi.fn((v) => { _jobFilter = v }),
     setSearchFilter: vi.fn((v) => { _search = v }),
     setError: vi.fn((v) => { _error = v }),
-    setupWs: vi.fn(() => unsubscribe),
+    setupWs: vi.fn((cb) => { onArrive = cb ?? null; return unsubscribe }),
     dispose: vi.fn(),
   }
 
@@ -97,6 +98,11 @@ export function createFixtureStore({ entries = [], hasMore = false } = {}) {
     setEntries(list) { _entries = list },
     /** Add entries newer than everything loaded (they render at the top). */
     addNewer(list) { _entries = [..._entries, ...list] },
+    /** Entries arriving over the WebSocket: added and reported to the page. */
+    liveArrive(list) {
+      _entries = [..._entries, ...list]
+      onArrive?.(list.filter((e) => matchesLevel(e) && matchesJob(e) && matchesSearch(e, _search)).length)
+    },
     setHasMore(v) { _hasMore = v },
     setError(v) { _error = v },
     setPruned(v) { _pruned = v },

@@ -53,6 +53,8 @@ export interface MockJob {
   created_at?: string;
   items: MockJobItem[];
   baseline?: { job_id: number; sample_count: number };
+  /** Items only retained restore points still hold (GET /jobs?history=true, #669). */
+  historical_items?: { item_name: string; item_type: string; last_backup_at?: string; restore_points?: number }[];
 }
 
 export interface MockStorageDestination {

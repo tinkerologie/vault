@@ -522,10 +522,12 @@ func TestJobHandler_ItemType(t *testing.T) {
 		{"container item", jobID, "plex", "container"},
 		{"folder item", jobID, "docs", "folder"},
 		{"item no longer configured", jobID, "gone", ""},
+		{"removed item recorded by the restore point", jobID, "removed", "container"},
 		{"unknown job", jobID + 4242, "plex", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := h.itemType(tc.jobID, tc.itemName); got != tc.want {
+			point := db.RestorePoint{Metadata: `{"item_types":{"removed":"container"}}`}
+			if got := h.itemType(tc.jobID, point, tc.itemName); got != tc.want {
 				t.Errorf("itemType(%d, %q) = %q, want %q", tc.jobID, tc.itemName, got, tc.want)
 			}
 		})

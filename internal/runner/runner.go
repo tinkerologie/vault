@@ -213,6 +213,9 @@ type Runner struct {
 	cancellingRunID          int64
 	cancellingRestoreRequest string
 	restoreStopRequested     bool
+	// restoreStopFn cancels the active restore as an operator stop, so its
+	// outcome is recorded as cancelled rather than failed (#701).
+	restoreStopFn func()
 
 	// lastProgress tracks the last progress update time for stall detection.
 	lastProgressMu sync.Mutex
