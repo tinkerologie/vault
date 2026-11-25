@@ -225,6 +225,31 @@ export const createInitialMockStorage = (): MockStorageDestination[] => [
 ];
 
 /**
+ * `count` completed backup runs of job 1, newest first like GET /history:
+ * run `count` started most recently and run 1 first, one hour apart.
+ */
+export function createMockHistoryRuns(count: number, from = Date.UTC(2026, 9, 30, 12)): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, i) => {
+    const id = count - i;
+    const started = new Date(from - i * 3_600_000);
+    return {
+      id,
+      job_id: 1,
+      run_type: 'backup',
+      status: 'completed',
+      backup_type: 'full',
+      items_total: 1,
+      items_done: 1,
+      items_failed: 0,
+      size_bytes: 1024 ** 3,
+      log: JSON.stringify([{ name: `item-${id}`, type: 'container', status: 'completed' }]),
+      started_at: started.toISOString(),
+      completed_at: new Date(started.getTime() + 60_000).toISOString(),
+    };
+  });
+}
+
+/**
  * Intercepts Vault API endpoints to provide deterministic, hermetic responses for Playwright tests.
  */
 export interface VaultMockOptions {
@@ -431,6 +456,13 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       return typeof result === 'number'
         ? route.fulfill({ status: result, json: { error: 'Run not available' } })
         : route.fulfill({ json: result });
+    }
+    // Without an override, serve a run from the history fixtures, or 404 like the daemon.
+    if (runResultMatch && method === 'GET') {
+      const run = historyRuns.find((r) => Number(r.id) === Number(runResultMatch[1]));
+      return run
+        ? route.fulfill({ json: run })
+        : route.fulfill({ status: 404, json: { error: 'run not found' } });
     }
 
     // Dedup key rewrap after a recovery (#451): nothing locked by default.

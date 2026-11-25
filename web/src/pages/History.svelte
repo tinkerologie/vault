@@ -88,6 +88,15 @@
   // Read before the first render, so a reload or Back shows the filtered list
   // straight away rather than flashing the unfiltered one.
   const initialFilters = filtersFrom(readHashFilters('/history'))
+  // #/history?run=<id> opens that run, e.g. "View run" from the restore wizard (#701).
+  // It stays in the URL until the run is shown, so a reload meanwhile keeps it.
+  function runFrom(params) {
+    const run = Number(params?.get('run'))
+    return Number.isInteger(run) && run > 0 ? run : null
+  }
+  let focusRunId = $state(runFrom(readHashFilters('/history')))
+  // A linked run that couldn't be shown: gone, or its lookup failed (#720).
+  let runNotice = $state('')
   let selectedJob = $state(initialFilters.job)
   let selectedRunType = $state(initialFilters.kind)
   let selectedStatus = $state(initialFilters.status)
@@ -110,6 +119,7 @@
       job: selectedJob,
       kind: selectedRunType,
       q: searchQuery,
+      run: focusRunId ?? '',
     }, FILTER_DEFAULTS)
   })
   let reviewFilter = $state()
@@ -284,18 +294,67 @@
     } catch { /* keep whatever is already loaded */ }
   }
 
-  // #/history?run=<id> opens that run, e.g. "View run" from the restore wizard (#701).
-  function runFrom(params) {
-    const run = Number(params?.get('run'))
-    return Number.isInteger(run) && run > 0 ? run : null
+  // Runs fetched on their own because a link asked for one older than the
+  // loaded history; kept across reloads so the shown run doesn't vanish.
+  let linkedRuns = []
+  let historyLoaded = false
+  let lookingUpRunId = null
+
+  /** Adds runs missing from `runs`, keeping the list newest first. */
+  function withLinkedRuns(runs) {
+    const merged = [...runs]
+    for (const run of linkedRuns) {
+      if (merged.some(r => r.id === run.id)) continue
+      const at = merged.findIndex(r => r.started_at < run.started_at)
+      merged.splice(at === -1 ? merged.length : at, 0, run)
+    }
+    return merged
   }
-  let focusRunId = $state(runFrom(readHashFilters('/history')))
-  function revealFocusedRun() {
-    if (focusRunId == null || !allRuns.some(r => r.id === focusRunId)) return
+
+  // Shows the linked run wherever it is: clears filters that hide it, widens the
+  // visible range to reach it, or fetches it when it is outside the loaded history.
+  async function revealFocusedRun() {
+    // Let filter changes from the same hash (and their pagination reset) settle first.
+    await tick()
     const id = focusRunId
+    if (id == null || !historyLoaded) return
+    if (!allRuns.some(r => r.id === id)) {
+      lookUpRun(id)
+      return
+    }
+    if (!filteredRuns.some(r => r.id === id)) {
+      clearFilters()
+      await tick()
+      if (focusRunId !== id) return
+    }
+    const index = filteredRuns.findIndex(r => r.id === id)
+    if (index >= visibleCount) visibleCount = Math.ceil((index + 1) / pageSize) * pageSize
     focusRunId = null
+    runNotice = ''
     expandedRunIds.add(id)
-    tick().then(() => document.getElementById(`run-${id}`)?.scrollIntoView({ block: 'center' }))
+    await tick()
+    document.getElementById(`run-${id}`)?.scrollIntoView({ block: 'center' })
+  }
+
+  async function lookUpRun(id) {
+    if (lookingUpRunId === id) return
+    lookingUpRunId = id
+    try {
+      const run = await api.getRun(id)
+      if (focusRunId !== id) return
+      linkedRuns = [...linkedRuns, run]
+      const jobName = jobs.find(job => job.id === run.job_id)?.name || `Job ${run.job_id}`
+      allRuns = withLinkedRuns(allRuns).map(r => r.id === id ? { ...r, jobName } : r)
+      await revealFocusedRun()
+    } catch (e) {
+      if (focusRunId !== id) return
+      focusRunId = null
+      runNotice = e?.status === 404
+        ? `Run ${id} wasn't found. It may have been purged or removed by retention.`
+        : `Couldn't load run ${id}: ${e?.message || 'request failed'}`
+    } finally {
+      lookingUpRunId = null
+    }
   }
 
   // A link or Back/Forward to another History URL while the page is open.
@@ -339,7 +398,8 @@
       if (generation !== dataRequestGeneration) return
       jobs = loadedJobs || []
       const names = new Map(jobs.map(job => [job.id, job.name]))
-      allRuns = (runs || []).map(run => ({ ...run, jobName: names.get(run.job_id) || `Job ${run.job_id}` }))
+      allRuns = withLinkedRuns(runs || []).map(run => ({ ...run, jobName: names.get(run.job_id) || `Job ${run.job_id}` }))
+      historyLoaded = true
       if (selectedRunIds.size > 0) {
         const available = new Set(reviewableRuns.map(run => run.id))
         for (const id of selectedRunIds) {
@@ -477,6 +537,7 @@
     purging = true
     try {
       await api.purgeHistory()
+      linkedRuns = []
       // Reload first: the Purge button is disabled once the list is empty, so
       // closing after the reload sends focus to the page instead of a dead control.
       await loadData()
@@ -541,6 +602,18 @@
   {:else if error}
     <LoadError title="Couldn't load history" message={error} onretry={() => loadData()} />
   {:else}
+    {#if runNotice}
+      <div role="status" class="flex items-start justify-between gap-3 bg-surface-2 border border-warning/40 rounded-xl px-4 py-3 mb-6 text-sm text-text">
+        <p class="flex items-start gap-2">
+          <svg aria-hidden="true" class="w-4 h-4 mt-0.5 shrink-0 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/>
+          </svg>
+          <span>{runNotice}</span>
+        </p>
+        <button type="button" onclick={() => { runNotice = '' }}
+          class="shrink-0 min-h-6 px-2 rounded-md text-text-muted hover:text-text hover:bg-surface-3 transition-colors">Dismiss</button>
+      </div>
+    {/if}
     <!-- Active & Queued Operations -->
     {#if (progress.running && progress.activeRun) || (progress.queue && progress.queue.length > 0)}
       <div class="bg-surface-2 border border-border rounded-xl p-4 mb-6 shadow-sm">

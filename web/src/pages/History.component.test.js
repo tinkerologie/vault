@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   listAnomalies: vi.fn(),
   acknowledgeRuns: vi.fn(),
   purgeHistory: vi.fn(),
+  getRun: vi.fn(),
 }))
 vi.mock('../lib/api.js', () => ({ api, isReplicaMode: () => false }))
 vi.mock('../lib/ws.svelte.js', () => ({ onWsMessage: () => () => {} }))
@@ -208,5 +209,83 @@ describe('labels and error hints (#694, #711)', () => {
     render(History)
     expect((await screen.findAllByText('checksum mismatch in chunk 42')).length).toBeGreaterThan(0)
     expect(screen.queryByText('Details')).toBeNull()
+  })
+})
+
+describe('run links (#720)', () => {
+  // Newest first, as the API returns them: run 30 is on top and run 1 is last.
+  const LOG = JSON.stringify([{ name: 'plex', type: 'container', status: 'completed' }])
+  const many = Array.from({ length: 30 }, (_, i) => ({
+    id: 30 - i, job_id: 2, status: 'completed', log: LOG,
+    started_at: new Date(Date.UTC(2026, 9, 30 - i, 12)).toISOString(),
+  }))
+  const runButton = (id) => document.getElementById(`run-${id}`)?.querySelector('button[aria-expanded]')
+
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn()
+    api.getHistory.mockResolvedValue(many)
+  })
+
+  it('shows, expands and scrolls to a run beyond the first page', async () => {
+    window.location.hash = '#/history?run=6'
+    render(History)
+    await waitFor(() => expect(runButton(6)?.getAttribute('aria-expanded')).toBe('true'))
+    expect(document.getElementById('run-details-6')).toBeTruthy()
+    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled())
+    expect(api.getRun).not.toHaveBeenCalled()
+    await waitFor(() => expect(window.location.hash).toBe('#/history'))
+  })
+
+  it('keeps the link in the URL until the run is shown', async () => {
+    window.location.hash = '#/history?run=6'
+    let finish = () => {}
+    api.getHistory.mockReturnValue(new Promise((resolve) => { finish = () => resolve(many) }))
+    render(History)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(window.location.hash).toBe('#/history?run=6')
+    finish()
+    await waitFor(() => expect(runButton(6)?.getAttribute('aria-expanded')).toBe('true'))
+  })
+
+  it('reveals a run linked while the page is open', async () => {
+    render(History)
+    await waitFor(() => expect(runButton(30)).toBeTruthy())
+    expect(runButton(3)).toBeFalsy()
+    window.location.hash = '#/history?run=3'
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await waitFor(() => expect(runButton(3)?.getAttribute('aria-expanded')).toBe('true'))
+  })
+
+  it('clears filters that would hide the linked run', async () => {
+    window.location.hash = '#/history?status=failed&run=6'
+    render(History)
+    await waitFor(() => expect(runButton(6)?.getAttribute('aria-expanded')).toBe('true'))
+    expect(screen.getByRole('button', { name: 'Failed', pressed: false })).toBeTruthy()
+  })
+
+  it('fetches a run outside the loaded history on its own', async () => {
+    api.getRun.mockResolvedValue({ id: 500, job_id: 1, status: 'failed', log: LOG, started_at: '2025-01-01T12:00:00Z' })
+    window.location.hash = '#/history?run=500'
+    render(History)
+    await waitFor(() => expect(runButton(500)?.getAttribute('aria-expanded')).toBe('true'))
+    expect(api.getRun).toHaveBeenCalledWith(500)
+    expect(within(/** @type {HTMLElement} */ (document.getElementById('run-500'))).getByText('VM Backups')).toBeTruthy()
+  })
+
+  it('says so when the linked run no longer exists', async () => {
+    api.getRun.mockRejectedValue(Object.assign(new Error('run not found'), { status: 404 }))
+    window.location.hash = '#/history?run=999'
+    render(History)
+    expect(await screen.findByText(/Run 999 wasn.t found/)).toBeTruthy()
+    await waitFor(() => expect(window.location.hash).toBe('#/history'))
+    await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(screen.queryByText(/Run 999 wasn.t found/)).toBeNull()
+  })
+
+  it('reports a failed run lookup', async () => {
+    api.getRun.mockRejectedValue(Object.assign(new Error('HTTP 500'), { status: 500 }))
+    window.location.hash = '#/history?run=999'
+    render(History)
+    expect(await screen.findByText(/Couldn.t load run 999: HTTP 500/)).toBeTruthy()
   })
 })
