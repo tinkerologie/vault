@@ -568,9 +568,15 @@ func TestHealthSummaryWithData(t *testing.T) {
 	if math.Abs(total-2) > 0.001 {
 		t.Errorf("total_items = %v, want 2", total)
 	}
+	// No restore point holds either item yet, so both wait for their first
+	// backup: the same answer the Dashboard gives (#708).
 	protected, _ := data["protected_items"].(float64)
-	if math.Abs(protected-2) > 0.001 {
-		t.Errorf("protected_items = %v, want 2", protected)
+	if math.Abs(protected) > 0.001 {
+		t.Errorf("protected_items = %v, want 0", protected)
+	}
+	pending, _ := data["pending_items"].(float64)
+	if math.Abs(pending-2) > 0.001 {
+		t.Errorf("pending_items = %v, want 2", pending)
 	}
 	if _, ok := data["last_success_at"].(string); !ok {
 		t.Errorf("last_success_at missing or wrong type: %T", data["last_success_at"])

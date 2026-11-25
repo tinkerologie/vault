@@ -59,7 +59,7 @@ describe('Logs with the real store', () => {
 
     render(Logs)
     await flush()
-    const box = document.querySelector('[role="log"]')
+    const box = document.querySelector('[data-log-console]')
     expect(box).toBeTruthy()
     // The background load failed silently: no error, history still incomplete.
     expect(calls.map((c) => c.limit)).toEqual([BATCH, 1000])
@@ -70,7 +70,7 @@ describe('Logs with the real store', () => {
 
     expect(calls.at(-1)).toEqual({ limit: BATCH, beforeId: 71 })
     expect(screen.getByText('older page unavailable')).toBeTruthy()
-    expect(document.querySelector('[role="log"]')).toBeNull()
+    expect(document.querySelector('[data-log-console]')).toBeNull()
   })
 
   it('shows the error state without a console when the first load fails', async () => {
@@ -80,6 +80,6 @@ describe('Logs with the real store', () => {
     render(Logs)
     await flush()
     expect(screen.getByText('daemon unavailable')).toBeTruthy()
-    expect(document.querySelector('[role="log"]')).toBeNull()
+    expect(document.querySelector('[data-log-console]')).toBeNull()
   })
 })

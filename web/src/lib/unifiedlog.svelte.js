@@ -34,7 +34,11 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export function createUnifiedLogStore() {
+/**
+ * @param {{ category?: string, level?: string, job?: string, search?: string }} [initial]
+ *   Filters to start with, such as those read from the URL (#693).
+ */
+export function createUnifiedLogStore(initial = {}) {
   let _entries = $state([])
   let _loaded = $state(false)
   let _loading = $state(false)
@@ -46,10 +50,10 @@ export function createUnifiedLogStore() {
   let _olderCtx = -1
   let _olderSilent = true
   let _oldestActivityId = $state(null) // cursor for "load older"
-  let _category = $state('')
-  let _levelFilter = $state('')
-  let _jobFilter = $state('')
-  let _search = $state('')
+  let _category = $state(initial.category || '')
+  let _levelFilter = $state(initial.level || '')
+  let _jobFilter = $state(initial.job || '')
+  let _search = $state(initial.search || '')
   let _searching = $state(false) // background auto-load of older entries during search (#328)
   let _pruned = $state(false)    // prune dropped oldest entries since the last fresh load (#328)
   // Plain objects used as sets (key = id, value = true). Avoids svelte/prefer-svelte-reactivity
@@ -723,7 +727,11 @@ export function createUnifiedLogStore() {
 
   // ---- WS real-time ----
 
-  function setupWs() {
+  // onArrive(count) hears how many live entries passing the filters each
+  // message added, so the page can announce them without making the console
+  // a live region (#686).
+  function setupWs(onArrive) {
+    const visible = (list) => list.filter(e => matchesLevel(e) && matchesJob(e) && matchesSearch(e, _search)).length
     const unsub = onWsMessage((msg) => {
       if (msg.type === 'activity' && msg.entry) {
         if (_category && msg.entry.category !== _category) return
@@ -755,6 +763,7 @@ export function createUnifiedLogStore() {
         }
 
         _entries = prune([..._entries, ...newEntries].sort((a, b) => tsMs(a.ts) - tsMs(b.ts)))
+        onArrive?.(visible(newEntries))
       } else if (msg.type === 'run_log' && msg.entry) {
         const rle = msg.entry
         const ctx = _entries.find(e => e.runId === rle.run_id && e.type === 'summary') ||
@@ -783,6 +792,7 @@ export function createUnifiedLogStore() {
         // would yank it back and the visible set at the bottom would flip
         // (the "set replaced by another set" flash on refresh during a run).
         _entries = prune([..._entries, newRl].sort((a, b) => tsMs(a.ts) - tsMs(b.ts)))
+        onArrive?.(visible([newRl]))
       }
     })
     return unsub
