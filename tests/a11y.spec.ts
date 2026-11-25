@@ -246,7 +246,7 @@ test.describe('screen reader polish (#608)', () => {
     await page.goto('/#/jobs');
     const main = page.getByRole('main');
     for (const job of ['Docker & Appdata', 'VM Backups']) {
-      for (const action of ['Run backup now', 'Duplicate job', 'Edit job', 'Delete job']) {
+      for (const action of ['Run Now', 'Duplicate job', 'Edit job', 'Delete job']) {
         await expect(main.getByRole('button', { name: `${action}: ${job}`, exact: true })).toBeVisible();
       }
     }

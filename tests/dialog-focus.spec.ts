@@ -469,8 +469,10 @@ test.describe('Wizard step focus (#528)', () => {
     await expect.poll(() => focusedHeading(page)).toBe('Where & when');
     await expect.poll(() => focusIsInTopDialog(page)).toBe(true);
 
-    // Reopening starts fresh: no focus jump onto the heading.
+    // Reopening starts fresh: no focus jump onto the heading. The draft has
+    // changes, so Escape asks before discarding it (#687).
     await page.keyboard.press('Escape');
+    await page.getByRole('dialog', { name: 'Discard changes?' }).getByRole('button', { name: 'Discard' }).click();
     await expect(dialog).toHaveCount(0);
     await page.getByRole('button', { name: /new job/i }).click();
     await expect.poll(() => focusIsInTopDialog(page)).toBe(true);

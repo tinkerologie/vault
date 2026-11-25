@@ -489,7 +489,7 @@ for (const viewport of VIEWPORTS) {
       await expect(h1(frame, 'Backup Jobs')).toBeVisible();
       await settledFrameHeight(page);
       await page.evaluate(() => window.scrollTo(0, 250));
-      await frame.getByRole('button', { name: /run backup now/i }).first().click();
+      await frame.getByRole('button', { name: /^Run Now:/ }).first().click();
       const toast = frame.getByRole('alert');
       await expect(toast).toBeVisible();
       await expectInParentViewport(page, await toast.boundingBox());

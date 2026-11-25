@@ -204,7 +204,7 @@ for (const { style, mode, label } of THEMES) {
 
     test('job wizard, delete dialog and run queued toast', async ({ page }) => {
       await page.goto('/#/jobs');
-      await page.getByRole('button', { name: /run backup now/i }).first().click();
+      await page.getByRole('button', { name: /^Run Now:/ }).first().click();
       await expect(page.getByText(/queued for execution/i).first()).toBeVisible();
       await expectNoContrastViolations(page, `${label} job queued`);
 
