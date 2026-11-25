@@ -66,6 +66,28 @@ test.describe('connection-lost banner (#686)', () => {
   });
 });
 
+test.describe('version shown once (#715)', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupVaultMockApi(page);
+  });
+
+  const dashVersion = (page: Page) => page.locator('main [data-dash-version]');
+
+  test('on desktop only the sidebar shows the version', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/#/');
+    await expect(page.locator('aside footer')).toContainText(/^v\S+/);
+    await expect(dashVersion(page)).toBeAttached();
+    await expect(dashVersion(page)).toBeHidden();
+  });
+
+  test('without the sidebar the Dashboard header shows it', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto('/#/');
+    await expect(dashVersion(page)).toBeVisible();
+  });
+});
+
 test.describe('command palette (#691)', () => {
   test.beforeEach(async ({ page }) => {
     await setupVaultMockApi(page);
