@@ -3,7 +3,6 @@ package handlers
 import (
 	"log"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -81,6 +80,41 @@ func isBackupRun(run db.JobRun) bool {
 	return run.RunType == "" || run.RunType == "backup"
 }
 
+// serverKeySavedSetting records when vault.key was last downloaded, or when the
+// operator confirmed keeping a copy elsewhere (#714).
+const serverKeySavedSetting = "server_key_saved_at"
+
+// serverKeyAtRisk reports whether vault.key is the only way to open this
+// server's deduplicated backups and no copy is known to exist off the server
+// (#714). Since #451 a backup passphrase escrows the dedup master key, so the
+// key file only matters while no passphrase is set; its copy, on the same flash
+// drive Vault protects, would be lost with the server.
+func (h *HealthHandler) serverKeyAtRisk(jobs []db.Job) bool {
+	if hash, _ := h.db.GetSetting("encryption_passphrase_hash", ""); hash != "" {
+		return false
+	}
+	if saved, _ := h.db.GetSetting(serverKeySavedSetting, ""); saved != "" {
+		return false
+	}
+	dests, err := h.db.ListStorageDestinations()
+	if err != nil {
+		log.Printf("health summary: listing storage destinations: %v", err)
+		return false
+	}
+	dedup := map[int64]bool{}
+	for _, dest := range dests {
+		if dest.DedupEnabled {
+			dedup[dest.ID] = true
+		}
+	}
+	for _, job := range jobs {
+		if dedup[job.StorageDestID] {
+			return true
+		}
+	}
+	return false
+}
+
 // HealthHandler serves aggregated health metrics for the dashboard.
 type HealthHandler struct {
 	db *db.DB
@@ -105,15 +139,15 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	staleJobs := []staleJob{}
 	now := time.Now()
 
-	// Counts are per distinct item (type:name), not per job-item pair. The same
-	// container or VM is frequently covered by several jobs; counting it once
-	// per job inflated the totals and, when only one of those jobs had produced
-	// a restore point, emitted the SAME key in both protected_keys and
-	// pending_keys — so the UI showed one item as simultaneously protected and
-	// unprotected, and protection_pct under-reported a genuinely protected item.
-	// An item is protected if ANY job has backed it up.
-	protectedSet := map[string]struct{}{}
-	allItems := map[string]struct{}{}
+	// Counts are per distinct item (type:name), not per job-item pair: the same
+	// container or VM is often covered by several jobs, and one key must never be
+	// both protected and pending. An item is protected if ANY job has backed it
+	// up, and only once a Restore Point actually contains it (the membership
+	// recorded when the backup ran); adding an item to a job does not make it
+	// backed up. Schedule state is irrelevant to membership: a disabled schedule
+	// must not flip already-backed-up items back to unprotected. The classifier
+	// is shared with the recovery plan so both pages count the same items.
+	classes := newProtectionClassifier(now)
 
 	for _, job := range jobs {
 		items, err := h.db.GetJobItems(job.ID)
@@ -121,42 +155,13 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// An item is "protected" only when at least one of the job's restore
-		// points actually contains it (per the membership recorded when the
-		// backup ran). Items configured in the job but never captured in a
-		// restore point are "pending" — adding an item to a job does not make
-		// it backed up. Schedule state is irrelevant: a disabled schedule must
-		// not flip already-backed-up items back to unprotected.
 		rps, rpErr := h.db.ListRestorePoints(job.ID)
 		if rpErr != nil {
 			// Surface DB issues rather than silently treating the job as having
 			// no backups (which would mislabel its items as pending).
 			log.Printf("health summary: listing restore points for job %d: %v", job.ID, rpErr)
 		}
-		backedUp := make(map[string]struct{})
-		legacyAllProtected := false
-		for _, rp := range rps {
-			members, known := rp.BackedUpItems()
-			if !known {
-				// A legacy restore point (produced before per-item membership
-				// was recorded) tells us nothing per item; fall back to the
-				// historical behaviour of treating every job item as protected
-				// so existing installs don't regress. Once one is found the
-				// per-item map is irrelevant, so stop scanning.
-				legacyAllProtected = true
-				break
-			}
-			for name := range members {
-				backedUp[name] = struct{}{}
-			}
-		}
-		for _, item := range items {
-			key := item.ItemType + ":" + item.ItemName
-			allItems[key] = struct{}{}
-			if _, isBackedUp := backedUp[item.ItemName]; legacyAllProtected || isBackedUp {
-				protectedSet[key] = struct{}{}
-			}
-		}
+		classes.addJob(job, items, rps)
 
 		// A run of skips or failures can push the last success out of any recent
 		// window, so this isn't read from the runs below. With run history purged,
@@ -215,22 +220,13 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sorted so the payload is stable across requests (map iteration is not).
-	protectedKeys := make([]string, 0, len(protectedSet))
-	for key := range protectedSet {
-		protectedKeys = append(protectedKeys, key)
-	}
-	sort.Strings(protectedKeys)
+	protectedKeys := classes.backedKeys()
+	pendingKeys := classes.pendingKeys()
+	outOfDateKeys := classes.outOfDateKeys()
 
-	pendingKeys := []string{}
-	for key := range allItems {
-		if _, ok := protectedSet[key]; !ok {
-			pendingKeys = append(pendingKeys, key)
-		}
-	}
-	sort.Strings(pendingKeys)
-
-	totalItems := len(allItems)
-	protectedItems := len(protectedSet)
+	totalItems := len(classes.all)
+	protectedItems := len(protectedKeys)
+	upToDateItems := protectedItems - len(outOfDateKeys)
 
 	// A skipped or cancelled run is a backup that didn't happen, so it lowers the
 	// success rate. A partial run isn't scored; it's reported as a warning.
@@ -251,9 +247,15 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	if outstandingTotal > 0 {
 		outstandingSuccessRate = (recentSuccess * 100) / outstandingTotal
 	}
-	// Health score: weighted average of protection % and outstanding success rate.
+	// Health score: weighted average of up-to-date protection and outstanding
+	// success rate. An out-of-date item still has a Restore Point, so it counts in
+	// protection_pct, but not towards the score: a stale backup isn't healthy.
 	// Round to nearest integer rather than truncating.
-	healthScore := (protectionPct*40 + outstandingSuccessRate*60 + 50) / 100
+	upToDatePct := 0
+	if totalItems > 0 {
+		upToDatePct = (upToDateItems * 100) / totalItems
+	}
+	healthScore := (upToDatePct*40 + outstandingSuccessRate*60 + 50) / 100
 
 	result := map[string]any{
 		"health_score":          healthScore,
@@ -261,6 +263,11 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		"protected_items":       protectedItems,
 		"protected_keys":        protectedKeys,
 		"pending_keys":          pendingKeys,
+		"pending_items":         len(pendingKeys),
+		"out_of_date_keys":      outOfDateKeys,
+		"out_of_date_items":     len(outOfDateKeys),
+		"up_to_date_items":      upToDateItems,
+		"server_key_at_risk":    h.serverKeyAtRisk(jobs),
 		"protection_pct":        protectionPct,
 		"success_rate":          successRate,
 		"recent_success":        recentSuccess,
