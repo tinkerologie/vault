@@ -44,6 +44,14 @@
 
 /* Vault theme – amber accent, light/dark support */
 @theme {
+  /* Type scale additions (#698). text-2xs is the 12px floor for meta text
+     (badges, timestamps, chart labels): nothing readable goes below it. Both
+     are rem so the browser's font-size setting still scales them. text-metric
+     is the Dashboard tile figure. */
+  --text-2xs: 0.75rem;
+  --text-2xs--line-height: 1rem;
+  --text-metric: 1.625rem;
+  --text-metric--line-height: 1;
   --color-amber-50: #fffbeb;
   --color-amber-100: #fef3c7;
   --color-amber-200: #fde68a;
@@ -74,6 +82,25 @@
   --color-hue-orange: var(--color-orange-800);
   /* Input placeholder text; preflight's 50% currentcolor falls below AA. */
   --color-placeholder: var(--color-text-muted);
+  /* Keyboard focus ring (#684). Amber is 2.1:1 on the light surfaces, so light
+     mode uses amber-700 (5:1); every other style maps it back to its accent. */
+  --color-focus-ring: #b45309;
+  /* Edge of an off switch's track and thumb (#684): 3:1 against the card and
+     the pale track. web/src/lib/palette-contrast.test.js checks every style. */
+  --color-switch-edge: var(--color-text-dim);
+  /* Switch thumb: white on the amber and grey tracks; colour-only styles
+     soften it to their own light ink. */
+  --color-switch-thumb: #ffffff;
+  /* Tint bases (#698): the colour behind a categorical chip, icon tile or
+     fill, used with an opacity (bg-hue-blue-bg/15) or solid for a bar or dot.
+     Every style defines them, so no component needs a raw palette class. */
+  --color-hue-blue-bg: var(--color-blue-500);
+  --color-hue-purple-bg: var(--color-purple-500);
+  --color-hue-emerald-bg: var(--color-emerald-500);
+  --color-hue-cyan-bg: var(--color-cyan-500);
+  --color-hue-amber-bg: var(--color-amber-500);
+  --color-hue-rose-bg: var(--color-rose-500);
+  --color-hue-orange-bg: var(--color-orange-500);
   /* Light mode (default) */
   --color-surface: #ffffff;
   --color-surface-2: #f9fafb;
@@ -94,6 +121,7 @@
 /* Dark mode overrides */
 .dark {
   --color-vault-text: var(--color-vault);
+  --color-focus-ring: var(--color-vault);
   --color-on-status: #111827;
   --color-hue-blue: var(--color-blue-300);
   --color-hue-purple: var(--color-purple-300);
@@ -125,6 +153,7 @@
 /* 1-Bit Light: white bg, black text */
 .theme-1bit {
   --color-vault-text: var(--color-vault);
+  --color-focus-ring: var(--color-vault);
   --color-on-vault: #ffffff;
   --color-on-status: #ffffff;
   --color-hue-blue: var(--color-text);
@@ -134,6 +163,13 @@
   --color-hue-amber: var(--color-text);
   --color-hue-rose: var(--color-text);
   --color-hue-orange: var(--color-text);
+  --color-hue-blue-bg: #000000;
+  --color-hue-purple-bg: #000000;
+  --color-hue-emerald-bg: #000000;
+  --color-hue-cyan-bg: #000000;
+  --color-hue-amber-bg: #000000;
+  --color-hue-rose-bg: #000000;
+  --color-hue-orange-bg: #000000;
   --color-vault: #000000;
   --color-vault-dark: #333333;
   --color-surface: #ffffff;
@@ -156,6 +192,13 @@
 .theme-1bit.dark {
   --color-on-vault: #000000;
   --color-on-status: #000000;
+  --color-hue-blue-bg: #ffffff;
+  --color-hue-purple-bg: #ffffff;
+  --color-hue-emerald-bg: #ffffff;
+  --color-hue-cyan-bg: #ffffff;
+  --color-hue-amber-bg: #ffffff;
+  --color-hue-rose-bg: #ffffff;
+  --color-hue-orange-bg: #ffffff;
   --color-vault: #ffffff;
   --color-vault-dark: #cccccc;
   --color-surface: #000000;
@@ -182,6 +225,7 @@
 
 /* Retro Light: warm parchment + cartridge red */
 .theme-retro {
+  --color-focus-ring: var(--color-vault);
   --color-vault: #b0002c;
   --color-vault-dark: #8c0022;
   --color-vault-text: #8c0022;
@@ -189,6 +233,18 @@
   --color-on-status: #ffffff;
   /* Darker than the default amber hue: its tint sits on parchment here. */
   --color-hue-amber: var(--color-amber-900);
+  /* Emerald and cyan chips sit on the parchment card fill (surface-3) in the
+     type picker, where the 800 shades fall just under 4.5:1. */
+  --color-hue-emerald: var(--color-emerald-900);
+  --color-hue-cyan: var(--color-cyan-900);
+  /* Tint bases: the Default 500 shades, as before the tokens existed. */
+  --color-hue-blue-bg: var(--color-blue-500);
+  --color-hue-purple-bg: var(--color-purple-500);
+  --color-hue-emerald-bg: var(--color-emerald-500);
+  --color-hue-cyan-bg: var(--color-cyan-500);
+  --color-hue-amber-bg: var(--color-amber-500);
+  --color-hue-rose-bg: var(--color-rose-500);
+  --color-hue-orange-bg: var(--color-orange-500);
   --color-surface: #f5e6c8;
   --color-surface-2: #eedcb0;
   --color-surface-3: #e2cea0;
@@ -211,6 +267,8 @@
   --color-vault-dark: #d09800;
   --color-vault-text: #f8b800;
   --color-hue-amber: var(--color-amber-300);
+  --color-hue-emerald: var(--color-emerald-300);
+  --color-hue-cyan: var(--color-cyan-300);
   --color-on-vault: #0f0f23;
   --color-on-status: #0f0f23;
   --color-surface: #0f0f23;
@@ -231,9 +289,9 @@
 
 /* ═══════════════════════════════════════════════
    COLOUR-ONLY STYLES – Default fonts and layout, palette tokens only.
-   Each block defines every semantic token plus the Tailwind palette shades
-   that components use directly (bg-amber-500/15, border-blue-400, bg-white
-   and so on), so no Default colour is left behind. Pairs are checked by
+   Each block defines every semantic token, including the tint bases and the
+   switch thumb, so no Default colour is left behind (components use no raw
+   Tailwind palette classes, #698). Pairs are checked by
    web/src/lib/palette-contrast.test.js and the axe audit in
    tests/contrast.spec.ts. Values marked "derived" are not official palette
    colours: they are the nearest shade that meets WCAG AA.
@@ -256,6 +314,8 @@
   --color-hue-rose: #ff92d0;        /* derived: lighter pink */
   --color-hue-orange: #ffb86c;      /* orange */
   --color-placeholder: var(--color-text-muted);
+  --color-focus-ring: var(--color-vault);
+  --color-switch-edge: var(--color-text-dim);
   --color-surface: #282a36;         /* background */
   --color-surface-2: #21222c;       /* derived: darker background for raised panels */
   --color-surface-3: #343746;       /* derived: between background and current line */
@@ -270,26 +330,15 @@
   --color-danger: #ff9999;          /* derived: lighter red, #ff5555 is 3.8:1 on panels */
   --color-warning: #f1fa8c;         /* yellow */
   --color-info: #8be9fd;            /* cyan */
-  /* Tailwind palette shades used directly by components */
-  --color-blue-400: #6272a4;
-  --color-blue-500: #6272a4;
-  --color-purple-400: #bd93f9;
-  --color-purple-500: #bd93f9;
-  --color-amber-400: #f1fa8c;
-  --color-amber-500: #f1fa8c;
-  --color-amber-950: #282a36;
-  --color-yellow-500: #f1fa8c;
-  --color-emerald-400: #50fa7b;
-  --color-emerald-500: #50fa7b;
-  --color-green-500: #50fa7b;
-  --color-cyan-400: #8be9fd;
-  --color-cyan-500: #8be9fd;
-  --color-rose-500: #ff79c6;
-  --color-red-500: #ff5555;
-  --color-orange-400: #ffb86c;
-  --color-orange-500: #ffb86c;
-  --color-gray-500: #6272a4;
-  --color-white: #f8f8f2;
+  /* Tint bases and the switch thumb (#698) */
+  --color-hue-blue-bg: #6272a4;
+  --color-hue-purple-bg: #bd93f9;
+  --color-hue-emerald-bg: #50fa7b;
+  --color-hue-cyan-bg: #8be9fd;
+  --color-hue-amber-bg: #f1fa8c;
+  --color-hue-rose-bg: #ff79c6;
+  --color-hue-orange-bg: #ffb86c;
+  --color-switch-thumb: #f8f8f2;    /* foreground */
 }
 
 /*! Catppuccin palette – Catppuccin, https://catppuccin.com, MIT License */
@@ -309,6 +358,8 @@
   --color-hue-rose: #952d36;        /* derived: darker maroon */
   --color-hue-orange: #8e3806;      /* derived: darker peach */
   --color-placeholder: var(--color-text-muted);
+  --color-focus-ring: var(--color-vault);
+  --color-switch-edge: var(--color-text-dim);
   --color-surface: #eff1f5;         /* base */
   --color-surface-2: #e6e9ef;       /* mantle */
   --color-surface-3: #dce0e8;       /* crust */
@@ -323,26 +374,15 @@
   --color-danger: #a20c2c;          /* derived: darker red */
   --color-warning: #764b0f;         /* derived: darker yellow */
   --color-info: #164bb5;            /* derived: darker blue */
-  /* Tailwind palette shades used directly by components */
-  --color-blue-400: #1e66f5;        /* blue */
-  --color-blue-500: #1e66f5;
-  --color-purple-400: #8839ef;      /* mauve */
-  --color-purple-500: #8839ef;
-  --color-amber-400: #a86a15;       /* derived: darker yellow, 3:1 as a fill */
-  --color-amber-500: #a86a15;
-  --color-amber-950: #11111b;       /* Mocha crust: text on the amber banner */
-  --color-yellow-500: #a86a15;
-  --color-emerald-400: #3a9027;     /* derived: darker green, 3:1 as a fill */
-  --color-emerald-500: #3a9027;
-  --color-green-500: #3a9027;
-  --color-cyan-400: #168c93;        /* derived: darker teal, 3:1 as a fill */
-  --color-cyan-500: #168c93;
-  --color-rose-500: #e14451;        /* derived: maroon, 3:1 as a fill */
-  --color-red-500: #d20f39;         /* red */
-  --color-orange-400: #d55409;      /* derived: darker peach, 3:1 as a fill */
-  --color-orange-500: #d55409;
-  --color-gray-500: #8c8fa1;        /* overlay1 */
-  --color-white: #eff1f5;           /* base */
+  /* Tint bases and the switch thumb (#698) */
+  --color-hue-blue-bg: #1e66f5;     /* blue */
+  --color-hue-purple-bg: #8839ef;   /* mauve */
+  --color-hue-emerald-bg: #3a9027;  /* derived: darker green, 3:1 as a fill */
+  --color-hue-cyan-bg: #168c93;     /* derived: darker teal, 3:1 as a fill */
+  --color-hue-amber-bg: #a86a15;    /* derived: darker yellow, 3:1 as a fill */
+  --color-hue-rose-bg: #e14451;     /* derived: maroon, 3:1 as a fill */
+  --color-hue-orange-bg: #d55409;   /* derived: darker peach, 3:1 as a fill */
+  --color-switch-thumb: #eff1f5;    /* base */
 }
 
 /* Catppuccin Mocha (dark) */
@@ -361,6 +401,8 @@
   --color-hue-rose: #eba0ac;        /* maroon */
   --color-hue-orange: #fab387;      /* peach */
   --color-placeholder: var(--color-text-muted);
+  --color-focus-ring: var(--color-vault);
+  --color-switch-edge: var(--color-text-dim);
   --color-surface: #1e1e2e;         /* base */
   --color-surface-2: #181825;       /* mantle */
   --color-surface-3: #313244;       /* surface0 */
@@ -375,26 +417,15 @@
   --color-danger: #f38ba8;          /* red */
   --color-warning: #f9e2af;         /* yellow */
   --color-info: #89b4fa;            /* blue */
-  /* Tailwind palette shades used directly by components */
-  --color-blue-400: #89b4fa;
-  --color-blue-500: #89b4fa;
-  --color-purple-400: #cba6f7;
-  --color-purple-500: #cba6f7;
-  --color-amber-400: #f9e2af;
-  --color-amber-500: #f9e2af;
-  --color-amber-950: #11111b;       /* crust */
-  --color-yellow-500: #f9e2af;
-  --color-emerald-400: #a6e3a1;
-  --color-emerald-500: #a6e3a1;
-  --color-green-500: #a6e3a1;
-  --color-cyan-400: #94e2d5;
-  --color-cyan-500: #94e2d5;
-  --color-rose-500: #eba0ac;
-  --color-red-500: #f38ba8;
-  --color-orange-400: #fab387;
-  --color-orange-500: #fab387;
-  --color-gray-500: #7f849c;
-  --color-white: #cdd6f4;           /* text */
+  /* Tint bases and the switch thumb (#698) */
+  --color-hue-blue-bg: #89b4fa;
+  --color-hue-purple-bg: #cba6f7;
+  --color-hue-emerald-bg: #a6e3a1;
+  --color-hue-cyan-bg: #94e2d5;
+  --color-hue-amber-bg: #f9e2af;
+  --color-hue-rose-bg: #eba0ac;
+  --color-hue-orange-bg: #fab387;
+  --color-switch-thumb: #cdd6f4;    /* text */
 }
 
 /* Dialog backdrops dim with the palette's darkest colour instead of black. */
@@ -402,11 +433,22 @@
 .theme-catppuccin dialog.vault-dialog::backdrop { background: rgb(76 79 105 / 0.5); }
 .theme-catppuccin.dark dialog.vault-dialog::backdrop { background: rgb(17 17 27 / 0.7); }
 
-/* Latte's switch thumb and off track are both pale, so the thumb gets a ring
-   that reaches 3:1 against each. */
-.theme-catppuccin:not(.dark) [class~="bg-white"],
-.theme-catppuccin:not(.dark) [class~="after:bg-white"]::after {
-  box-shadow: 0 0 0 1px var(--color-text-dim);
+/* Switches (#684, #698) render from components/Switch.svelte, which draws
+   each part's 3:1 edge itself: the off track and its thumb in switch-edge, the
+   on track in focus-ring (the accent itself outside Default light) and the on
+   thumb in on-vault. The checkbox form hides its input, so the input's focus
+   shows on the track. */
+input.peer:focus-visible + .switch-track {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Native controls, their popups and scrollbars follow the mode (#696). */
+:root {
+  color-scheme: light;
+}
+:root.dark {
+  color-scheme: dark;
 }
 
 html {
@@ -499,7 +541,7 @@ html.vault-embedded .sticky.bottom-4 { bottom: calc(var(--vault-visible-bottom) 
 
   /* Square focus ring */
   & *:focus-visible {
-    outline: 2px solid var(--color-vault);
+    outline: 2px solid var(--color-focus-ring);
     outline-offset: 0;
     border-radius: 0;
   }
@@ -707,7 +749,7 @@ html.vault-embedded .sticky.bottom-4 { bottom: calc(var(--vault-visible-bottom) 
 
 /* Focus ring */
 *:focus-visible {
-  outline: 2px solid var(--color-vault);
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
 }
 

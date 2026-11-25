@@ -299,7 +299,7 @@ func TestJobHandler_ItemTypeDBError(t *testing.T) {
 	if err := d.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if got := h.itemType(jobID, "plex"); got != "" {
+	if got := h.itemType(jobID, db.RestorePoint{}, "plex"); got != "" {
 		t.Errorf("itemType on a failed lookup = %q, want \"\"", got)
 	}
 }

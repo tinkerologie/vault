@@ -598,15 +598,16 @@ func TestSetEncryptionIsRateLimited(t *testing.T) {
 // localOnlyRoutes names the routes wrapped in LocalOnly, as "METHOD path" under
 // /api/v1. TestLocalOnlyRoutes checks each answers remote key holders 403.
 var localOnlyRoutes = map[string]bool{
-	"GET /settings/encryption/passphrase":  true,
-	"GET /settings/server-key":             true,
-	"GET /settings/api-key/key":            true,
-	"POST /settings/api-key/generate":      true,
-	"POST /settings/api-key/rotate":        true,
-	"DELETE /settings/api-key":             true,
-	"POST /settings/assistant-keys":        true,
-	"DELETE /settings/assistant-keys/{id}": true,
-	"PATCH /settings/assistant-keys/{id}":  true,
+	"GET /settings/encryption/passphrase":   true,
+	"GET /settings/server-key":              true,
+	"POST /settings/server-key/acknowledge": true,
+	"GET /settings/api-key/key":             true,
+	"POST /settings/api-key/generate":       true,
+	"POST /settings/api-key/rotate":         true,
+	"DELETE /settings/api-key":              true,
+	"POST /settings/assistant-keys":         true,
+	"DELETE /settings/assistant-keys/{id}":  true,
+	"PATCH /settings/assistant-keys/{id}":   true,
 }
 
 // publicRoutes is every route reachable with no credential. Adding to this

@@ -44,13 +44,16 @@ describe('shouldRedirectRoute', () => {
     })).toBe(false)
   })
 
-  it('redirects disabled optional daemon routes', () => {
+  it('keeps Anomalies open with detection off, so the page can explain why (#695)', () => {
     expect(shouldRedirectRoute({
       route: '/anomalies',
       replicaMode: false,
       anomalyEnabled: false,
       replicationEnabled: true,
-    })).toBe(true)
+    })).toBe(false)
+  })
+
+  it('redirects a disabled Replication route', () => {
     expect(shouldRedirectRoute({
       route: '/replication',
       replicaMode: false,

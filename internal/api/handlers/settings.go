@@ -19,6 +19,7 @@ import (
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/diagnostics"
 	"github.com/tinkerologie/vault/internal/docsmeta"
+	"github.com/tinkerologie/vault/internal/health"
 	"github.com/tinkerologie/vault/internal/memlimit"
 	"github.com/tinkerologie/vault/internal/notify"
 	"github.com/tinkerologie/vault/internal/safepath"
@@ -287,6 +288,11 @@ func (h *SettingsHandler) List(w http.ResponseWriter, r *http.Request) {
 	for _, key := range sensitiveSettingKeys {
 		delete(settings, key)
 	}
+	for key := range settings {
+		if strings.HasPrefix(key, db.DedupEscrowConfirmedPrefix) {
+			delete(settings, key)
+		}
+	}
 	delete(settings, db.DiscordBackupMuteMigrationKey)
 
 	respondJSON(w, http.StatusOK, settings)
@@ -315,6 +321,10 @@ var protectedSettingKeys = map[string]bool{
 	"snapshot_path_override": true,
 	"staging_dir_override":   true,
 	"appdata_path":           true,
+	// The vault.key copy record and the loaded key's fingerprint are written
+	// only by the download, the acknowledge endpoint and daemon start-up (#714).
+	health.ServerKeySavedSetting:   true,
+	db.ServerKeyFingerprintSetting: true,
 }
 
 // Update accepts a JSON object of key-value pairs and upserts them.
@@ -326,7 +336,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for k := range incoming {
-		if protectedSettingKeys[k] || strings.HasPrefix(k, db.SFTPHostKeyPinPrefix) {
+		if protectedSettingKeys[k] || strings.HasPrefix(k, db.SFTPHostKeyPinPrefix) || strings.HasPrefix(k, db.DedupEscrowConfirmedPrefix) {
 			respondError(w, http.StatusBadRequest, "cannot modify protected setting: "+k)
 			return
 		}
@@ -507,7 +517,33 @@ func (h *SettingsHandler) GetServerKey(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="vault.key"`)
 	w.Header().Set("Content-Length", strconv.Itoa(len(h.serverKey)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(h.serverKey)
+	n, err := w.Write(h.serverKey)
+	if err != nil || n != len(h.serverKey) {
+		return
+	}
+	// The Dashboard and Disaster Recovery stop warning that vault.key exists
+	// only on this server once a copy has been sent (#714). A download that
+	// never reached the client doesn't count.
+	if err := health.RecordServerKeyCopy(h.db, h.serverKey, time.Now()); err != nil {
+		log.Printf("settings: recording the vault.key download: %v", err)
+	}
+}
+
+// AcknowledgeServerKey records the operator's confirmation that a copy of
+// this vault.key is kept off the server, clearing the Dashboard and Disaster
+// Recovery caution for this key only (#714).
+//
+//	POST /api/v1/settings/server-key/acknowledge
+func (h *SettingsHandler) AcknowledgeServerKey(w http.ResponseWriter, _ *http.Request) {
+	if len(h.serverKey) != crypto.ServerKeySize {
+		respondError(w, http.StatusServiceUnavailable, "server key is not configured")
+		return
+	}
+	if err := health.RecordServerKeyCopy(h.db, h.serverKey, time.Now()); err != nil {
+		respondInternalError(w, fmt.Errorf("recording the vault.key copy: %w", err))
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"acknowledged": true})
 }
 
 // GetEncryptionPassphrase returns the recoverable encryption passphrase.

@@ -2,6 +2,8 @@
   import { getMounts } from '../lib/mounts.svelte.js'
   import { api } from '../lib/api.js'
   import { formatDate, relTime } from '../lib/utils.js'
+  import InlineSpinner from './InlineSpinner.svelte'
+  import { ICONS } from '../lib/icons.js'
 
   let { onunmount = null, onunmounterror = null } = $props()
 
@@ -42,7 +44,7 @@
       <div class="flex items-center gap-2.5">
         <div class="p-2 rounded-lg bg-vault/10 text-vault-text">
           <svg aria-hidden="true" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.folder}/>
           </svg>
         </div>
         <div>
@@ -62,7 +64,7 @@
             <div class="flex items-center gap-2 flex-wrap">
               <span class="text-sm font-semibold text-text">{m.job_name || `Job #${m.job_id}`}</span>
               <span class="text-xs text-text-dim">· Restore Point #{m.restore_point_id}</span>
-              <span class="px-2 py-0.5 text-[11px] font-medium rounded capitalize {m.status === 'active' ? 'bg-emerald-500/15 text-hue-emerald' : 'bg-amber-500/15 text-hue-amber'}">
+              <span class="px-2 py-0.5 text-2xs font-medium rounded capitalize {m.status === 'active' ? 'bg-hue-emerald-bg/15 text-hue-emerald' : 'bg-hue-amber-bg/15 text-hue-amber'}">
                 {m.status}
               </span>
             </div>
@@ -72,16 +74,16 @@
               <button type="button" onclick={() => copyPath(m)}
                 class="text-xs px-2 py-0.5 rounded bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text transition-colors cursor-pointer inline-flex items-center gap-1">
                 {#if copiedId === m.id}
-                  <svg aria-hidden="true" class="w-3.5 h-3.5 text-hue-emerald" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5 text-hue-emerald" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d={ICONS.check}/></svg>
                   <span class="text-hue-emerald font-medium">Copied</span>
                 {:else}
-                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.copy}/></svg>
                   <span>Copy</span>
                 {/if}
               </button>
             </div>
             {#if m.started_at}
-              <p class="text-[11px] text-text-dim pt-0.5">Mounted {formatDate(m.started_at)} ({relTime(m.started_at)})</p>
+              <p class="text-2xs text-text-dim pt-0.5">Mounted {formatDate(m.started_at)} ({relTime(m.started_at)})</p>
             {/if}
           </div>
 
@@ -90,7 +92,7 @@
               <button type="button" onclick={() => performUnmount(m)} disabled={unmountingId === m.id}
                 class="px-3 py-1.5 text-xs font-medium text-on-status bg-danger hover:bg-danger/80 rounded-lg transition-colors disabled:opacity-50 cursor-pointer inline-flex items-center gap-1.5">
                 {#if unmountingId === m.id}
-                  <svg aria-hidden="true" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  <InlineSpinner size="xs" />
                   Unmounting…
                 {:else}
                   Confirm Unmount
@@ -103,7 +105,7 @@
             {:else}
               <button type="button" onclick={() => { confirmUnmountId = m.id }}
                 class="px-3 py-1.5 text-xs font-medium text-danger hover:text-on-status hover:bg-danger/80 border border-danger/30 rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1.5">
-                <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.trash}/></svg>
                 Unmount
               </button>
             {/if}

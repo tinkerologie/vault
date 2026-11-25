@@ -27,12 +27,18 @@
   }
 
   onMount(() => { void load() })
+
+  // With nothing to show, the panel is one line so it doesn't take the top of
+  // History or Restore (#695). The heading and Refresh button stay the same
+  // elements either way, so focus survives a refresh that finds requests.
+  const compact = $derived(requests.length === 0 && !error && !warning && !cursor)
 </script>
 
-<section aria-labelledby={heading} class="mb-4 rounded-xl border border-border bg-surface-2 p-4">
-  <div class="flex flex-wrap items-center justify-between gap-2">
-    <h2 id={heading} class="text-base font-semibold text-text">{history ? 'Request history' : 'Pending Restore Requests'}</h2>
-    <button type="button" class="hit-target text-sm font-medium text-info hover:underline disabled:opacity-50"
+<section aria-labelledby={heading} data-compact={compact || undefined}
+  class="mb-4 rounded-xl border border-border bg-surface-2 {compact ? 'flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2' : 'p-4'}">
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-1 {compact ? 'contents' : 'justify-between'}">
+    <h2 id={heading} class={compact ? 'text-sm font-medium text-text' : 'text-base font-semibold text-text'}>{history ? 'Request history' : 'Pending Restore Requests'}</h2>
+    <button type="button" class="hit-target text-sm font-medium text-vault-text hover:underline disabled:opacity-50 {compact ? 'order-last ml-auto' : ''}"
       disabled={loading} onclick={() => load()}>Refresh requests</button>
   </div>
 
@@ -52,7 +58,7 @@
     <ul class="divide-y divide-border">
       {#each requests as request (request.id)}
         <li class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2">
-          <a class="hit-target text-sm font-medium text-info [overflow-wrap:anywhere] hover:underline"
+          <a class="hit-target text-sm font-medium text-vault-text [overflow-wrap:anywhere] hover:underline"
             href={'#/restore?request=' + encodeURIComponent(request.id)}>{request.item.item_name} · {request.job_name}</a>
           <span class="text-xs text-text-muted">
             {#if history}
@@ -69,7 +75,7 @@
     </ul>
   {/if}
   {#if cursor}
-    <button type="button" class="hit-target text-sm font-medium text-info hover:underline disabled:opacity-50"
+    <button type="button" class="hit-target text-sm font-medium text-vault-text hover:underline disabled:opacity-50"
       disabled={loading} onclick={() => load(cursor)}>Load more requests</button>
   {/if}
 </section>

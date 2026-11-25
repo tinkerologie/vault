@@ -8,7 +8,8 @@
   }
 </script>
 
-<div class="flex flex-col items-center justify-center py-12 gap-3">
-  <div class="{sizes[size] || sizes.md} border-vault/30 border-t-vault rounded-full animate-spin"></div>
+<!-- A status region, so the loading text is read out (#698); the ring is decoration. -->
+<div role="status" class="flex flex-col items-center justify-center py-12 gap-3">
+  <div aria-hidden="true" class="{sizes[size] || sizes.md} border-vault/30 border-t-vault rounded-full animate-spin"></div>
   <span class="text-sm text-text-muted">{text}</span>
 </div>

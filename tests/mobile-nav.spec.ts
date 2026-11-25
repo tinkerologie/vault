@@ -416,21 +416,19 @@ test.describe('target sizes at 375 px on touch (#530)', () => {
     await expect(page.getByRole('textbox', { name: 'Filter paths in plex' })).toBeVisible();
     await expectAxeTargetSize(page, 'Restore plan');
 
-    const expand = page.getByRole('button', { name: /^Expand / }).first();
-    const box = (await expand.boundingBox())!;
-    expect(box.width).toBeGreaterThanOrEqual(24);
-    expect(box.height).toBeGreaterThanOrEqual(24);
-    // The checkbox is a 24 px target itself, inside a focusable row, and using it
-    // doesn't expand the row.
-    const checkbox = page.getByRole('checkbox', { name: /^Select / }).first();
-    const checkBox = (await checkbox.boundingBox())!;
+    // The file tree is one ARIA tree (#703): each row is a 32 px treeitem, and
+    // its check box area is a 24 px target that checks without expanding.
+    const row = page.getByRole('treeitem').first();
+    const rowBox = (await row.boundingBox())!;
+    expect(rowBox.height).toBeGreaterThanOrEqual(24);
+    const check = row.locator('[data-part="check"]');
+    const checkBox = (await check.boundingBox())!;
     expect(checkBox.width).toBeGreaterThanOrEqual(24);
     expect(checkBox.height).toBeGreaterThanOrEqual(24);
-    const row = page.getByRole('treeitem').first();
     const expanded = await row.getAttribute('aria-expanded');
-    const wasChecked = await checkbox.isChecked();
-    await checkbox.click();
-    await expect(checkbox).toBeChecked({ checked: !wasChecked });
+    const wasChecked = await row.getAttribute('aria-checked');
+    await check.click();
+    await expect(row).not.toHaveAttribute('aria-checked', wasChecked!);
     expect(await row.getAttribute('aria-expanded')).toBe(expanded);
   });
 

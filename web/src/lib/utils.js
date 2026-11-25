@@ -2,6 +2,7 @@
 
 import { getHour12 } from './runtime-config.js'
 import { isCustomCron } from './cron.js'
+import { ITEM_TYPE_ICONS } from './icons.js'
 
 export function formatBytes(bytes) {
   // Mirrors Bytes() in internal/format exactly, including these guards: a
@@ -429,18 +430,8 @@ export function normaliseItemType(type) {
   return ITEM_TYPE_NOUNS[singular] ? singular : ''
 }
 
-/**
- * Canonical SVG icons (path `d` strings) for item and backup types across the UI.
- * @type {Record<string, string>}
- */
-export const ITEM_TYPE_ICONS = {
-  container: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4',
-  vm: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
-  folder: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z',
-  flash: 'M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2',
-  plugin: 'M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z',
-  zfs: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4',
-}
+// Item type icons live in the icon module (#698); re-exported for existing callers.
+export { ITEM_TYPE_ICONS }
 
 /**
  * Canonical text color classes for item and backup types across the UI.
@@ -498,6 +489,25 @@ export function itemTypeLabel(type) {
   if (type === 'all') return 'All'
   const t = normaliseItemType(type)
   return ITEM_TYPE_LABELS[t] || (type ? type + 's' : 'Items')
+}
+
+const ITEM_TYPE_SINGULAR_LABELS = {
+  container: 'Container',
+  vm: 'VM',
+  folder: 'Folder',
+  flash: 'Flash drive',
+  plugin: 'Plugin',
+  zfs: 'ZFS dataset',
+}
+
+/**
+ * The singular label for one item's type badge ("Container", not
+ * "CONTAINERS"). Filter tabs keep the plural itemTypeLabel (#705).
+ * @param {string | null | undefined} type
+ * @returns {string}
+ */
+export function itemTypeSingularLabel(type) {
+  return ITEM_TYPE_SINGULAR_LABELS[normaliseItemType(type)] || 'Item'
 }
 
 /**

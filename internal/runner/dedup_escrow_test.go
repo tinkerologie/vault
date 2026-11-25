@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -71,9 +72,24 @@ func TestDedupBackupEscrowsUnderBackupPassphrase(t *testing.T) {
 	}
 	t.Cleanup(func() { database.Close() })
 	_ = database.SetSetting("encryption_passphrase", "first")
+	_ = database.SetSetting("encryption_passphrase_hash", "hash-of-first")
 	storageDir := t.TempDir()
 	r := runnerWithKey(database, testServerKey())
 	dest, jobID := dedupBackup(t, r, database, storageDir)
+
+	// The confirmed escrow is recorded under the passphrase it opens with,
+	// so the vault.key caution can trust it (#714).
+	recordKey := db.DedupEscrowConfirmedPrefix + strconv.FormatInt(dest.ID, 10)
+	if got, _ := database.GetSetting(recordKey, ""); got != db.EscrowConfirmation("hash-of-first") || strings.Contains(got, "hash-of-first") {
+		t.Fatalf("escrow confirmation recorded as %q, want a marker that isn't the hash", got)
+	}
+	// Saving the same passphrase again makes a new hash. The runner's cache
+	// still knows the passphrase, and must refresh the record anyway.
+	_ = database.SetSetting("encryption_passphrase_hash", "hash-of-first-again")
+	r.RunJob(jobID)
+	if got, _ := database.GetSetting(recordKey, ""); got != db.EscrowConfirmation("hash-of-first-again") {
+		t.Fatalf("record not refreshed on a cache hit: %q", got)
+	}
 
 	if _, err := os.Stat(filepath.Join(storageDir, "_vault", "master.escrow.age")); err != nil {
 		t.Fatalf("backup did not write the escrow: %v", err)

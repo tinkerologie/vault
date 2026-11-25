@@ -17,6 +17,7 @@
   } = $props()
 
   import Tooltip from './Tooltip.svelte'
+  import { cardClass } from '../lib/selectable.js'
 
   const containerModes = [
     {
@@ -47,30 +48,28 @@
       icon: 'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z',
     },
   ]
+  // Radio names must be unique per instance.
+  const uid = $props.id()
 </script>
 
 <div class="space-y-5">
   {#if hasContainers}
-    <div>
-      <span class="block text-sm font-medium text-text mb-2">Container Backup Mode <Tooltip label="Container Backup Mode" text="Sequential stops and backs up each container one at a time, minimising downtime per container. Batch stops all containers at once – faster overall but more total downtime." /></span>
+    <div role="radiogroup" aria-labelledby="{uid}-container-title">
+      <span class="block text-sm font-medium text-text mb-2"><span id="{uid}-container-title">Container Backup Mode</span> <Tooltip label="Container Backup Mode" text="Sequential stops and backs up each container one at a time, minimising downtime per container. Batch stops all containers at once – faster overall but more total downtime." /></span>
       <div class="grid grid-cols-1 gap-2">
         {#each containerModes as mode (mode.value)}
-          <button
-            type="button"
-            onclick={() => (containerMode = mode.value)}
-            class="flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left {containerMode === mode.value
-              ? 'border-vault bg-vault/5'
-              : 'border-border hover:border-border-hover bg-surface-3/50'}"
+          <label
+            class="flex items-start gap-3 p-3 rounded-lg border transition-colors text-left cursor-pointer {cardClass(containerMode === mode.value)}"
           >
-            <div
-              class="w-5 h-5 mt-0.5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors {containerMode === mode.value
-                ? 'border-vault'
-                : 'border-border'}"
-            >
-              {#if containerMode === mode.value}
-                <div class="w-2.5 h-2.5 rounded-full bg-vault"></div>
-              {/if}
-            </div>
+            <input
+              type="radio"
+              name="{uid}-container-mode"
+              value={mode.value}
+              checked={containerMode === mode.value}
+              onchange={() => (containerMode = mode.value)}
+              aria-describedby="{uid}-container-{mode.value}-desc"
+              class="w-4 h-4 mt-0.5 shrink-0 accent-vault"
+            />
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
                 <svg aria-hidden="true" class="w-4 h-4 text-text-muted shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"
@@ -78,35 +77,31 @@
                 >
                 <span class="text-sm font-medium text-text">{mode.label}</span>
               </div>
-              <p class="text-xs text-text-muted mt-1 leading-relaxed">{mode.description}</p>
+              <p id="{uid}-container-{mode.value}-desc" class="text-xs text-text-muted mt-1 leading-relaxed">{mode.description}</p>
             </div>
-          </button>
+          </label>
         {/each}
       </div>
     </div>
   {/if}
 
   {#if hasVMs}
-    <div>
-      <span class="block text-sm font-medium text-text mb-2">VM Backup Mode <Tooltip label="VM Backup Mode" text="Live Snapshot creates a backup while the VM is running – no downtime. Cold Backup shuts the VM down first for maximum consistency but causes downtime." /></span>
+    <div role="radiogroup" aria-labelledby="{uid}-vm-title">
+      <span class="block text-sm font-medium text-text mb-2"><span id="{uid}-vm-title">VM Backup Mode</span> <Tooltip label="VM Backup Mode" text="Live Snapshot creates a backup while the VM is running – no downtime. Cold Backup shuts the VM down first for maximum consistency but causes downtime." /></span>
       <div class="grid grid-cols-1 gap-2">
         {#each vmModes as mode (mode.value)}
-          <button
-            type="button"
-            onclick={() => (vmMode = mode.value)}
-            class="flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left {vmMode === mode.value
-              ? 'border-vault bg-vault/5'
-              : 'border-border hover:border-border-hover bg-surface-3/50'}"
+          <label
+            class="flex items-start gap-3 p-3 rounded-lg border transition-colors text-left cursor-pointer {cardClass(vmMode === mode.value)}"
           >
-            <div
-              class="w-5 h-5 mt-0.5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors {vmMode === mode.value
-                ? 'border-vault'
-                : 'border-border'}"
-            >
-              {#if vmMode === mode.value}
-                <div class="w-2.5 h-2.5 rounded-full bg-vault"></div>
-              {/if}
-            </div>
+            <input
+              type="radio"
+              name="{uid}-vm-mode"
+              value={mode.value}
+              checked={vmMode === mode.value}
+              onchange={() => (vmMode = mode.value)}
+              aria-describedby="{uid}-vm-{mode.value}-desc"
+              class="w-4 h-4 mt-0.5 shrink-0 accent-vault"
+            />
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
                 <svg aria-hidden="true" class="w-4 h-4 text-text-muted shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"
@@ -114,9 +109,9 @@
                 >
                 <span class="text-sm font-medium text-text">{mode.label}</span>
               </div>
-              <p class="text-xs text-text-muted mt-1 leading-relaxed">{mode.description}</p>
+              <p id="{uid}-vm-{mode.value}-desc" class="text-xs text-text-muted mt-1 leading-relaxed">{mode.description}</p>
             </div>
-          </button>
+          </label>
         {/each}
       </div>
     </div>

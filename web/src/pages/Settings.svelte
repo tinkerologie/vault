@@ -19,6 +19,11 @@
   import RetryDelaysEditor from '../components/RetryDelaysEditor.svelte'
   import ChangelogModal from '../components/ChangelogModal.svelte'
   import { setAnomalyEnabled, setReplicationEnabled } from '../lib/settings.svelte.js'
+  import PasswordInput from '../components/PasswordInput.svelte'
+  import { getSubpath, navigate, onBeforeLeave } from '../lib/router.svelte.js'
+  import { snapshot, guardUnload } from '../lib/unsaved.js'
+  import { ICONS, ITEM_TYPE_ICONS } from '../lib/icons.js'
+  import Switch from '../components/Switch.svelte'
 
   let loading = $state(true)
   let health = $state(null)
@@ -31,15 +36,24 @@
   // but non-editable so operators can still read the current values.
   const readOnly = isReplicaMode()
 
-  // Tab navigation
-  /** @type {string} */
-  let activeTab = $state('general')
+  // Tab navigation. The tab lives in the URL (#/settings/security), so docs,
+  // toasts and other pages can link to it and Back/Forward move between tabs
+  // (#712). '#/settings' and unknown tabs show General.
   const tabs = [
     { id: 'general', label: 'General' },
     { id: 'security', label: 'Security' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'reference', label: 'Reference' },
   ]
+  /** @type {string} */
+  let activeTab = $derived(tabs.some((t) => t.id === getSubpath()) ? getSubpath() : 'general')
+
+  // A click adds a history entry; arrow keys replace it, so walking the tab
+  // list with the keyboard doesn't fill Back with every tab passed.
+  function selectTab(id, { replace = false } = {}) {
+    if (id === activeTab && getSubpath() === id) return
+    navigate(`/settings/${id}`, { replace })
+  }
 
   // Jump-list for the long General tab (issue #208 / E11). Everyday settings up
   // front, power-user knobs after; clicking scrolls to the section's card.
@@ -62,8 +76,20 @@
     const next = tabFromKey(e, tabs.map((t) => t.id), activeTab)
     if (!next) return
     e.preventDefault()
-    activeTab = next
+    selectTab(next, { replace: true })
     document.getElementById(`settings-tab-${next}`)?.focus()
+  }
+
+  // Height of the sticky Jump-to bar. Fields and cards scroll clear of it
+  // when focused or jumped to (#715).
+  let stickyHeight = $state(0)
+  // Measured on mount and on resize (the bar wraps at narrow widths). Not
+  // bind:offsetHeight, which needs ResizeObserver.
+  function measureHeight(node) {
+    const measure = () => { stickyHeight = node.offsetHeight }
+    measure()
+    window.addEventListener('resize', measure)
+    return { destroy: () => window.removeEventListener('resize', measure) }
   }
 
   function jumpToSetting(id) {
@@ -103,13 +129,16 @@
   let encConfirm = $state('')
   let encSaving = $state(false)
   let showEncPassphrase = $state(false)
+  let showChangePassphrase = $state(false)
   let confirmEncRemoval = $state(false)
   let revealedPassphrase = $state('')
   let showingPassphrase = $state(false)
   let loadingPassphrase = $state(false)
   let changingPassphrase = $state(false)
+  let encMismatch = $derived(!!encPassphrase && !!encConfirm && encPassphrase !== encConfirm)
   let changeNewPass = $state('')
   let changeConfirmPass = $state('')
+  let changeMismatch = $derived(!!changeNewPass && !!changeConfirmPass && changeNewPass !== changeConfirmPass)
 
   // Staging state
   let stagingInfo = $state(null)
@@ -239,9 +268,9 @@
 
   const aboutBadgeClass = $derived(
     aboutStatus.kind === 'ok'
-      ? 'bg-emerald-500/15 text-hue-emerald'
+      ? 'bg-hue-emerald-bg/15 text-hue-emerald'
       : aboutStatus.kind === 'update'
-        ? 'bg-orange-500/15 text-hue-orange'
+        ? 'bg-hue-orange-bg/15 text-hue-orange'
         : 'bg-surface text-text-muted',
   )
 
@@ -316,6 +345,7 @@
           compactionThreshold = String(Math.round(f * 100))
         }
       }
+      markSaved(...Object.keys(sections))
       currentVersion = (h && h.version) || 'dev'
       releases = changelog
       latest = latestRelease
@@ -378,6 +408,7 @@
   async function saveDiscordSettings() {
     if (readOnly) return
     discordSaving = true
+    const sent = sending('discord')
     try {
       settings = await api.updateSettings({
         discord_webhook_url: discordWebhookUrl,
@@ -387,6 +418,7 @@
         discord_mention_role_id: discordMentionRoleId,
         discord_mention_on: discordMentionOn,
       })
+      settleSave('discord', sent)
       showToast('Discord settings saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -415,10 +447,12 @@
   async function saveStagingOverride() {
     if (readOnly) return
     stagingSaving = true
+    const sent = sending('staging')
     try {
       stagingInfo = await api.setStagingOverride(stagingOverrideInput)
-      stagingOverrideInput = stagingInfo?.override || ''
-      showToast(stagingOverrideInput ? 'Staging path updated' : 'Staging reset to auto', 'success')
+      const override = stagingInfo?.override || ''
+      settleSave('staging', sent, () => { stagingOverrideInput = override })
+      showToast(override ? 'Staging path updated' : 'Staging reset to auto', 'success')
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -430,8 +464,10 @@
     if (readOnly) return
     stagingOverrideInput = ''
     stagingSaving = true
+    const sent = sending('staging')
     try {
       stagingInfo = await api.setStagingOverride('')
+      settleSave('staging', sent)
       showToast('Staging reset to automatic cascade', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -442,13 +478,15 @@
 
   async function saveSnapshotPath() {
     snapshotPathSaving = true
+    const sent = sending('database')
     try {
       databaseInfo = await api.setSnapshotPath(snapshotPathInput)
-      snapshotPathInput = databaseInfo?.snapshot_path_override || ''
+      const override = databaseInfo?.snapshot_path_override || ''
       const { text, tone } = snapshotMigrationMessage(
         databaseInfo,
-        snapshotPathInput ? 'Snapshot path updated' : 'Snapshot path reset to default',
+        override ? 'Snapshot path updated' : 'Snapshot path reset to default',
       )
+      settleSave('database', sent, () => { snapshotPathInput = override })
       showToast(text, tone)
     } catch (e) {
       showToast(e.message, 'error')
@@ -460,9 +498,11 @@
   async function resetSnapshotPath() {
     snapshotPathInput = ''
     snapshotPathSaving = true
+    const sent = sending('database')
     try {
       databaseInfo = await api.setSnapshotPath('')
       const { text, tone } = snapshotMigrationMessage(databaseInfo, 'Snapshot path reset to default')
+      settleSave('database', sent)
       showToast(text, tone)
     } catch (e) {
       showToast(e.message, 'error')
@@ -474,10 +514,11 @@
   async function saveAppdataPath() {
     if (readOnly) return
     appdataSaving = true
+    const sent = sending('appdata')
     try {
       const res = await api.setAppdataPath(appdataPath)
-      appdataPath = res.path
       appdataDefault = res.default || appdataDefault
+      settleSave('appdata', sent, () => { appdataPath = res.path })
       showToast('Appdata path saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -489,9 +530,11 @@
   async function resetAppdataPath() {
     if (readOnly) return
     appdataSaving = true
+    const sent = sending('appdata')
     try {
       const res = await api.setAppdataPath('')
-      appdataPath = res.path
+      // Reset stores the default, not the path on screen when it was pressed.
+      settleSave('appdata', sent, () => { appdataPath = res.path }, snapshot([text(res.path)]))
       showToast('Appdata path reset to default', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -503,8 +546,10 @@
   async function saveHistoryRetention() {
     if (readOnly) return
     historyRetentionSaving = true
+    const sent = sending('history')
     try {
       settings = await api.updateSettings({ history_retention_days: historyRetention })
+      settleSave('history', sent)
       showToast('History retention saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -528,6 +573,7 @@
       encryptionEnabled = true
       encPassphrase = ''
       encConfirm = ''
+      markSaved('encryption')
       showToast('Encryption passphrase set', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -611,14 +657,14 @@
         return
       }
       const value = (n / 100).toFixed(2) // "0.50"
+      const sent = sending('dedup')
       settings = await api.updateSettings({ dedup_compaction_min_dead_ratio: value })
       const rawRatio = settings?.dedup_compaction_min_dead_ratio
-      if (rawRatio !== undefined && rawRatio !== null && rawRatio !== '') {
+      settleSave('dedup', sent, () => {
+        if (rawRatio === undefined || rawRatio === null || rawRatio === '') return
         const f = Number.parseFloat(rawRatio)
-        if (Number.isFinite(f)) {
-          compactionThreshold = String(Math.round(f * 100))
-        }
-      }
+        if (Number.isFinite(f)) compactionThreshold = String(Math.round(f * 100))
+      })
       showToast('Compaction threshold saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -643,11 +689,13 @@
         autoThrottleSaving = false
         return
       }
+      const sent = sending('throttle')
       settings = await api.updateSettings({
         auto_throttle_enabled: autoThrottleEnabled ? 'true' : 'false',
         auto_throttle_link_mbps: String(link),
         auto_throttle_floor_mbps: String(floor),
       })
+      settleSave('throttle', sent)
       showToast('Upload throttling saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -677,11 +725,13 @@
         .split('\n')
         .map((p) => p.trim())
         .filter((p) => p !== '')
+      const sent = sending('exclusions')
       settings = await api.updateSettings({
         global_exclude_paths: JSON.stringify(paths),
         label_exclusions_enabled: labelExclusionsEnabled ? 'true' : 'false',
       })
-      globalExcludes = parseExcludeList(settings?.global_exclude_paths)
+      const stored = parseExcludeList(settings?.global_exclude_paths)
+      settleSave('exclusions', sent, () => { globalExcludes = stored })
       showToast('Exclusions saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -716,9 +766,12 @@
         retrySaving = false
         return
       }
+      const sent = sending('retry')
       settings = await api.updateSettings(payload)
-      retryMax = settings?.retry_max_default ?? retryMax
-      retryDelays = settings?.retry_delays_default ?? retryDelays
+      settleSave('retry', sent, () => {
+        retryMax = settings?.retry_max_default ?? retryMax
+        retryDelays = settings?.retry_delays_default ?? retryDelays
+      })
       showToast('Retry policy saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -773,9 +826,10 @@
       return
     }
     memoryLimitSaving = true
+    const sent = sending('memory')
     try {
       settings = await api.updateSettings({ memory_limit_mb: String(n) })
-      memoryLimitMb = settings?.memory_limit_mb ?? String(n)
+      settleSave('memory', sent, () => { memoryLimitMb = settings?.memory_limit_mb ?? String(n) })
       showToast(n === 0 ? 'Memory limit turned off' : 'Memory limit saved', 'success')
       await refreshRuntime()
     } catch (e) {
@@ -949,6 +1003,80 @@
   let anomalyEnabled = $state(true)
   let anomalySensitivityDefault = $state('balanced')
   let anomalyNotifyMinSeverity = $state('critical')
+
+  // Every section with its own Save or Apply remembers what was last loaded
+  // or saved, so a pending edit shows as unsaved and leaving the page by any
+  // route (links, the command palette, Back/Forward, closing the tab) asks
+  // first (#687, #719). Switching Settings tabs keeps the edits, so it never
+  // asks. Switches and selects that save as soon as they change aren't here.
+  const text = (v) => String(v ?? '')
+  const sections = {
+    // RetryDelaysEditor fills an empty value with one 15-minute row when it
+    // first shows, which isn't an edit.
+    retry: { label: 'Retry Policy', value: () => [text(retryMax), text(retryDelays).trim() || JSON.stringify([15 * 60])] },
+    throttle: { label: 'Upload Throttling', value: () => [autoThrottleEnabled, text(autoThrottleLink), text(autoThrottleFloor)] },
+    exclusions: { label: 'Backup Exclusions', value: () => [globalExcludes, labelExclusionsEnabled] },
+    dedup: { label: 'Dedup', value: () => [text(compactionThreshold)] },
+    anomaly: { label: 'Anomaly Detection', value: () => [anomalyEnabled, anomalySensitivityDefault, anomalyNotifyMinSeverity] },
+    appdata: { label: 'Appdata Path', value: () => [text(appdataPath)] },
+    staging: { label: 'Staging', value: () => [text(stagingOverrideInput)] },
+    history: { label: 'History Retention', value: () => [text(historyRetention)] },
+    database: { label: 'Database', value: () => [text(snapshotPathInput)] },
+    memory: { label: 'Memory', value: () => [text(memoryLimitMb)] },
+    discord: {
+      label: 'Discord',
+      value: () => [discordWebhookUrl, discordNotifyOn, discordBotUsername, discordBotAvatarUrl, discordMentionRoleId, discordMentionOn],
+    },
+    // Passphrase fields start empty and are cleared once saved or cancelled.
+    encryption: {
+      label: 'Encryption',
+      value: () => [encPassphrase, encConfirm, changingPassphrase ? changeNewPass : '', changingPassphrase ? changeConfirmPass : ''],
+    },
+  }
+  /** @type {Record<string, string>} */
+  let saved = $state({})
+  /** Take the current values of these sections as their saved baseline. */
+  function markSaved(...keys) {
+    for (const k of keys) saved[k] = snapshot(sections[k].value())
+  }
+  /** A section's values as a save is about to send them. */
+  function sending(key) {
+    return snapshot(sections[key].value())
+  }
+  /**
+   * Records a save that succeeded. If the section is unchanged since the
+   * request went out, apply the server's normalised values and take them as
+   * the baseline. Otherwise keep the newer edits, unsaved against what the
+   * server received (#718).
+   */
+  function settleSave(key, sent, apply = () => {}, stored = sent) {
+    if (snapshot(sections[key].value()) !== sent) {
+      // Edited while saving: keep the newer text, against what the server holds.
+      saved[key] = stored
+      return
+    }
+    apply()
+    markSaved(key)
+  }
+  /** @type {Record<string, boolean>} */
+  let dirty = $derived(Object.fromEntries(
+    Object.keys(sections).map((k) => [k, saved[k] != null && snapshot(sections[k].value()) !== saved[k]]),
+  ))
+  let unsavedSections = $derived(readOnly ? [] : Object.keys(sections).filter((k) => dirty[k]).map((k) => sections[k].label))
+  let anyUnsaved = $derived(unsavedSections.length > 0)
+
+  // Answers the router's leave guard while "Discard changes?" is open.
+  /** @type {((leave: boolean) => void) | null} */
+  let answerLeave = $state(null)
+  function confirmLeave() {
+    if (!anyUnsaved) return true
+    return new Promise((resolve) => {
+      answerLeave = (leave) => {
+        answerLeave = null
+        resolve(leave)
+      }
+    })
+  }
   let anomalySaving = $state(false)
 
   // Replication enable/disable (feature visibility)
@@ -987,14 +1115,17 @@
   async function saveAnomalySettings() {
     if (readOnly) return
     anomalySaving = true
+    const sent = sending('anomaly')
+    const enabled = anomalyEnabled
     try {
       settings = await api.updateSettings({
-        anomaly_detection_enabled: anomalyEnabled ? 'true' : 'false',
+        anomaly_detection_enabled: enabled ? 'true' : 'false',
         anomaly_sensitivity_default: anomalySensitivityDefault,
         anomaly_notify_min_severity: anomalyNotifyMinSeverity,
       })
+      settleSave('anomaly', sent)
       showToast('Anomaly detection settings saved', 'success')
-      setAnomalyEnabled(anomalyEnabled)
+      setAnomalyEnabled(enabled)
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -1053,7 +1184,21 @@
     }
   }
 
+  $effect(() => {
+    const stopUnload = guardUnload(() => anyUnsaved)
+    const stopLeave = onBeforeLeave(confirmLeave)
+    return () => { stopUnload(); stopLeave() }
+  })
 </script>
+
+{#snippet unsavedNote(dirty, key, extra = '')}
+  <span id="unsaved-{key}" role="status" class="text-xs font-medium text-warning flex items-center gap-1.5 {dirty ? extra : ''}">
+    {#if dirty}
+      <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.error}/></svg>
+      Unsaved changes
+    {/if}
+  </span>
+{/snippet}
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />
 
@@ -1068,7 +1213,7 @@
   {:else}
     {#if isReplicaMode()}
       <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
-        <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+        <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/></svg>
         <span>Read-only replica — secret and destructive actions are disabled on this instance.</span>
       </div>
     {/if}
@@ -1083,7 +1228,7 @@
           aria-selected={activeTab === tab.id}
           aria-controls={activeTab === tab.id ? `settings-panel-${tab.id}` : undefined}
           tabindex={activeTab === tab.id ? 0 : -1}
-          onclick={() => activeTab = tab.id}
+          onclick={() => selectTab(tab.id)}
           onkeydown={onTabKeydown}
           class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap {activeTab === tab.id ? 'border-vault text-vault-text' : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -1092,12 +1237,12 @@
       {/each}
     </div>
 
-    <div role="tabpanel" id="settings-panel-{activeTab}" aria-labelledby="settings-tab-{activeTab}" tabindex="0" class="space-y-6">
+    <div role="tabpanel" id="settings-panel-{activeTab}" aria-labelledby="settings-tab-{activeTab}" tabindex="0" class="settings-panel space-y-6" style="--sticky-offset: {activeTab === 'general' ? stickyHeight + 12 : 0}px">
       <!-- === GENERAL TAB === -->
       {#if activeTab === 'general'}
       <!-- Jump-to bar (#208 / E11) — sticky so long-tab settings stay reachable -->
-      <div class="sticky top-0 z-10 -mx-1 px-1 py-2 bg-surface/95 backdrop-blur border-b border-border flex flex-wrap items-center gap-2">
-        <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted shrink-0">Jump to</span>
+      <div use:measureHeight class="sticky top-0 z-10 -mx-1 px-1 py-2 bg-surface/95 backdrop-blur border-b border-border flex flex-wrap items-center gap-2">
+        <span class="text-2xs font-semibold uppercase tracking-wide text-text-muted shrink-0">Jump to</span>
         {#each generalSections.filter(s => s.id !== 'set-database' || databaseInfo) as sec (sec.id)}
           <button type="button" onclick={() => jumpToSetting(sec.id)}
             class="px-2.5 py-1 text-xs font-medium rounded-full border border-border bg-surface-3 text-text-muted hover:border-vault/40 hover:text-text transition-colors whitespace-nowrap shrink-0">
@@ -1107,7 +1252,7 @@
       </div>
 
       <!-- Appearance / Theme -->
-      <div id="set-appearance" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-appearance" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Appearance</h2>
         </div>
@@ -1142,7 +1287,7 @@
             <div role="group" aria-labelledby="color-mode-label" aria-describedby={getIsModeLocked() ? 'color-mode-locked' : undefined} class="grid grid-cols-3 gap-1 bg-surface-3 rounded-lg p-1 max-w-xs">
               {#each [
                 { value: 'light', label: 'Light', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z' },
-                { value: 'system', label: 'System', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
+                { value: 'system', label: 'System', icon: ITEM_TYPE_ICONS.vm },
                 { value: 'dark', label: 'Dark', icon: 'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z' },
               ] as opt (opt.value)}
                 <button
@@ -1165,7 +1310,7 @@
       </div>
 
       <!-- Backup Targets -->
-      <div id="set-targets" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-targets" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Backup Targets</h2>
           <p class="text-xs text-text-muted mt-0.5">Select what Vault should monitor. Disabled items won't show as unprotected on Dashboard or Recovery.</p>
@@ -1176,72 +1321,52 @@
               <p class="text-sm font-medium text-text">Containers</p>
               <p class="text-xs text-text-muted mt-0.5">Docker containers on this server</p>
             </div>
-            <button
-              onclick={() => toggleBackupTarget('container_backup_enabled')}
+            <Switch
+              size="md"
+              checked={containerBackupOn}
+              onchange={() => toggleBackupTarget('container_backup_enabled')}
               disabled={saving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={containerBackupOn}
-              aria-label="Toggle container backup tracking"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {containerBackupOn ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {containerBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle container backup tracking"
+            />
           </div>
           <div class="px-5 py-4 flex items-center justify-between">
             <div>
               <p class="text-sm font-medium text-text">Virtual Machines</p>
               <p class="text-xs text-text-muted mt-0.5">Libvirt VMs on this server</p>
             </div>
-            <button
-              onclick={() => toggleBackupTarget('vm_backup_enabled')}
+            <Switch
+              size="md"
+              checked={vmBackupOn}
+              onchange={() => toggleBackupTarget('vm_backup_enabled')}
               disabled={saving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={vmBackupOn}
-              aria-label="Toggle VM backup tracking"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {vmBackupOn ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {vmBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle VM backup tracking"
+            />
           </div>
           <div class="px-5 py-4 flex items-center justify-between">
             <div>
               <p class="text-sm font-medium text-text">Folders & Files</p>
               <p class="text-xs text-text-muted mt-0.5">Custom folder and file path backups</p>
             </div>
-            <button
-              onclick={() => toggleBackupTarget('folder_backup_enabled')}
+            <Switch
+              size="md"
+              checked={folderBackupOn}
+              onchange={() => toggleBackupTarget('folder_backup_enabled')}
               disabled={saving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={folderBackupOn}
-              aria-label="Toggle folder backup tracking"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {folderBackupOn ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {folderBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle folder backup tracking"
+            />
           </div>
           <div class="px-5 py-4 flex items-center justify-between">
             <div>
               <p class="text-sm font-medium text-text">Flash Drive</p>
               <p class="text-xs text-text-muted mt-0.5">Unraid USB boot drive backup</p>
             </div>
-            <button
-              onclick={() => toggleBackupTarget('flash_backup_enabled')}
+            <Switch
+              size="md"
+              checked={flashBackupOn}
+              onchange={() => toggleBackupTarget('flash_backup_enabled')}
               disabled={saving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={flashBackupOn}
-              aria-label="Toggle flash drive backup tracking"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {flashBackupOn ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {flashBackupOn ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle flash drive backup tracking"
+            />
           </div>
         </div>
       </div>
@@ -1258,24 +1383,19 @@
               <p class="text-sm font-medium text-text">3-2-1 Backup Rule</p>
               <p class="text-xs text-text-muted mt-0.5">Show the 3-2-1 best-practice compliance panel. Hide it if you run an intentionally simple setup.</p>
             </div>
-            <button
-              onclick={() => toggleBackupRule()}
+            <Switch
+              size="md"
+              checked={backupRuleOn}
+              onchange={() => toggleBackupRule()}
               disabled={saving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={backupRuleOn}
-              aria-label="Toggle 3-2-1 Backup Rule panel"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {backupRuleOn ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {backupRuleOn ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle 3-2-1 Backup Rule panel"
+            />
           </div>
         </div>
       </div>
 
       <!-- Retry policy -->
-      <div id="set-retry" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-retry" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-retry-policy-heading"><span id="settings-retry-policy-heading">Retry Policy</span> <Tooltip label="Retry Policy" text="Failed runs are retried in the background with the delays below before being marked permanently failed. Individual jobs can override these defaults." /></h2>
           <p class="text-xs text-text-muted mt-0.5">How failed runs are retried before being marked permanently failed.</p>
@@ -1295,7 +1415,7 @@
                 bind:value={retryMax}
                 disabled={readOnly}
                 placeholder="2"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted max-lg:min-h-11"
               />
             </div>
             <div>
@@ -1309,10 +1429,12 @@
             </div>
           </div>
           {#if !readOnly}
-          <div class="flex justify-end">
+          <div class="flex flex-wrap items-center justify-end gap-3">
+            {@render unsavedNote(dirty.retry, 'retry')}
             <button
               onclick={saveRetryPolicy}
               disabled={retrySaving}
+              aria-describedby={dirty.retry ? 'unsaved-retry' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if retrySaving}<InlineSpinner />{/if}
@@ -1324,7 +1446,7 @@
       </div>
 
       <!-- Adaptive Upload Throttling (issue #237) -->
-      <div id="set-throttle" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-throttle" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-upload-throttling-heading"><span id="settings-upload-throttling-heading">Upload Throttling</span> <Tooltip label="Upload Throttling" text="When enabled, Vault continuously measures non-Vault traffic on the network link and slows its own uploads so streaming services like Plex or Jellyfin keep their bandwidth. Vault speeds back up when the link goes quiet." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Automatically yield upload bandwidth to other services using your internet link.</p>
@@ -1332,18 +1454,13 @@
         <div class="p-5 space-y-4">
           <div class="flex items-center justify-between">
             <p class="text-sm font-medium text-text">Adaptively throttle uploads when the link is busy</p>
-            <button
-              onclick={() => { if (!readOnly) autoThrottleEnabled = !autoThrottleEnabled }}
+            <Switch
+              size="md"
+              checked={autoThrottleEnabled}
+              onchange={() => { if (!readOnly) autoThrottleEnabled = !autoThrottleEnabled }}
               disabled={readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-60"
-              role="switch"
-              aria-checked={autoThrottleEnabled}
-              aria-label="Toggle adaptive upload throttling"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {autoThrottleEnabled ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {autoThrottleEnabled ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle adaptive upload throttling"
+            />
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
@@ -1353,7 +1470,7 @@
               </div>
               <input id="throttle-link" type="number" min="1" bind:value={autoThrottleLink} disabled={readOnly}
                 placeholder="e.g. 40"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted max-lg:min-h-11" />
             </div>
             <div>
               <div class="block text-sm font-medium text-text-muted mb-1.5">
@@ -1362,13 +1479,14 @@
               </div>
               <input id="throttle-floor" type="number" min="0" bind:value={autoThrottleFloor} disabled={readOnly}
                 placeholder="5"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted max-lg:min-h-11" />
             </div>
           </div>
           <p class="text-xs text-text-dim">Applies to uploads to network destinations (SFTP, SMB, NFS, WebDAV, S3). Per-destination bandwidth caps still apply — the stricter limit wins. Takes effect within a few seconds of saving, no restart needed.</p>
           {#if !readOnly}
-          <div class="flex justify-end">
-            <button onclick={saveAutoThrottle} disabled={autoThrottleSaving}
+          <div class="flex flex-wrap items-center justify-end gap-3">
+            {@render unsavedNote(dirty.throttle, 'throttle')}
+            <button onclick={saveAutoThrottle} disabled={autoThrottleSaving} aria-describedby={dirty.throttle ? 'unsaved-throttle' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
               {#if autoThrottleSaving}<InlineSpinner />{/if}
               Save Upload Throttling
@@ -1379,7 +1497,7 @@
       </div>
 
       <!-- Backup Exclusions (issues #257, #258) -->
-      <div id="set-exclusions" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-exclusions" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-backup-exclusions-heading"><span id="settings-backup-exclusions-heading">Backup Exclusions</span> <Tooltip label="Backup Exclusions" text="Paths listed here are skipped by every folder and container backup, so you don't have to repeat them on each job. They are added to whatever a job already excludes rather than replacing it." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Skip the same paths everywhere, without editing every job.</p>
@@ -1392,7 +1510,7 @@
             </div>
             <textarea id="global-excludes" rows="5" bind:value={globalExcludes} disabled={readOnly}
               placeholder={excludePlaceholder}
-              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted font-mono focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"></textarea>
+              class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted font-mono max-lg:min-h-11"></textarea>
             <p class="text-xs text-text-dim mt-1.5">One path per line. Added to each job's own exclusions — a job can still exclude more.</p>
           </div>
           <div class="flex items-center justify-between pt-1">
@@ -1400,22 +1518,18 @@
               <p class="text-sm font-medium text-text">Honour the <code class="font-mono text-xs">vault.exclude</code> label on containers</p>
               <p class="text-xs text-text-dim mt-0.5">A container can declare its own exclusions, e.g. <code class="font-mono">vault.exclude=/config/cache,/tmp</code>. The exclusions travel with the container, so a template or compose file carries its own answer.</p>
             </div>
-            <button
-              onclick={() => { if (!readOnly) labelExclusionsEnabled = !labelExclusionsEnabled }}
+            <Switch
+              size="md"
+              checked={labelExclusionsEnabled}
+              onchange={() => { if (!readOnly) labelExclusionsEnabled = !labelExclusionsEnabled }}
               disabled={readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-60"
-              role="switch"
-              aria-checked={labelExclusionsEnabled}
-              aria-label="Toggle Docker label exclusions"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {labelExclusionsEnabled ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {labelExclusionsEnabled ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle Docker label exclusions"
+            />
           </div>
           {#if !readOnly}
-          <div class="flex justify-end">
-            <button onclick={saveExclusions} disabled={exclusionsSaving}
+          <div class="flex flex-wrap items-center justify-end gap-3">
+            {@render unsavedNote(dirty.exclusions, 'exclusions')}
+            <button onclick={saveExclusions} disabled={exclusionsSaving} aria-describedby={dirty.exclusions ? 'unsaved-exclusions' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
               {#if exclusionsSaving}<InlineSpinner />{/if}
               Save Exclusions
@@ -1426,7 +1540,7 @@
       </div>
 
       <!-- Dedup Compaction Threshold -->
-      <div id="set-dedup" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-dedup" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-dedup-compaction-heading"><span id="settings-dedup-compaction-heading">Dedup Compaction</span> <Tooltip label="Dedup Compaction" text="With deduplication on, deleting backups leaves gaps inside storage files. 'Run cleanup' rewrites a file once this % of it is wasted space, reclaiming it. Recommended: 50. Lower reclaims sooner (more rewriting); 100 never compacts." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Threshold for repacking partially-dead dedup packs during cleanup.</p>
@@ -1450,7 +1564,7 @@
                 bind:value={compactionThreshold}
                 disabled={readOnly}
                 placeholder="50"
-                class="w-24 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-24 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted max-lg:min-h-11"
               />
               <span class="text-sm text-text-muted">%</span>
               {#if !readOnly}
@@ -1458,11 +1572,13 @@
                 type="button"
                 onclick={saveCompactionThreshold}
                 disabled={compactionSaving}
+                aria-describedby={dirty.dedup ? 'unsaved-dedup' : undefined}
                 class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {#if compactionSaving}<InlineSpinner />{/if}
                 {compactionSaving ? 'Saving…' : 'Save'}
               </button>
+              {@render unsavedNote(dirty.dedup, 'dedup')}
               {/if}
             </div>
           </div>
@@ -1470,7 +1586,7 @@
       </div>
 
       <!-- Anomaly Detection -->
-      <div id="set-anomaly" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-anomaly" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-anomaly-detection-heading"><span id="settings-anomaly-detection-heading">Anomaly Detection</span> <Tooltip label="Anomaly Detection" text="Vault monitors backup size, duration, and reliability for statistical anomalies. Anomalies are surfaced in the Anomalies page and optionally sent as notifications." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Automatically detect unusual patterns in backup behaviour.</p>
@@ -1482,18 +1598,13 @@
               <p class="text-sm font-medium text-text">Anomaly detection enabled</p>
               <p class="text-xs text-text-muted mt-0.5">Evaluate each completed backup run for statistical anomalies.</p>
             </div>
-            <button
-              onclick={() => anomalyEnabled = !anomalyEnabled}
+            <Switch
+              size="md"
+              checked={anomalyEnabled}
+              onchange={() => anomalyEnabled = !anomalyEnabled}
               disabled={readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={anomalyEnabled}
-              aria-label="Toggle anomaly detection"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {anomalyEnabled ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {anomalyEnabled ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle anomaly detection"
+            />
           </div>
           <!-- Default sensitivity -->
           <div class="px-5 py-4">
@@ -1505,7 +1616,7 @@
               id="anomaly-sensitivity"
               bind:value={anomalySensitivityDefault}
               disabled={readOnly}
-              class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              class="w-full max-w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text max-lg:min-h-11"
             >
               <option value="strict">Strict – flag small deviations</option>
               <option value="balanced">Balanced – moderate threshold (recommended)</option>
@@ -1522,7 +1633,7 @@
               id="anomaly-notify-severity"
               bind:value={anomalyNotifyMinSeverity}
               disabled={readOnly}
-              class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              class="w-full max-w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text max-lg:min-h-11"
             >
               <option value="info">Info – notify on all anomalies</option>
               <option value="warning">Warning – skip informational</option>
@@ -1531,10 +1642,12 @@
           </div>
           <!-- Save button -->
           {#if !readOnly}
-          <div class="px-5 py-3 flex justify-end">
+          <div class="px-5 py-3 flex flex-wrap items-center justify-end gap-3">
+            {@render unsavedNote(dirty.anomaly, 'anomaly')}
             <button
               onclick={saveAnomalySettings}
               disabled={anomalySaving}
+              aria-describedby={dirty.anomaly ? 'unsaved-anomaly' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if anomalySaving}
@@ -1560,25 +1673,20 @@
               <p class="text-sm font-medium text-text">Replication enabled</p>
               <p class="text-xs text-text-muted mt-0.5">When off, Replication is hidden from the sidebar and scheduled syncs are paused.</p>
             </div>
-            <button
-              onclick={toggleReplicationEnabled}
+            <Switch
+              size="md"
+              checked={replicationEnabledSetting}
+              onchange={() => toggleReplicationEnabled()}
               disabled={replicationSaving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-60"
-              role="switch"
-              aria-checked={replicationEnabledSetting}
-              aria-label="Toggle replication"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {replicationEnabledSetting ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {replicationEnabledSetting ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle replication"
+            />
           </div>
         </div>
       </div>
       {/if}
 
       <!-- Storage & Daemon Logging -->
-      <div id="set-logging" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-logging" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-logging-heading"><span id="settings-logging-heading">Logging</span> <Tooltip label="Logging" text="Configure log output verbosity for the Vault daemon and storage adapters." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Control daemon log levels and verbose storage tracing.</p>
@@ -1596,7 +1704,7 @@
                 bind:value={logLevel}
                 onchange={saveLogLevel}
                 disabled={readOnly || logLevelSaving}
-                class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault disabled:opacity-60 cursor-pointer"
+                class="w-full max-w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text disabled:opacity-60 cursor-pointer max-lg:min-h-11"
               >
                 <option value="debug">Debug</option>
                 <option value="info">Informational</option>
@@ -1613,18 +1721,13 @@
               <p class="text-sm font-medium text-text">Verbose storage logging</p>
               <p class="text-xs text-text-muted mt-0.5">Per-operation trace in the daemon log; off by default.</p>
             </div>
-            <button
-              onclick={toggleStorageVerboseLogging}
+            <Switch
+              size="md"
+              checked={storageVerboseLogging}
+              onchange={() => toggleStorageVerboseLogging()}
               disabled={readOnly || storageVerboseSaving}
-              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-60"
-              role="switch"
-              aria-checked={storageVerboseLogging}
-              aria-label="Toggle verbose storage logging"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {storageVerboseLogging ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {storageVerboseLogging ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle verbose storage logging"
+            />
           </div>
         </div>
       </div>
@@ -1644,18 +1747,13 @@
               <p class="text-sm font-medium text-text">Unraid Notifications</p>
               <p class="text-xs text-text-muted mt-0.5">Send alerts to the Unraid notification system when backups fail, partially complete, or succeed (based on each job's "Notify On" setting).</p>
             </div>
-            <button
-              onclick={toggleNotifications}
+            <Switch
+              size="md"
+              checked={notificationsOn}
+              onchange={() => toggleNotifications()}
               disabled={saving || readOnly}
-              class="relative inline-flex items-center shrink-0 cursor-pointer"
-              role="switch"
-              aria-checked={notificationsOn}
-              aria-label="Toggle notifications"
-            >
-              <div class="w-11 h-6 rounded-full transition-colors {notificationsOn ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform {notificationsOn ? 'translate-x-5' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle notifications"
+            />
           </div>
           <div class="px-5 py-3">
             <p class="text-xs text-text-dim">
@@ -1681,7 +1779,7 @@
                 bind:value={discordWebhookUrl}
                 disabled={readOnly}
                 placeholder="https://discord.com/api/webhooks/..."
-                class="flex-1 text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="flex-1 text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text placeholder:text-text-muted max-lg:min-h-11"
               />
               <button
                 onclick={testDiscord}
@@ -1706,7 +1804,7 @@
               id="discord-notify"
               bind:value={discordNotifyOn}
               disabled={readOnly}
-              class="text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              class="text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text max-lg:min-h-11"
             >
               <option value="always">All backups (success & failure)</option>
               <option value="failure">Failures only</option>
@@ -1730,7 +1828,7 @@
                 bind:value={discordBotUsername}
                 disabled={readOnly}
                 placeholder="Vault"
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text placeholder:text-text-muted max-lg:min-h-11"
               />
             </div>
             <div>
@@ -1744,7 +1842,7 @@
                 bind:value={discordBotAvatarUrl}
                 disabled={readOnly}
                 placeholder="https://example.com/avatar.png"
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text placeholder:text-text-muted max-lg:min-h-11"
               />
             </div>
           </div>
@@ -1761,7 +1859,7 @@
                 bind:value={discordMentionRoleId}
                 disabled={readOnly}
                 placeholder="123456789012345678"
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text placeholder:text-text-muted max-lg:min-h-11"
               />
             </div>
             <div>
@@ -1773,7 +1871,7 @@
                 id="discord-mention-on"
                 bind:value={discordMentionOn}
                 disabled={readOnly}
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full text-sm px-3 py-2 bg-surface-3 border border-border rounded-lg text-text max-lg:min-h-11"
               >
                 <option value="never">Never</option>
                 <option value="failure">Failures only</option>
@@ -1782,10 +1880,12 @@
             </div>
           </div>
           {#if !readOnly}
-          <div class="px-5 py-3 flex justify-end">
+          <div class="px-5 py-3 flex flex-wrap items-center justify-end gap-3">
+            {@render unsavedNote(dirty.discord, 'discord')}
             <button
               onclick={saveDiscordSettings}
               disabled={discordSaving}
+              aria-describedby={dirty.discord ? 'unsaved-discord' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if discordSaving}
@@ -1823,8 +1923,8 @@
                 <p class="text-sm font-medium text-text">Download emergency kit</p>
                 <p class="text-xs text-text-muted mt-0.5">We recommend saving this encryption key somewhere secure.</p>
               </div>
-              <button onclick={downloadEmergencyKit} class="flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors shrink-0">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+              <button onclick={downloadEmergencyKit} class="flex items-center gap-2 text-sm font-medium text-vault-text hover:underline transition-colors shrink-0">
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.download} /></svg>
                 Download
               </button>
             </div>
@@ -1836,7 +1936,7 @@
                   <p class="text-sm font-medium text-text">Show my encryption key</p>
                   <p class="text-xs text-text-muted mt-0.5">Please keep your encryption key private.</p>
                 </div>
-                <button onclick={toggleShowPassphrase} disabled={loadingPassphrase} class="hit-target text-sm font-medium text-info hover:underline transition-colors shrink-0 disabled:opacity-50">
+                <button onclick={toggleShowPassphrase} disabled={loadingPassphrase} class="hit-target text-sm font-medium text-vault-text hover:underline transition-colors shrink-0 disabled:opacity-50">
                   {loadingPassphrase ? 'Loading…' : showingPassphrase ? 'Hide' : 'Show'}
                 </button>
               </div>
@@ -1868,20 +1968,24 @@
                   <p class="text-xs text-warning">Existing encrypted backups will still require the old passphrase to restore.</p>
                   <div>
                     <label for="change-pass" class="block text-xs font-medium text-text-muted mb-1">New passphrase</label>
-                    <input id="change-pass" type="password" autocomplete="new-password" bind:value={changeNewPass} placeholder="Enter new passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                    <PasswordInput id="change-pass" bind:value={changeNewPass} bind:show={showChangePassphrase} toggleLabel="Show passphrases" class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder:text-text-muted" />
                   </div>
                   <div>
                     <label for="change-confirm" class="block text-xs font-medium text-text-muted mb-1">Confirm new passphrase</label>
-                    <input id="change-confirm" type="password" autocomplete="new-password" bind:value={changeConfirmPass} placeholder="Confirm new passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                    <PasswordInput id="change-confirm" bind:value={changeConfirmPass} bind:show={showChangePassphrase} toggleLabel="Show passphrases"
+                      aria-invalid={changeMismatch ? 'true' : undefined}
+                      aria-describedby={changeMismatch ? 'change-mismatch' : undefined}
+                      class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface-3 border {changeMismatch ? 'border-danger' : 'border-border'} rounded-lg text-text placeholder:text-text-muted" />
                   </div>
-                  {#if changeNewPass && changeConfirmPass && changeNewPass !== changeConfirmPass}
-                    <p class="text-xs text-danger">Passphrases do not match</p>
+                  {#if changeMismatch}
+                    <p id="change-mismatch" class="text-xs text-danger">Passphrases do not match</p>
                   {/if}
                   <div class="flex items-center gap-2">
-                    <button onclick={saveChangePassphrase} disabled={encSaving || !changeNewPass || !changeConfirmPass || changeNewPass !== changeConfirmPass} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                    <button onclick={saveChangePassphrase} aria-describedby={dirty.encryption ? 'unsaved-encryption' : undefined} disabled={encSaving || !changeNewPass || !changeConfirmPass || changeNewPass !== changeConfirmPass} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                       {#if encSaving}<InlineSpinner />{/if}
                       {encSaving ? 'Saving…' : 'Update Passphrase'}
                     </button>
+                    {@render unsavedNote(dirty.encryption, 'encryption')}
                     <button onclick={cancelChangePassphrase} class="px-4 py-2 text-sm font-medium rounded-lg text-text-muted hover:text-text transition-colors">
                       Cancel
                     </button>
@@ -1908,24 +2012,23 @@
               <div class="space-y-3 max-w-sm">
                 <div>
                   <label for="enc-pass" class="block text-xs font-medium text-text-muted mb-1">Passphrase</label>
-                  <div class="relative">
-                    <input id="enc-pass" type={showEncPassphrase ? 'text' : 'password'} autocomplete="new-password" bind:value={encPassphrase} placeholder="Enter encryption passphrase" class="w-full px-3 py-2 pr-10 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
-                    <button type="button" onclick={() => showEncPassphrase = !showEncPassphrase} class="absolute right-2 top-1/2 -translate-y-1/2 text-text-dim hover:text-text p-1" aria-label="Toggle passphrase visibility">
-                      <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={showEncPassphrase ? 'M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21' : 'M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z'} /></svg>
-                    </button>
-                  </div>
+                  <PasswordInput id="enc-pass" bind:value={encPassphrase} bind:show={showEncPassphrase} toggleLabel="Show passphrases" class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder:text-text-muted" />
                 </div>
                 <div>
                   <label for="enc-confirm" class="block text-xs font-medium text-text-muted mb-1">Confirm Passphrase</label>
-                  <input id="enc-confirm" type={showEncPassphrase ? 'text' : 'password'} bind:value={encConfirm} placeholder="Confirm passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                  <PasswordInput id="enc-confirm" bind:value={encConfirm} bind:show={showEncPassphrase} toggleLabel="Show passphrases"
+                    aria-invalid={encMismatch ? 'true' : undefined}
+                    aria-describedby={encMismatch ? 'enc-mismatch' : undefined}
+                    class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface-3 border {encMismatch ? 'border-danger' : 'border-border'} rounded-lg text-text placeholder:text-text-muted" />
                 </div>
-                {#if encPassphrase && encConfirm && encPassphrase !== encConfirm}
-                  <p class="text-xs text-danger">Passphrases do not match</p>
+                {#if encMismatch}
+                  <p id="enc-mismatch" class="text-xs text-danger">Passphrases do not match</p>
                 {/if}
-                <button onclick={saveEncryption} disabled={encSaving || !encPassphrase || !encConfirm || encPassphrase !== encConfirm} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                <button onclick={saveEncryption} aria-describedby={dirty.encryption ? 'unsaved-encryption' : undefined} disabled={encSaving || !encPassphrase || !encConfirm || encPassphrase !== encConfirm} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                   {#if encSaving}<InlineSpinner />{/if}
                   {encSaving ? 'Saving…' : 'Set Passphrase'}
                 </button>
+                {@render unsavedNote(dirty.encryption, 'encryption')}
               </div>
               {/if}
             </div>
@@ -1951,8 +2054,8 @@
             {/if}
           </div>
           {#if !isRemoteKeyClient()}
-          <button onclick={downloadServerKey} disabled={serverKeyDownloading} aria-label="Download vault.key" class="hit-target flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors shrink-0 disabled:opacity-50">
-            {#if serverKeyDownloading}<InlineSpinner />{:else}<svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>{/if}
+          <button onclick={downloadServerKey} disabled={serverKeyDownloading} aria-label="Download vault.key" class="hit-target flex items-center gap-2 text-sm font-medium text-vault-text hover:underline transition-colors shrink-0 disabled:opacity-50">
+            {#if serverKeyDownloading}<InlineSpinner />{:else}<svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.download} /></svg>{/if}
             Download
           </button>
           {/if}
@@ -1988,7 +2091,7 @@
                   <p class="text-sm font-medium text-text">Show API key</p>
                   <p class="text-xs text-text-muted mt-0.5">Reveal the key to copy it for external integrations.</p>
                 </div>
-                <button onclick={toggleApiKeyReveal} disabled={apiKeyLoading} class="hit-target text-sm font-medium text-info hover:underline transition-colors shrink-0 disabled:opacity-50">
+                <button onclick={toggleApiKeyReveal} disabled={apiKeyLoading} class="hit-target text-sm font-medium text-vault-text hover:underline transition-colors shrink-0 disabled:opacity-50">
                   {apiKeyLoading ? 'Loading…' : apiKeyShowing ? 'Hide' : 'Show'}
                 </button>
               </div>
@@ -1998,7 +2101,7 @@
                     <code class="text-sm text-text break-all select-all">{apiKeyRevealed}</code>
                   </div>
                   <button onclick={copyApiKey} class="shrink-0 p-2 text-text-muted hover:text-text transition-colors" aria-label="Copy API key">
-                    <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.copy} /></svg>
                   </button>
                 </div>
               {/if}
@@ -2066,7 +2169,7 @@
       {#if activeTab === 'general'}
 
       <!-- Docker Appdata Path -->
-      <div id="set-appdata" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-appdata" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-docker-appdata-path-heading"><span id="settings-docker-appdata-path-heading">Docker Appdata Path</span> <Tooltip label="Docker Appdata Path" text="The root directory where Docker containers store their configuration and runtime data on Unraid. Container backup jobs derive included mounts from this path by default." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Where Docker container configurations live. Non-appdata mounts are excluded from container backups by default to prevent accidental multi-terabyte media backups.</p>
@@ -2079,12 +2182,13 @@
                 <PathBrowser bind:value={appdataPath} includeZfs={true} />
               </div>
               {#if !readOnly}
-              <button onclick={saveAppdataPath} disabled={appdataSaving || !appdataPath} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
+              <button onclick={saveAppdataPath} aria-describedby={dirty.appdata ? 'unsaved-appdata' : undefined} disabled={appdataSaving || !appdataPath} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
                 {#if appdataSaving}<InlineSpinner />{/if}
                 Apply
               </button>
               {/if}
             </div>
+            {@render unsavedNote(dirty.appdata, 'appdata', 'mt-2')}
             {#if appdataPath !== appdataDefault && !readOnly}
               <button onclick={resetAppdataPath} disabled={appdataSaving} class="mt-2 text-xs text-vault-text hover:underline">
                 Reset to default ({appdataDefault})
@@ -2136,12 +2240,13 @@
                 <PathBrowser bind:value={stagingOverrideInput} includeZfs={true} />
               </div>
               {#if !readOnly}
-              <button onclick={saveStagingOverride} disabled={stagingSaving || !stagingOverrideInput} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
+              <button onclick={saveStagingOverride} aria-describedby={dirty.staging ? 'unsaved-staging' : undefined} disabled={stagingSaving || !stagingOverrideInput} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
                 {#if stagingSaving}<InlineSpinner />{/if}
                 Apply
               </button>
               {/if}
             </div>
+            {@render unsavedNote(dirty.staging, 'staging', 'mt-2')}
             {#if stagingInfo.override && !readOnly}
               <button onclick={resetStagingOverride} disabled={stagingSaving} class="mt-2 text-xs text-vault-text hover:underline">
                 Reset to automatic
@@ -2155,14 +2260,14 @@
       {/if}
 
       <!-- History Retention -->
-      <div id="set-history" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-history" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 id="set-history-heading" class="text-base font-semibold text-text">History Retention</h2>
           <p class="text-xs text-text-muted mt-0.5">How long to keep backup/restore run history. Recoverable backups are not affected - they follow each job's own retention.</p>
         </div>
-        <div class="p-5 flex items-center gap-2">
+        <div class="p-5 flex flex-wrap items-center gap-2">
           <select bind:value={historyRetention} disabled={readOnly} aria-labelledby="set-history-heading"
-            class="px-2.5 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
+            class="px-2.5 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text cursor-pointer max-lg:min-h-11">
             <option value="30">30 days</option>
             <option value="90">90 days</option>
             <option value="180">6 months</option>
@@ -2172,16 +2277,18 @@
           </select>
           {#if !readOnly}
           <button type="button" onclick={saveHistoryRetention} disabled={historyRetentionSaving}
+            aria-describedby={dirty.history ? 'unsaved-history' : undefined}
             class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
             {#if historyRetentionSaving}<InlineSpinner />{/if}
             Save
           </button>
+          {@render unsavedNote(dirty.history, 'history')}
           {/if}
         </div>
       </div>
 
       <!-- Server Info -->
-      <div id="set-server" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-server" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Server Information</h2>
         </div>
@@ -2247,7 +2354,7 @@
                 <tr class="border-b border-border/50">
                   <td class="py-2 pr-4 font-medium">
                     Zstandard
-                    <span class="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-vault/20 text-vault-text font-semibold uppercase">recommended</span>
+                    <span class="ml-1.5 text-2xs px-1.5 py-0.5 rounded bg-vault/20 text-vault-text font-semibold uppercase">recommended</span>
                   </td>
                   <td class="py-2 pr-4">
                     <div class="flex gap-0.5">
@@ -2367,7 +2474,7 @@
 
       <!-- Database Location -->
       {#if databaseInfo}
-      <div id="set-database" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-database" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Database Location</h2>
           <p class="text-xs text-text-muted mt-0.5">Vault's database tracks your jobs, schedules, and restore points. The storage mode determines where this data is written.</p>
@@ -2422,11 +2529,12 @@
                    click rather than a side effect of confirming a folder. -->
               <PathBrowser bind:value={snapshotPathInput} includeZfs={true} />
             </div>
-            <button onclick={saveSnapshotPath} disabled={snapshotPathSaving || !snapshotPathInput} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
+            <button onclick={saveSnapshotPath} aria-describedby={dirty.database ? 'unsaved-database' : undefined} disabled={snapshotPathSaving || !snapshotPathInput} class="px-3 py-2 bg-vault text-on-vault text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
               {#if snapshotPathSaving}<InlineSpinner />{/if}
               Apply
             </button>
           </div>
+          {@render unsavedNote(dirty.database, 'database', 'mt-2')}
           {#if databaseInfo.snapshot_path_override}
             <button onclick={resetSnapshotPath} disabled={snapshotPathSaving} class="mt-2 text-xs text-vault-text hover:underline">
               Reset to default
@@ -2435,7 +2543,7 @@
         </div>
         {/if}
         {#if databaseInfo.mode === 'legacy_usb'}
-        <div class="px-5 py-3 bg-amber-500/10 border-t border-amber-500/20">
+        <div class="px-5 py-3 bg-hue-amber-bg/10 border-t border-hue-amber-bg/20">
           <p class="text-xs text-hue-amber">No cache drive detected. Database writes go directly to the USB flash drive, which may reduce its lifespan. Add a cache drive to your server, or set a custom save location above to avoid writing to the USB drive.</p>
         </div>
         {/if}
@@ -2443,7 +2551,7 @@
       {/if}
 
       <!-- Memory (issue #500) -->
-      <div id="set-memory" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-memory" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border flex items-start justify-between gap-3">
           <div>
             <h2 class="text-base font-semibold text-text" aria-labelledby="settings-memory-heading"><span id="settings-memory-heading">Memory</span> <Tooltip label="Memory" text="Live memory and garbage-collector figures for the Vault daemon. Use them to size the memory limit and to spot regressions." /></h2>
@@ -2452,7 +2560,7 @@
           <button
             onclick={refreshRuntime}
             disabled={runtimeLoading}
-            class="hit-target flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="hit-target flex items-center gap-2 text-sm font-medium text-vault-text hover:underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {#if runtimeLoading}<InlineSpinner />{/if}
             Refresh
@@ -2498,17 +2606,19 @@
                 bind:value={memoryLimitMb}
                 disabled={readOnly}
                 placeholder="0"
-                class="w-full sm:w-48 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full sm:w-48 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted max-lg:min-h-11"
               />
               {#if !readOnly}
               <button
                 onclick={saveMemoryLimit}
                 disabled={memoryLimitSaving}
+                aria-describedby={dirty.memory ? 'unsaved-memory' : undefined}
                 class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {#if memoryLimitSaving}<InlineSpinner />{/if}
                 Save Memory Limit
               </button>
+              {@render unsavedNote(dirty.memory, 'memory')}
               {/if}
             </div>
             <p class="text-xs text-text-muted">
@@ -2523,7 +2633,7 @@
             </p>
             {/if}
             {#if runtimeInfo?.upload_warnings?.length}
-            <div class="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 space-y-1" data-testid="memory-upload-warnings">
+            <div class="px-3 py-2 rounded-lg bg-hue-amber-bg/10 border border-hue-amber-bg/20 space-y-1" data-testid="memory-upload-warnings">
               <p class="text-xs font-medium text-hue-amber">S3 upload buffers can exceed this limit:</p>
               <ul class="text-xs text-hue-amber list-disc pl-4">
                 {#each runtimeInfo.upload_warnings as w (w.job_id)}
@@ -2538,7 +2648,7 @@
       </div>
 
       <!-- Diagnostics -->
-      <div id="set-diagnostics" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-diagnostics" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Diagnostics</h2>
         </div>
@@ -2549,14 +2659,14 @@
           <button
             onclick={downloadDiagnostics}
             disabled={diagnosticsDownloading}
-            class="hit-target flex items-center gap-2 text-sm font-medium text-info hover:underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="hit-target flex items-center gap-2 text-sm font-medium text-vault-text hover:underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {#if diagnosticsDownloading}
               <InlineSpinner />
               Generating...
             {:else}
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.fileDownload} />
               </svg>
               Download diagnostics bundle
             {/if}
@@ -2565,12 +2675,12 @@
       </div>
 
       <!-- About Vault – single merged card -->
-      <div id="set-about" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-about" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">About Vault</h2>
         </div>
         <div class="p-5">
-          <p class="text-sm text-text-muted leading-relaxed">
+          <p class="text-sm text-text-muted leading-relaxed max-w-[70ch]">
             Vault is a backup and restore manager for Unraid servers. It automates scheduled, encrypted backups of Docker containers, libvirt VMs, plugins, ZFS datasets, and arbitrary folders (including the Unraid flash drive) to a wide range of storage destinations &mdash; local paths, SFTP, SMB/CIFS, NFS, WebDAV, and S3-compatible object stores (AWS S3, Backblaze B2, MinIO, Cloudflare R2, Wasabi).
           </p>
 
@@ -2633,3 +2743,21 @@
   onconfirm={doRemoveEncryption}
   oncancel={() => { confirmEncRemoval = false }}
 />
+
+<ConfirmDialog
+  show={answerLeave !== null}
+  title="Discard changes?"
+  message={`Unsaved changes in ${unsavedSections.join(', ')} will be lost.`}
+  confirmLabel="Discard"
+  cancelLabel="Keep editing"
+  onconfirm={() => answerLeave?.(true)}
+  oncancel={() => answerLeave?.(false)}
+/>
+
+<style>
+  /* Fields and cards stop clear of the sticky Jump-to bar when focused or
+     jumped to (#715). The offset is the bar's measured height. */
+  .settings-panel :global(:is(input, select, textarea, button, summary, [id^='set-'])) {
+    scroll-margin-top: var(--sticky-offset, 0px);
+  }
+</style>

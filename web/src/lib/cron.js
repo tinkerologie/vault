@@ -126,3 +126,50 @@ function fieldError(field, { name, min, max }) {
   }
   return null
 }
+
+/**
+ * The picker's time choices: every half hour, plus the exact time of the
+ * schedule being edited when it falls between them. Without the extra entry a
+ * job at 02:15 showed 02:00 in the list, and any edit rewrote the minute to 0
+ * (issue #682). Values are "h:m" strings so the list can change without
+ * shifting the selection.
+ *
+ * @param {number} [hour] @param {number} [minute]
+ * @returns {{ value: string, hour: number, minute: number }[]}
+ */
+export function timeSlots(hour, minute) {
+  const slots = []
+  for (let h = 0; h < 24; h++) {
+    for (const m of [0, 30]) slots.push({ value: `${h}:${m}`, hour: h, minute: m })
+  }
+  const valid = Number.isInteger(hour) && Number.isInteger(minute) && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
+  if (valid && minute !== 0 && minute !== 30) {
+    slots.push({ value: `${hour}:${minute}`, hour, minute })
+    slots.sort((a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute))
+  }
+  return slots
+}
+
+/**
+ * Reads the wall-clock fields of an RFC 3339 timestamp as written, without
+ * converting to the browser's timezone: a run the server lists as 02:15+02:00
+ * happens at 02:15 on the server's clock, wherever the browser is.
+ *
+ * @param {string} iso
+ * @returns {{ year: number, month: number, day: number, hour: number, minute: number } | null}
+ */
+export function serverWallClock(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso || '')
+  if (!m) return null
+  const [year, month, day, hour, minute] = m.slice(1).map(Number)
+  return { year, month, day, hour, minute }
+}
+
+/**
+ * The date part of a server run, e.g. "Tue, 7 Oct", in the browser's locale.
+ * @param {{ year: number, month: number, day: number }} wall
+ */
+export function formatRunDate(wall) {
+  const d = new Date(Date.UTC(wall.year, wall.month - 1, wall.day))
+  return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
+}

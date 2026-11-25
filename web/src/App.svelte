@@ -11,6 +11,8 @@
   import { getHostThemeMode, isEmbedded } from './lib/runtime-config.js'
   import { isAuthRequired } from './lib/auth.svelte.js'
   import { revealFrameTop } from './lib/embed.js'
+  import { createConnectionBanner, isConnectionLost } from './lib/connection-banner.js'
+  import { shortcutModifier } from './lib/shortcuts.js'
   import { onMount, tick } from 'svelte'
 
   import Dashboard from './pages/Dashboard.svelte'
@@ -29,6 +31,7 @@
   import CommandPalette from './components/CommandPalette.svelte'
   import MoreSheet from './components/MoreSheet.svelte'
   import EmbeddedNav from './components/EmbeddedNav.svelte'
+  import { ICONS, PAGE_ICONS } from './lib/icons.js'
 
   // Framed by Unraid's Backups page (#526): no fixed chrome, and the document
   // takes its natural height so the frame can size to it.
@@ -36,6 +39,7 @@
 
   let moreOpen = $state(false)
   let showCommandPalette = $state(false)
+  const shortcutMod = shortcutModifier()
 
   function handleGlobalKeydown(e) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -53,17 +57,17 @@
   // affects the desktop sidebar; icon lookup / isActive / mobile navs are
   // path-based and order-independent.
   const allNav = [
-    { path: '/', label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
-    { path: '/jobs', label: 'Jobs', section: 'Protect', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4', daemonOnly: true },
-    { path: '/storage', label: 'Storage', section: 'Protect', icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
-    { path: '/replication', label: 'Replication', section: 'Protect', icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4' },
-    { path: '/restore', label: 'Restore', section: 'Recover', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15', daemonOnly: true },
-    { path: '/history', label: 'History', section: 'Recover', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
-    { path: '/recovery', label: 'Disaster Recovery', section: 'Recover', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z', daemonOnly: true },
-    { path: '/logs', label: 'Logs', section: 'System', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
-    { path: '/anomalies', label: 'Anomalies', section: 'System', icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
-    { path: '/settings', label: 'Settings', section: 'System', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
-    { path: '/docs-external', label: 'Documentation', section: 'System', external: true, href: 'https://tinkerologie.github.io/vault/', icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253' },
+    { path: '/', label: 'Dashboard', icon: PAGE_ICONS['/'] },
+    { path: '/jobs', label: 'Jobs', section: 'Protect', icon: PAGE_ICONS['/jobs'], daemonOnly: true },
+    { path: '/storage', label: 'Storage', section: 'Protect', icon: PAGE_ICONS['/storage'] },
+    { path: '/replication', label: 'Replication', section: 'Protect', icon: PAGE_ICONS['/replication'] },
+    { path: '/restore', label: 'Restore', section: 'Recover', icon: PAGE_ICONS['/restore'], daemonOnly: true },
+    { path: '/history', label: 'History', section: 'Recover', icon: PAGE_ICONS['/history'] },
+    { path: '/recovery', label: 'Disaster Recovery', section: 'Recover', icon: PAGE_ICONS['/recovery'], daemonOnly: true },
+    { path: '/logs', label: 'Logs', section: 'System', icon: PAGE_ICONS['/logs'] },
+    { path: '/anomalies', label: 'Anomalies', section: 'System', icon: PAGE_ICONS['/anomalies'] },
+    { path: '/settings', label: 'Settings', section: 'System', icon: PAGE_ICONS['/settings'] },
+    { path: '/docs-external', label: 'Documentation', section: 'System', external: true, href: 'https://tinkerologie.github.io/vault/', icon: PAGE_ICONS['/docs-external'] },
   ]
 
   // Filter nav items based on mode – hide daemon-only pages in replica mode –
@@ -181,10 +185,22 @@
   // page. Driven purely by the live-connection status: 'polling', 'connecting',
   // and 'connected' are healthy/transient and stay silent. Deliberately NOT tied
   // to boot-degraded state — a browser that merely blocks storage must not be
-  // reported as a daemon outage.
-  let connectionLost = $derived.by(() => {
-    const wsStatus = getWsStatus()
-    return ready && (wsStatus === 'disconnected' || wsStatus === 'reconnecting')
+  // reported as a daemon outage. A drop shorter than the grace period shows
+  // nothing, and once shown it stays through every retry (#686).
+  let connectionLost = $state(false)
+  const connectionBanner = createConnectionBanner((shown) => { connectionLost = shown })
+  $effect(() => {
+    connectionBanner.update(ready && isConnectionLost(getWsStatus()))
+  })
+  $effect(() => () => connectionBanner.dispose())
+
+  // The banner is fixed to the top, so the layout and the toasts move down by
+  // its height rather than sit under it (#686). The embedded banner is in the
+  // page's flow and reserves its own space.
+  let bannerHeight = $state(0)
+  $effect(() => {
+    const offset = connectionLost && !embedded ? `${bannerHeight}px` : '0px'
+    document.documentElement.style.setProperty('--vault-banner-offset', offset)
   })
 
   // True when the daemon version predates the latest published release.
@@ -249,20 +265,25 @@
   <ApiKeyPrompt />
 {/if}
 
-<CommandPalette bind:show={showCommandPalette} onclose={() => showCommandPalette = false} />
+<CommandPalette bind:show={showCommandPalette} pages={nav} onclose={() => showCommandPalette = false} />
 
 <a href="#main-content" onclick={skipToMain} class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-vault focus:text-on-vault focus:rounded-lg focus:text-sm focus:font-medium">Skip to main content</a>
 
-{#if connectionLost}
-  <div role="status" aria-live="polite"
-    class="fixed top-0 left-0 right-0 z-[150] flex items-center justify-center gap-3 px-4 py-2 text-sm bg-amber-500/95 text-amber-950">
-    <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-    <span>Live connection to the Vault daemon is unavailable. Data may be out of date.</span>
-    <button onclick={() => location.reload()} class="underline font-medium hover:no-underline">Reload</button>
-  </div>
-{/if}
+<!-- One live region that stays in the page, so the banner is announced once
+     when it appears rather than each time it is re-inserted. -->
+<div role="status" data-connection-banner class={embedded ? '' : 'fixed top-0 left-0 right-0 z-[150]'} bind:clientHeight={bannerHeight}>
+  {#if connectionLost}
+    <div class="bg-surface-2 border-b border-warning/40">
+      <div class="flex items-center justify-center gap-3 px-4 py-2 text-sm text-text bg-warning/15">
+        <svg class="w-4 h-4 shrink-0 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
+        <span>Live connection to the Vault daemon is unavailable. Data may be out of date.</span>
+        <button type="button" onclick={() => location.reload()} class="underline font-medium hover:no-underline">Reload</button>
+      </div>
+    </div>
+  {/if}
+</div>
 
-<div class={embedded ? 'bg-surface' : 'flex h-screen bg-surface'}>
+<div class={embedded ? 'bg-surface' : 'flex h-screen bg-surface'} style:padding-top={embedded ? undefined : 'var(--vault-banner-offset, 0px)'}>
   {#if !ready}
     <div class="flex-1 flex items-center justify-center"><Spinner text="Connecting..." /></div>
   {:else}
@@ -277,13 +298,23 @@
         <span class="text-text font-mono text-sm tracking-widest">┌─ VAULT ─┐</span>
       {:else}
         <div class="w-8 h-8 bg-vault rounded-lg flex items-center justify-center shrink-0">
-          <svg class="w-5 h-5 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          <svg class="w-5 h-5 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.shield}/></svg>
         </div>
         <div>
           <span class="text-lg font-bold text-text tracking-tight">VAULT</span>
           <span class="text-xs text-text-dim block -mt-0.5">{replicaMode ? 'Replica' : 'Backup Manager'}</span>
         </div>
       {/if}
+    </div>
+
+    <!-- Opens the command palette, and shows its shortcut (#691). -->
+    <div class="px-3 pt-4">
+      <button type="button" onclick={() => showCommandPalette = true} aria-keyshortcuts="Meta+K Control+K"
+        class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-muted bg-surface-3 border border-border hover:text-text hover:bg-surface-4 transition-colors">
+        <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.search}/></svg>
+        <span class="flex-1 text-left">Search</span>
+        <kbd aria-hidden="true" class="text-xs font-mono px-1.5 py-0.5 rounded border border-border bg-surface-2">{shortcutMod}K</kbd>
+      </button>
     </div>
 
     <!-- Nav links -->
@@ -320,7 +351,7 @@
             title="Update available — latest release v{latestTag}"
             aria-label="Update available, latest release v{latestTag}. Open settings."
             class="inline-flex items-center gap-1.5 text-hue-orange hover:underline transition-colors">
-            <span class="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" aria-hidden="true"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-hue-orange-bg animate-pulse" aria-hidden="true"></span>
             Update available
           </a>
         {/if}
@@ -329,11 +360,11 @@
   </aside>
 
   <!-- Mobile header -->
-  <header class="lg:hidden fixed top-0 left-0 right-0 z-40 bg-surface-2 border-b border-border">
+  <header class="lg:hidden fixed top-0 left-0 right-0 z-40 bg-surface-2 border-b border-border" style:top="var(--vault-banner-offset, 0px)">
     <div class="flex items-center justify-between px-4 py-3">
       <div class="flex items-center gap-2">
         <div class="w-7 h-7 bg-vault rounded-lg flex items-center justify-center">
-          <svg class="w-4 h-4 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          <svg class="w-4 h-4 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.shield}/></svg>
         </div>
         <span class="text-base font-bold text-text">VAULT</span>
       </div>

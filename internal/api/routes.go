@@ -239,6 +239,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/", jobH.List)
 			r.Post("/", jobH.Create)
 			r.Get("/next-runs", jobH.AllNextRuns)
+			r.Get("/schedule-preview", jobH.SchedulePreview)
 			r.Get("/{id}", jobH.Get)
 			r.Put("/{id}", jobH.Update)
 			r.Delete("/{id}", jobH.Delete)
@@ -252,6 +253,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.With(ExtendWriteDeadline(handlers.RestorePointContentsWriteTimeout)).Get("/{id}/restore-points/{rpid}/contents",
 				s.trackTimedRead(jobH.RestorePointContents, handlers.RestorePointContentsHandlerTimeout, handlers.RestorePointContentsTimeoutBody))
 			r.Post("/{id}/restore-points/{rpid}/preflight", jobH.RestorePointPreflight)
+			r.Post("/{id}/restore-points/{rpid}/write-targets", jobH.RestorePointWriteTargets)
 			r.Post("/{id}/restore-points/{rpid}/verify", jobH.VerifyRestorePoint)
 			r.Get("/{id}/restore-points/{rpid}/verify-runs", jobH.ListRestorePointVerifyRuns)
 			r.Get("/{id}/verify-runs/{vrid}", jobH.GetVerifyRun)
@@ -302,6 +304,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			// Recovery copy of vault.key (#451): as sensitive as the API key,
 			// so it gets the same rate limit.
 			r.With(LocalOnly, httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Get("/server-key", settingsH.GetServerKey)
+			r.With(LocalOnly, httprate.LimitBy(5, time.Minute, keyByRemoteAddr)).Post("/server-key/acknowledge", settingsH.AcknowledgeServerKey)
 			r.Get("/staging", settingsH.GetStagingInfo)
 			r.Put("/staging", settingsH.SetStagingOverride)
 			r.Get("/appdata", settingsH.GetAppdataPath)

@@ -79,6 +79,8 @@ func TestAssistantKeyCanOnlyReadRecoveryCatalog(t *testing.T) {
 			{http.MethodGet, "/api/v1/no-such-route"},
 			{http.MethodPost, "/api/v1/recovery/catalog"},
 			{http.MethodPost, "/api/v1/jobs/1/restore"},
+			{http.MethodPost, "/api/v1/jobs/1/restore-points/1/preflight"},
+			{http.MethodPost, "/api/v1/jobs/1/restore-points/1/write-targets"},
 			{http.MethodPost, "/api/v1/recovery/requests"},
 		} {
 			w := serve(srv, boundaryRequest(route.method, route.path, peer, daemonHost, headers))

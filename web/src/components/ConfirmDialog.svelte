@@ -1,5 +1,6 @@
 <script>
   import Modal from './Modal.svelte'
+  import InlineSpinner from './InlineSpinner.svelte'
 
   // Cancel takes initial focus, so a stray Enter can never confirm. A field in
   // `children` marked `data-autofocus` takes it instead, being earlier in the DOM.
@@ -8,7 +9,10 @@
   // until the exact word is typed. Focus still starts on Cancel, so Enter there
   // cancels, and the field is one Tab away. `source` ({label, value}[]) names what
   // is affected and `consequences` (string[]) states the loss. `busy` locks the
-  // dialog while the request runs, so it can't be dismissed or sent twice.
+  // dialog while the request runs, so it can't be dismissed or sent twice. While
+  // busy the confirm button shows a spinner and `busyLabel` (or its own label),
+  // and the controls are aria-disabled rather than disabled, so the focused one
+  // keeps focus (#698).
   let {
     show = false,
     title = 'Confirm',
@@ -21,6 +25,7 @@
     source = [],
     consequences = [],
     busy = false,
+    busyLabel = '',
     onconfirm = () => {},
     oncancel = () => {},
     description = undefined,
@@ -31,6 +36,7 @@
 
   let typed = $state('')
   let canConfirm = $derived(!busy && !confirmDisabled && (!confirmWord || typed === confirmWord))
+  let busyText = $derived(busyLabel || confirmLabel)
 
   $effect(() => {
     if (!show) typed = ''
@@ -90,34 +96,39 @@
           <input
             type="text"
             bind:value={typed}
-            disabled={busy}
+            readonly={busy}
+            aria-disabled={busy ? 'true' : undefined}
             autocomplete="off"
             autocapitalize="off"
             spellcheck="false"
             onkeydown={onWordKeydown}
-            class="mt-1.5 w-full px-3 py-2 text-base sm:text-sm font-mono bg-surface-3 border border-border rounded-lg text-text focus:outline-none focus:border-vault disabled:opacity-50"
+            class="mt-1.5 w-full px-3 py-2 text-base sm:text-sm font-mono bg-surface-3 border border-border rounded-lg text-text focus:outline-none focus:border-vault aria-disabled:opacity-50 max-lg:min-h-11"
           />
         </label>
       {/if}
       {@render children?.()}
     </div>
+    <div role="status" class="sr-only">{busy ? busyText : ''}</div>
     <div class="flex justify-end gap-3 px-6 pt-5 pb-6">
       <button
         type="button"
         data-autofocus
-        disabled={busy}
+        aria-disabled={busy ? 'true' : undefined}
         onclick={cancel}
-        class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
       >
         {cancelLabel}
       </button>
+      <!-- Natively disabled until it can be used, so Tab skips it; aria-disabled
+           while busy, so a focused confirm button keeps focus. -->
       <button
         type="button"
-        disabled={!canConfirm}
+        disabled={!canConfirm && !busy}
+        aria-disabled={busy ? 'true' : undefined}
         onclick={confirm}
-        class={`px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${variants[variant] || variants.danger}`}
+        class={`inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed aria-disabled:opacity-40 aria-disabled:cursor-not-allowed ${variants[variant] || variants.danger}`}
       >
-        {confirmLabel}
+        {#if busy}<InlineSpinner />{busyText}{:else}{confirmLabel}{/if}
       </button>
     </div>
   </div>

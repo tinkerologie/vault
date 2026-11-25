@@ -5,6 +5,7 @@
   import { itemDisplayLabel } from '../lib/utils.js'
   import Spinner from './Spinner.svelte'
   import PathBrowser from './PathBrowser.svelte'
+  import { ICONS } from '../lib/icons.js'
 
   /** @type {{ items: Array<{item_type: string, item_name: string, item_id: string, settings: string, sort_order?: number}>, allowedTypes?: string[], onchange?: (items: any[]) => void }} */
   let { items = $bindable([]), allowedTypes = null, onchange = () => {} } = $props()
@@ -35,6 +36,26 @@
   }
 
   let singleTab = $derived(allowedTypes && allowedTypes.length === 1 ? allowedTypes[0] : null)
+
+  const uid = $props.id()
+
+  // Tabs pattern: arrow keys, Home and End move between the visible tabs and
+  // select the one they land on (#683).
+  function onTabKeydown(e) {
+    const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End']
+    if (!keys.includes(e.key)) return
+    const tabs = [...e.currentTarget.querySelectorAll('[role="tab"]')]
+    if (tabs.length === 0) return
+    const current = tabs.findIndex((t) => t.getAttribute('aria-selected') === 'true')
+    let next
+    if (e.key === 'ArrowLeft') next = (current - 1 + tabs.length) % tabs.length
+    else if (e.key === 'ArrowRight') next = (current + 1) % tabs.length
+    else if (e.key === 'Home') next = 0
+    else next = tabs.length - 1
+    e.preventDefault()
+    tabs[next].click()
+    tabs[next].focus()
+  }
 
   // Map allowedTypes IDs to item_type values used in the selected map
   function itemTypeAllowed(item) {
@@ -386,7 +407,7 @@
       <span class="ml-2 text-sm text-text-muted">Discovering items...</span>
     </div>
   {:else if error}
-    <div class="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-danger">
+    <div class="px-4 py-3 bg-danger/10 border border-danger/30 rounded-lg text-sm text-danger">
       Failed to discover items: {error}
       <button onclick={discover} class="ml-2 underline hover:no-underline">Retry</button>
     </div>
@@ -395,12 +416,18 @@
   {:else}
     <!-- Tabs (hidden when single type selected) -->
     {#if !singleTab}
-    <div class="flex items-center gap-1 border-b border-border overflow-x-auto">
+    <div class="flex items-center gap-1 border-b border-border">
+    <div role="tablist" aria-label="Item types" tabindex="-1" onkeydown={onTabKeydown} class="flex items-center gap-1 overflow-x-auto min-w-0">
       {#if containersAvailable && isTabAllowed('containers')}
         <button
           type="button"
+          role="tab"
+          id="{uid}-tab-containers"
+          aria-selected={activeTab === 'containers'}
+          aria-controls="{uid}-panel"
+          tabindex={activeTab === 'containers' ? 0 : -1}
           onclick={() => (activeTab = 'containers')}
-          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'containers'
+          class="px-4 py-2.5 max-lg:min-h-11 text-sm font-medium border-b-2 transition-colors {activeTab === 'containers'
             ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -415,8 +442,13 @@
       {#if vmsAvailable && isTabAllowed('vms')}
         <button
           type="button"
+          role="tab"
+          id="{uid}-tab-vms"
+          aria-selected={activeTab === 'vms'}
+          aria-controls="{uid}-panel"
+          tabindex={activeTab === 'vms' ? 0 : -1}
           onclick={() => (activeTab = 'vms')}
-          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'vms'
+          class="px-4 py-2.5 max-lg:min-h-11 text-sm font-medium border-b-2 transition-colors {activeTab === 'vms'
             ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -431,8 +463,13 @@
       {#if foldersAvailable && isTabAllowed('folders')}
         <button
           type="button"
+          role="tab"
+          id="{uid}-tab-folders"
+          aria-selected={activeTab === 'folders'}
+          aria-controls="{uid}-panel"
+          tabindex={activeTab === 'folders' ? 0 : -1}
           onclick={() => (activeTab = 'folders')}
-          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'folders'
+          class="px-4 py-2.5 max-lg:min-h-11 text-sm font-medium border-b-2 transition-colors {activeTab === 'folders'
             ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -447,8 +484,13 @@
       {#if flashItems.length > 0 && isTabAllowed('flash')}
         <button
           type="button"
+          role="tab"
+          id="{uid}-tab-flash"
+          aria-selected={activeTab === 'flash'}
+          aria-controls="{uid}-panel"
+          tabindex={activeTab === 'flash' ? 0 : -1}
           onclick={() => (activeTab = 'flash')}
-          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'flash'
+          class="px-4 py-2.5 max-lg:min-h-11 text-sm font-medium border-b-2 transition-colors {activeTab === 'flash'
             ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -463,8 +505,13 @@
       {#if pluginsAvailable && isTabAllowed('plugins')}
         <button
           type="button"
+          role="tab"
+          id="{uid}-tab-plugins"
+          aria-selected={activeTab === 'plugins'}
+          aria-controls="{uid}-panel"
+          tabindex={activeTab === 'plugins' ? 0 : -1}
           onclick={() => (activeTab = 'plugins')}
-          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'plugins'
+          class="px-4 py-2.5 max-lg:min-h-11 text-sm font-medium border-b-2 transition-colors {activeTab === 'plugins'
             ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -479,8 +526,13 @@
       {#if zfsAvailable && isTabAllowed('zfs')}
         <button
           type="button"
+          role="tab"
+          id="{uid}-tab-zfs"
+          aria-selected={activeTab === 'zfs'}
+          aria-controls="{uid}-panel"
+          tabindex={activeTab === 'zfs' ? 0 : -1}
           onclick={() => (activeTab = 'zfs')}
-          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'zfs'
+          class="px-4 py-2.5 max-lg:min-h-11 text-sm font-medium border-b-2 transition-colors {activeTab === 'zfs'
             ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -492,14 +544,18 @@
           {/if}
         </button>
       {/if}
+    </div>
       <div class="flex-1"></div>
-      <span class="text-xs text-text-muted pr-2">{selectedCount} selected</span>
+      <span class="text-xs text-text-muted pr-2 shrink-0">{selectedCount} selected</span>
     </div>
     {/if}
+
+    <div id="{uid}-panel" role={singleTab ? undefined : 'tabpanel'} aria-labelledby={singleTab ? undefined : `${uid}-tab-${activeTab}`} class="space-y-3">
 
     <!-- Search -->
     <div class="relative">
       <svg
+        aria-hidden="true"
         class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-dim"
         fill="none"
         viewBox="0 0 24 24"
@@ -508,14 +564,15 @@
           stroke-linecap="round"
           stroke-linejoin="round"
           stroke-width="2"
-          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+          d={ICONS.search}
         /></svg
       >
       <input
-        type="text"
+        type="search"
+        aria-label="Search {activeTab === 'containers' ? 'containers' : activeTab === 'vms' ? 'VMs' : activeTab === 'plugins' ? 'plugins' : activeTab === 'flash' ? 'flash drive' : activeTab === 'zfs' ? 'ZFS datasets' : 'folders'}"
         bind:value={search}
         placeholder="Search {activeTab === 'containers' ? 'containers' : activeTab === 'vms' ? 'VMs' : activeTab === 'plugins' ? 'plugins' : activeTab === 'flash' ? 'flash drive' : activeTab === 'zfs' ? 'ZFS datasets' : 'folders'}..."
-        class="w-full bg-surface-3 border border-border rounded-lg pl-10 pr-3 py-2 text-sm text-text placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50"
+        class="w-full bg-surface-3 border border-border rounded-lg pl-10 pr-3 py-2 max-lg:min-h-11 text-sm text-text placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50"
       />
     </div>
 
@@ -536,6 +593,7 @@
             {@const sel = isSelected('container', container.name)}
             <button
               type="button"
+              aria-pressed={sel}
               onclick={() => toggle('container', container)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
                 ? 'border-vault/50 bg-vault/5'
@@ -552,7 +610,7 @@
                       stroke-linecap="round"
                       stroke-linejoin="round"
                       stroke-width="3"
-                      d="M5 13l4 4L19 7"
+                      d={ICONS.check}
                     /></svg
                   >
                 {/if}
@@ -565,8 +623,8 @@
               </div>
               <span
                 class="text-xs px-2 py-0.5 rounded-full shrink-0 {container.settings?.state === 'running'
-                  ? 'bg-green-500/15 text-success'
-                  : 'bg-yellow-500/15 text-warning'}"
+                  ? 'bg-success/15 text-success'
+                  : 'bg-warning/15 text-warning'}"
               >
                 {container.settings?.state || 'unknown'}
               </span>
@@ -593,6 +651,7 @@
             {@const sel = isSelected('vm', vm.name)}
             <button
               type="button"
+              aria-pressed={sel}
               onclick={() => toggle('vm', vm)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
                 ? 'border-vault/50 bg-vault/5'
@@ -609,7 +668,7 @@
                       stroke-linecap="round"
                       stroke-linejoin="round"
                       stroke-width="3"
-                      d="M5 13l4 4L19 7"
+                      d={ICONS.check}
                     /></svg
                   >
                 {/if}
@@ -620,8 +679,8 @@
               </div>
               <span
                 class="text-xs px-2 py-0.5 rounded-full shrink-0 {vm.settings?.state === 'running'
-                  ? 'bg-green-500/15 text-success'
-                  : 'bg-gray-500/15 text-text-muted'}"
+                  ? 'bg-success/15 text-success'
+                  : 'bg-surface-3 text-text-muted'}"
               >
                 {vm.settings?.state || 'shutoff'}
               </span>
@@ -652,7 +711,7 @@
           onclick={() => (showAddFolder = !showAddFolder)}
           class="text-xs text-vault-text hover:underline transition-colors flex items-center gap-1"
         >
-          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.plus}/></svg>
           Add Custom Folder
         </button>
       </div>
@@ -673,6 +732,7 @@
             {@const sel = isSelected('folder', folder.name)}
             <button
               type="button"
+              aria-pressed={sel}
               onclick={() => toggle('folder', folder)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
                 ? 'border-vault/50 bg-vault/5'
@@ -685,7 +745,7 @@
               >
                 {#if sel}
                   <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
+                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check} /></svg
                   >
                 {/if}
               </div>
@@ -694,7 +754,7 @@
                 <div class="text-xs text-text-muted truncate" title={folder.settings?.path || ''}>{folder.settings?.path || ''}</div>
               </div>
               {#if folder.settings?.preset}
-                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-500/15 text-hue-amber">{folder.settings.preset}</span>
+                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-hue-amber-bg/15 text-hue-amber">{folder.settings.preset}</span>
               {/if}
             </button>
           {/each}
@@ -725,6 +785,7 @@
             {@const sel = isSelected('folder', flash.name)}
             <button
               type="button"
+              aria-pressed={sel}
               onclick={() => toggle('folder', flash)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
                 ? 'border-vault/50 bg-vault/5'
@@ -737,7 +798,7 @@
               >
                 {#if sel}
                   <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
+                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check} /></svg
                   >
                 {/if}
               </div>
@@ -745,7 +806,7 @@
                 <div class="text-sm font-medium text-text truncate">{flash.name}</div>
                 <div class="text-xs text-text-muted truncate">{flash.settings?.path || '/boot'}</div>
               </div>
-              <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-500/15 text-hue-amber">USB boot drive</span>
+              <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-hue-amber-bg/15 text-hue-amber">USB boot drive</span>
             </button>
           {/each}
         </div>
@@ -769,6 +830,7 @@
             {@const sel = isSelected('plugin', plugin.name)}
             <button
               type="button"
+              aria-pressed={sel}
               onclick={() => toggle('plugin', plugin)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
                 ? 'border-vault/50 bg-vault/5'
@@ -781,7 +843,7 @@
               >
                 {#if sel}
                   <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
+                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check} /></svg
                   >
                 {/if}
               </div>
@@ -790,7 +852,7 @@
                 <div class="text-xs text-text-muted">Unraid Plugin</div>
               </div>
               {#if plugin.settings?.has_config}
-                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-blue-500/15 text-hue-blue">config</span>
+                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-hue-blue-bg/15 text-hue-blue">config</span>
               {/if}
             </button>
           {/each}
@@ -815,6 +877,7 @@
             {@const sel = isSelected('zfs', dataset.name)}
             <button
               type="button"
+              aria-pressed={sel}
               onclick={() => toggle('zfs', dataset)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
                 ? 'border-vault/50 bg-vault/5'
@@ -827,7 +890,7 @@
               >
                 {#if sel}
                   <svg aria-hidden="true" class="w-3 h-3 text-on-vault" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg
+                    ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check} /></svg
                   >
                 {/if}
               </div>
@@ -841,7 +904,7 @@
                 </div>
               </div>
               {#if dataset.settings?.used}
-                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-blue-500/15 text-hue-blue">
+                <span class="text-xs px-2 py-0.5 rounded-full shrink-0 bg-hue-blue-bg/15 text-hue-blue">
                   {dataset.settings.used}
                 </span>
               {/if}
@@ -859,6 +922,8 @@
       </p>
     {/if}
 
+    </div>
+
     <!-- Selected Items Order -->
     {#if selectedCount > 0}
       <div class="mt-4 pt-3 border-t border-border">
@@ -867,7 +932,7 @@
           {#each selectedArray as [key, item], idx (key)}
             {@const stale = !loading && isStaleItem(key)}
             <div
-              class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-3/50 border text-sm {stale ? 'border-yellow-500/40' : 'border-border'} {dragIndex === idx ? 'opacity-50' : ''}"
+              class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-3/50 border text-sm {stale ? 'border-warning/40' : 'border-border'} {dragIndex === idx ? 'opacity-50' : ''}"
               draggable="true"
               ondragstart={() => (dragIndex = idx)}
               ondragover={(e) => e.preventDefault()}
@@ -880,7 +945,7 @@
               <span class="text-text truncate" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
               {#if stale}
                 <span class="flex items-center gap-1 text-xs text-warning shrink-0" title="This item no longer exists on the system">
-                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
                   Not found
                 </span>
               {/if}
@@ -893,7 +958,7 @@
                     class="hit-target text-text-dim hover:text-text disabled:opacity-30"
                     aria-label="Move up"
                   >
-                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronUp}/></svg>
                   </button>
                   <button
                     type="button"
@@ -902,7 +967,7 @@
                     class="hit-target text-text-dim hover:text-text disabled:opacity-30"
                     aria-label="Move down"
                   >
-                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                    <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronDown}/></svg>
                   </button>
                 {/if}
                 <button
@@ -912,7 +977,7 @@
                   aria-label="Remove {itemDisplayLabel(item)}"
                   title="Remove from backup job"
                 >
-                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                  <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/></svg>
                 </button>
               </div>
             </div>

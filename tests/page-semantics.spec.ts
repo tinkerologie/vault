@@ -115,17 +115,19 @@ test.describe('Page semantics (#529)', () => {
 
   test.describe('dashboard tiles', () => {
     const TILES: [RegExp, string][] = [
-      [/^Health score/, '#/history'],
+      [/^Job health/, '#/history'],
       [/^Next run/, '#/jobs'],
       [/^Last backup/, '#/history'],
       [/^Storage used/, '#/storage'],
       [/^Storage per target/, '#/storage'],
       [/^Recovery readiness/, '#/recovery'],
-      [/^Needs attention/, '#/history'],
+      // The mock history has a failed run, so the tile opens the failures (#693).
+      [/^Needs attention/, '#/history?status=failed&review=outstanding'],
       [/^Success rate/, '#/history'],
       [/^Anomalies/, '#/anomalies'],
       [/^Backup size trend/, '#/history'],
-      [/^Backup calendar/, '#/history'],
+      // The calendar holds a data table, so only its header link navigates (#690).
+      [/^View history/, '#/history'],
       [/^Retention & cleanup/, '#/jobs'],
     ];
 
@@ -182,7 +184,7 @@ test.describe('Page semantics (#529)', () => {
         expect(stop.inert).toBe(false);
         reached.add(stop.name);
       }
-      expect(reached).toContain('Remove Health score');
+      expect(reached).toContain('Remove Job health');
       await page.locator('.dash-tile').first().click({ position: { x: 20, y: 60 } });
       await expect(page).toHaveURL(/#\/$/);
     });
@@ -500,10 +502,10 @@ test.describe('screen-reader state and names (#529)', () => {
     test(`Restore at ${viewport.name}: steps keep their names and mark the current one`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.goto('/#/restore');
-      const step1 = page.getByRole('button', { name: '1 Select Items' });
+      const step1 = page.getByRole('button', { name: '1 Choose what to restore' });
       await expect(step1).toHaveAttribute('aria-current', 'step');
-      await expect(page.getByRole('button', { name: '2 Choose Version' })).not.toHaveAttribute('aria-current');
-      await expect(page.getByRole('button', { name: '3 Restore' })).toBeAttached();
+      await expect(page.getByRole('button', { name: '2 Choose a restore point' })).not.toHaveAttribute('aria-current');
+      await expect(page.getByRole('button', { name: '3 Set restore options' })).toBeAttached();
     });
   }
 
@@ -530,7 +532,7 @@ test.describe('screen-reader state and names (#529)', () => {
       severity: 'warning', state: 'open', detected_at: '2026-10-01T02:20:00Z',
     }] } }));
     await page.goto('/#/history');
-    const run = page.getByRole('button', { name: 'Docker & Appdata completed', exact: true });
+    const run = page.getByRole('button', { name: 'Docker & Appdata Completed', exact: true });
     await expect(run).toHaveAttribute('aria-expanded', 'false');
     await expect(page.locator('main [role="button"]')).toHaveCount(0);
     expect(await run.locator(WIDGETS).count()).toBe(0);

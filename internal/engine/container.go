@@ -2541,6 +2541,12 @@ func containerTemplatePath(containerName string) string {
 	return filepath.Join(dockerTemplatesDir, "my-"+containerName+".xml")
 }
 
+// ContainerTemplatePath is the template file a restore of containerName
+// writes. Read-only callers use it to preview a restore's host paths.
+func ContainerTemplatePath(containerName string) string {
+	return containerTemplatePath(containerName)
+}
+
 // BackupChunked is the dedup-repo equivalent of Backup. Scope is
 // volumes-only: each BIND mount's source tree is delegated to
 // FolderHandler.BackupChunked (so chunk-level dedup is shared with the

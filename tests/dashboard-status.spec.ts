@@ -11,7 +11,7 @@ const banner = (page: Page) => page.getByRole('region', { name: 'Backup status' 
 const title = (page: Page) => banner(page).getByRole('heading', { level: 2 });
 const announcer = (page: Page) => banner(page).locator('[data-status-announcer]');
 const h1 = (page: Page, name: string) => page.getByRole('heading', { level: 1, name, exact: true });
-const healthTile = (page: Page) => page.getByRole('link', { name: /^Health score/ });
+const healthTile = (page: Page) => page.getByRole('link', { name: /^Job health/ });
 
 async function open(page: Page, options: VaultMockOptions = {}) {
   await setupVaultMockApi(page, options);
@@ -45,7 +45,7 @@ test.describe('banner states', () => {
     await expect(banner(page)).toContainText('3 of 19 items unprotected');
     await expect(banner(page)).not.toContainText(/healthy/i);
     await expect(healthTile(page)).toContainText('100');
-    await expect(healthTile(page)).toContainText('Backups OK · 3 unprotected');
+    await expect(healthTile(page)).toContainText('Jobs OK · 3 items in no job');
     await expect(healthTile(page)).not.toContainText(/healthy/i);
     const stroke = await healthTile(page).locator('circle').nth(1).getAttribute('stroke');
     expect(stroke).toBe('var(--color-warning)');
@@ -68,7 +68,7 @@ test.describe('banner states', () => {
     await open(page, { healthSummary: summary(ALL_ITEM_KEYS), historyRuns: [run(1, 'partial')] });
     await expect(title(page)).toHaveText('Needs attention');
     await expect(banner(page)).toContainText('1 run finished with warnings');
-    await expect(healthTile(page)).toContainText('Backups OK · 1 with warnings');
+    await expect(healthTile(page)).toContainText('Jobs OK · 1 with warnings');
   });
 
   test('mixed: every problem is named and has its own link', async ({ page }) => {
@@ -226,7 +226,7 @@ test.describe('states that used to read as healthy', () => {
     for (const text of ['5 runs skipped', '1 run cancelled', 'last backed up 2025-03-12', 'Health score 40 of 100']) {
       await expect(banner(page)).toContainText(text);
     }
-    await expect(healthTile(page)).toContainText(/Health score\s+40\s+Needs attention/);
+    await expect(healthTile(page)).toContainText(/Job health\s+40\s+Needs attention/);
     await expect(healthTile(page)).not.toContainText(/healthy/i);
   });
 
@@ -237,7 +237,7 @@ test.describe('states that used to read as healthy', () => {
     await open(page, { jobs, healthSummary: summary(ALL_ITEM_KEYS, { recent_partial: 1 }), historyRuns: [run(1, 'completed'), eleventh] });
     await expect(title(page)).toHaveText('Needs attention');
     await expect(banner(page)).toContainText('1 run finished with warnings');
-    await expect(healthTile(page)).toContainText('Backups OK · 1 with warnings');
+    await expect(healthTile(page)).toContainText('Jobs OK · 1 with warnings');
   });
 
   test('failed discovery makes the tile qualify itself too, not only the banner', async ({ page }) => {
@@ -245,7 +245,7 @@ test.describe('states that used to read as healthy', () => {
     await page.route('**/api/v1/vms', (route) => route.fulfill(json({ error: 'nope' }, 500)));
     await page.goto('/#/');
     await expect(title(page)).toHaveText('Backup health unavailable');
-    await expect(healthTile(page)).toContainText('Backups OK · some data unavailable');
+    await expect(healthTile(page)).toContainText('Jobs OK · some data unavailable');
   });
 
   test('a Needs attention tile counts them rather than reading 0', async ({ page }) => {
@@ -476,8 +476,8 @@ test.describe('Customize and saved layouts', () => {
 
 test.describe('health text', () => {
   const LONG_CASES: { name: string; options: VaultMockOptions; text: string }[] = [
-    { name: 'qualified', options: { healthSummary: summary(ALL_ITEM_KEYS.slice(0, 4)), historyRuns: [run(1, 'completed')] }, text: 'Backups OK · 3 unprotected' },
-    { name: 'all qualifiers', options: { healthSummary: summary(ALL_ITEM_KEYS.slice(0, 3), { pending_keys: ALL_ITEM_KEYS.slice(3, 5) }), historyRuns: [run(1, 'partial')] }, text: 'Backups OK · 2 unprotected · 1 with warnings · 2 pending' },
+    { name: 'qualified', options: { healthSummary: summary(ALL_ITEM_KEYS.slice(0, 4)), historyRuns: [run(1, 'completed')] }, text: 'Jobs OK · 3 items in no job' },
+    { name: 'all qualifiers', options: { healthSummary: summary(ALL_ITEM_KEYS.slice(0, 3), { pending_keys: ALL_ITEM_KEYS.slice(3, 5) }), historyRuns: [run(1, 'partial')] }, text: 'Jobs OK · 2 items in no job · 1 with warnings · 2 pending' },
     { name: 'no backups', options: BANNER_STATES.find((s) => s.name === 'waiting for first backup')!.options, text: 'No backups completed yet' },
   ];
 
@@ -575,8 +575,8 @@ test('reviewed cancellations clear Dashboard attention but stay in History', asy
   await expect(review).toBeFocused();
   await review.uncheck();
   await expect(page.getByText('Acknowledged', { exact: true })).toHaveCount(2);
-  await expect(page.getByRole('button', { name: 'VM Backups cancelled' })).toHaveCount(2);
-  await page.getByRole('button', { name: 'VM Backups cancelled' }).first().click();
+  await expect(page.getByRole('button', { name: 'VM Backups Cancelled' })).toHaveCount(2);
+  await page.getByRole('button', { name: 'VM Backups Cancelled' }).first().click();
   await expect(page.getByText('Reviewed both cancellations', { exact: true })).toBeVisible();
 
   await page.goto('/#/');

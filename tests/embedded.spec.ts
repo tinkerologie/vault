@@ -77,7 +77,7 @@ async function openEmbedded(page: Page, options: EmbedOptions = {}): Promise<Fra
     await page.route(`${frameOrigin}/**`, async (route) => {
       const { pathname, search } = new URL(route.request().url());
       if (pathname.startsWith('/api/')) return route.fallback();
-      await route.fulfill({ response: await route.fetch({ url: `http://127.0.0.1:4173${pathname}${search}` }) });
+      await route.fulfill({ response: await route.fetch({ url: `${new URL(test.info().project.use.baseURL ?? 'http://127.0.0.1:4173').origin}${pathname}${search}` }) });
     });
   }
   const frameSrc = `${crossOrigin ? frameOrigin : ''}/?embed=1${hash}`;
@@ -150,7 +150,7 @@ async function openEmbeddedLogs(page: Page, { count = LOG_COUNT, pinnedMenu = fa
       });
     },
   });
-  const log = frame.getByRole('log');
+  const log = frame.getByRole('region', { name: 'Log console' });
   await expect(log.locator(`[data-entry-id="${count}"]`)).toBeVisible();
   // One date separator and up to 199 lines: past that, older rows wait below the window.
   await expect.poll(() => log.locator('[data-entry-id]').count(), { timeout: 15000 }).toBe(Math.min(count, 199));
@@ -177,7 +177,7 @@ const ownScrollers = (page: Page) => childWindow(page).evaluate(() => [...docume
 /** The first log line at or below the top of the parent's screen. */
 const firstLineOnScreen = (page: Page) => childWindow(page).evaluate(() => {
   const top = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--vault-visible-top')) || 0;
-  const row = [...document.querySelectorAll<HTMLElement>('[role="log"] [data-entry-id]')].find((r) => r.getBoundingClientRect().top >= top + 40)!;
+  const row = [...document.querySelectorAll<HTMLElement>('[data-log-console] [data-entry-id]')].find((r) => r.getBoundingClientRect().top >= top + 40)!;
   return { id: row.dataset.entryId!, top: row.getBoundingClientRect().top };
 });
 const lineTop = (page: Page, id: string) => childWindow(page).evaluate((i) => document.querySelector(`[data-entry-id="${i}"]`)?.getBoundingClientRect().top ?? NaN, id);
@@ -337,10 +337,11 @@ for (const viewport of VIEWPORTS) {
       await scrollParentBy(page, (await log.boundingBox())!.y + 1500);
       const present = frame.getByTitle('Jump to present');
       await expect(present).toBeVisible();
-      await page.waitForTimeout(100);
-      // The day header and Oldest stick just below the menu, not under it.
-      const day = await log.locator('.sticky').first().boundingBox();
-      expect(Math.abs(day!.y - PINNED_MENU)).toBeLessThanOrEqual(1);
+      // The day header and Oldest stick just below the menu, not under it. The
+      // sticky offset follows the host's visible-area message, so wait for it
+      // to settle rather than sampling after a fixed delay.
+      const day = log.locator('.sticky').first();
+      await expect.poll(async () => Math.abs((await day.boundingBox())!.y - PINNED_MENU)).toBeLessThanOrEqual(1);
       const oldest = await frame.getByRole('button', { name: 'Jump to oldest log' }).boundingBox();
       expect(oldest!.y).toBeGreaterThanOrEqual(PINNED_MENU);
       await expectInParentViewport(page, oldest);
@@ -489,8 +490,9 @@ for (const viewport of VIEWPORTS) {
       await expect(h1(frame, 'Backup Jobs')).toBeVisible();
       await settledFrameHeight(page);
       await page.evaluate(() => window.scrollTo(0, 250));
-      await frame.getByRole('button', { name: /run backup now/i }).first().click();
-      const toast = frame.getByRole('alert');
+      await frame.getByRole('button', { name: /^Run Now:/ }).first().click();
+      // A queued run is good news: a polite status toast (#685).
+      const toast = frame.getByRole('status').filter({ has: frame.locator('[data-toast-icon]') });
       await expect(toast).toBeVisible();
       await expectInParentViewport(page, await toast.boundingBox());
     });
@@ -582,7 +584,8 @@ for (const viewport of VIEWPORTS) {
       await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toBeVisible({ visible: !desktop });
       const state = await page.evaluate(() => ({
         embedded: document.documentElement.classList.contains('vault-embedded'),
-        shell: document.querySelector('#app > div')!.className,
+        // The shell is main's parent; the connection-banner region now precedes it (#686).
+        shell: document.getElementById('main-content')!.parentElement!.className,
         main: getComputedStyle(document.getElementById('main-content')!).overflowY,
         html: getComputedStyle(document.documentElement).overflow,
       }));
@@ -592,7 +595,7 @@ for (const viewport of VIEWPORTS) {
     test('standalone Logs keeps its own scroll box', async ({ page }) => {
       await setupVaultMockApi(page);
       await page.goto('/#/logs');
-      const log = page.getByRole('log');
+      const log = page.getByRole('region', { name: 'Log console' });
       await expect(log).toBeVisible();
       const state = await log.evaluate((el) => ({
         overflow: getComputedStyle(el).overflowY,

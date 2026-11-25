@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/engine"
 	jobintake "github.com/tinkerologie/vault/internal/jobs"
+	"github.com/tinkerologie/vault/internal/restorerequest"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/storage"
 )
@@ -241,7 +243,10 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 		db.Job
 		Items    []db.JobItem   `json:"items"`
 		Baseline db.JobBaseline `json:"baseline"`
+		// HistoricalItems is set only with history=true (#669).
+		HistoricalItems []historicalItem `json:"historical_items,omitempty"`
 	}
+	withHistory := r.URL.Query().Get("history") == "true"
 	result := make([]detailedJob, 0, len(jobs))
 	for _, job := range jobs {
 		jobItems := itemsByJob[job.ID]
@@ -250,9 +255,72 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		baseline := baselineByJob[job.ID]
 		baseline.JobID = job.ID
-		result = append(result, detailedJob{Job: job, Items: jobItems, Baseline: baseline})
+		entry := detailedJob{Job: job, Items: jobItems, Baseline: baseline}
+		if withHistory {
+			// One job's unreadable history shouldn't hide every job from the
+			// restore wizard; the health summary handles the same error this way.
+			points, err := h.db.ListRestorePointsContext(r.Context(), job.ID)
+			if err != nil {
+				log.Printf("jobs: listing restore points for job %d: %v", job.ID, err)
+			} else {
+				entry.HistoricalItems = historicalItems(jobItems, points)
+			}
+		}
+		result = append(result, entry)
 	}
 	respondJSON(w, http.StatusOK, result)
+}
+
+// historicalItem is a Backup Item that a job's retained Restore Points hold
+// but the job no longer lists, such as a deleted container (#669).
+type historicalItem struct {
+	ItemName      string `json:"item_name"`
+	ItemType      string `json:"item_type"`
+	LastBackupAt  string `json:"last_backup_at"`
+	RestorePoints int    `json:"restore_points"`
+}
+
+// historicalItems lists the items recorded in points that are not in the job.
+// Only names with a recorded type are listed, because a restore needs one;
+// a name still in the job is left to the job's own item.
+func historicalItems(jobItems []db.JobItem, points []db.RestorePoint) []historicalItem {
+	current := make(map[string]struct{}, len(jobItems))
+	for _, item := range jobItems {
+		current[item.ItemName] = struct{}{}
+	}
+	byName := map[string]*historicalItem{}
+	var order []string
+	for _, point := range points {
+		members, known := point.BackedUpItems()
+		if !known {
+			continue
+		}
+		for name, kind := range point.RecordedItemTypes() {
+			if _, member := members[name]; !member {
+				continue
+			}
+			if _, inJob := current[name]; inJob {
+				continue
+			}
+			created := point.CreatedAt.UTC().Format(time.RFC3339)
+			item, seen := byName[name]
+			if !seen {
+				item = &historicalItem{ItemName: name, ItemType: kind}
+				byName[name] = item
+				order = append(order, name)
+			}
+			item.RestorePoints++
+			if created > item.LastBackupAt {
+				item.LastBackupAt = created
+			}
+		}
+	}
+	sort.Strings(order)
+	out := make([]historicalItem, 0, len(order))
+	for _, name := range order {
+		out = append(out, *byName[name])
+	}
+	return out
 }
 
 func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -470,7 +538,7 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 	archiveName := strings.TrimSpace(r.URL.Query().Get("file"))
 	// Container manifests need synthetic-key resolution; folder and plugin
 	// manifests must pass through untouched (see dedupManifestToTarIndex).
-	itemType := h.itemType(jobID, itemName)
+	itemType := h.itemType(jobID, rp, itemName)
 
 	job, err := h.db.GetJob(jobID)
 	if err != nil {
@@ -649,13 +717,18 @@ func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []d
 	respondJSON(w, http.StatusOK, engine.TarIndex{Version: 1, Archive: itemName, Files: files})
 }
 
-// itemType resolves a job item's type ("container", "folder", "plugin", …).
+// itemType resolves an item's type ("container", "folder", "plugin", …).
 //
-// Returns "" when the item is no longer configured on the job — a restore
-// point can outlive its item. Callers treat that as "not a container", which
+// The Restore Point's own record comes first: it describes the data being
+// browsed, and it outlives the item's place in the job (#669). The job's item
+// is the fallback for points made before item types were recorded. Returns ""
+// when neither knows the item. Callers treat that as "not a container", which
 // is the safe default: it leaves manifest keys untouched rather than dropping
 // paths that only look synthetic.
-func (h *JobHandler) itemType(jobID int64, itemName string) string {
+func (h *JobHandler) itemType(jobID int64, rp db.RestorePoint, itemName string) string {
+	if kind := rp.RecordedItemTypes()[itemName]; kind != "" {
+		return kind
+	}
 	items, err := h.db.GetJobItems(jobID)
 	if err != nil {
 		// The item name is caller-supplied, so it is deliberately left out of the
@@ -1321,17 +1394,73 @@ func (h *JobHandler) RunnerStatus(w http.ResponseWriter, r *http.Request) {
 
 // RestorePointPreflight runs cheap pre-restore validation (storage reachable,
 // backup present, decryptable, free space) so the UI can show a go/no-go
-// checklist before a restore is started.
+// checklist before a restore is started. It returns only the checks: the
+// exact container and VM host paths come from RestorePointWriteTargets, so
+// their slower metadata review never delays these checks.
 //
 //	POST /api/v1/jobs/{id}/restore-points/{rpid}/preflight
 func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseID(w, r, "id")
+	scope, ok := h.parseRestoreScope(w, r)
 	if !ok {
 		return
 	}
-	rpID, ok := parseID(w, r, "rpid")
+	respondJSON(w, http.StatusOK, h.runner.PreflightRestore(scope.job, scope.point, scope.opts))
+}
+
+// RestorePointWriteTargets lists the exact host paths each selected
+// container and VM restore writes, resolved with the review a Restore Request
+// uses (#716). It takes the pre-flight's body and answers within
+// writeTargetsBudget; items not reviewed in time report cancelled. Assistant
+// Keys cannot reach this route, so these paths stay out of assistant
+// responses.
+//
+//	POST /api/v1/jobs/{id}/restore-points/{rpid}/write-targets
+func (h *JobHandler) RestorePointWriteTargets(w http.ResponseWriter, r *http.Request) {
+	scope, ok := h.parseRestoreScope(w, r)
 	if !ok {
 		return
+	}
+	respondJSON(w, http.StatusOK, writeTargetsResponse{
+		Items: h.previewWriteTargets(r.Context(), scope),
+	})
+}
+
+type writeTargetsResponse struct {
+	Items []restorerequest.ItemWriteTargets `json:"items"`
+}
+
+// maxWriteTargetItems bounds the bounded-metadata reviews one request runs;
+// later items report too_many_items. A var for tests.
+var maxWriteTargetItems = 32
+
+// writeTargetsBudget bounds one write-targets request. It stays well inside
+// the smallest limit on the route: the Unraid proxy's 10 s default
+// (VAULT_HTTP_TIMEOUT_DEFAULT in plugin/pages/include/api.php), then the
+// browser's 15 s and ServerWriteTimeout. A var for tests.
+var writeTargetsBudget = 8 * time.Second
+
+// previewWriteTarget reviews one item. A var so tests can slow it down.
+var previewWriteTarget = restorerequest.PreviewWriteTargets
+
+// restoreScope is a validated pre-flight or write-targets request.
+type restoreScope struct {
+	job        db.Job
+	point      db.RestorePoint
+	targets    []restoreTarget
+	opts       runner.PreflightRestoreOptions
+	passphrase string
+}
+
+// parseRestoreScope decodes and validates the body the pre-flight and
+// write-targets routes share, writing the error response when it fails.
+func (h *JobHandler) parseRestoreScope(w http.ResponseWriter, r *http.Request) (restoreScope, bool) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return restoreScope{}, false
+	}
+	rpID, ok := parseID(w, r, "rpid")
+	if !ok {
+		return restoreScope{}, false
 	}
 	var req struct {
 		Passphrase  string   `json:"passphrase"`
@@ -1346,7 +1475,7 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 	}
 	if !errors.Is(decodeErr, io.EOF) {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
-		return
+		return restoreScope{}, false
 	}
 	opts := runner.PreflightRestoreOptions{Passphrase: req.Passphrase, Destination: req.Destination, Items: req.Items}
 	// Unscoped requests still accept either kind of destination.
@@ -1355,7 +1484,7 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 		normalized, err := restoreDestinationFor(req.Destination, opts.DestinationIsZFS)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
-			return
+			return restoreScope{}, false
 		}
 		opts.Destination = normalized
 	}
@@ -1364,38 +1493,39 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "job not found")
-			return
+			return restoreScope{}, false
 		}
 		respondInternalError(w, err)
-		return
+		return restoreScope{}, false
 	}
 	rp, err := h.db.GetRestorePoint(rpID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "restore point not found")
-			return
+			return restoreScope{}, false
 		}
 		respondInternalError(w, err)
-		return
+		return restoreScope{}, false
 	}
 	if rp.JobID != id {
 		respondError(w, http.StatusNotFound, "restore point not found")
-		return
+		return restoreScope{}, false
 	}
+	var targets []restoreTarget
 	if len(req.Items) > 0 {
 		jobItems, err := h.db.GetJobItems(id)
 		if err != nil {
 			respondInternalError(w, fmt.Errorf("fetching job items: %w", err))
-			return
+			return restoreScope{}, false
 		}
-		targets, err := resolveNamedRestoreTargets(jobItems, req.Items)
+		targets, err = resolveNamedRestoreTargets(jobItems, rp, req.Items)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
-			return
+			return restoreScope{}, false
 		}
 		if err := validateRestorePointTargets(rp, targets); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
-			return
+			return restoreScope{}, false
 		}
 		opts.ItemTypes = make(map[string]string, len(targets))
 		for _, target := range targets {
@@ -1405,11 +1535,67 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 			opts.Destination, opts.DestinationIsZFS, err = restoreDestinationForTargets(req.Destination, targets)
 			if err != nil {
 				respondError(w, http.StatusBadRequest, "invalid destination: "+err.Error())
-				return
+				return restoreScope{}, false
 			}
 		}
 	}
-	respondJSON(w, http.StatusOK, h.runner.PreflightRestore(job, rp, opts))
+	return restoreScope{job: job, point: rp, targets: targets, opts: opts, passphrase: req.Passphrase}, true
+}
+
+// previewWriteTargets resolves each selected container and VM restore's host
+// paths with the review the restore itself applies. Other item types are
+// left out: the wizard already knows their location. Reviews run in order on
+// one goroutine; when the budget ends the reply goes out at once, even if a
+// review ignores cancellation, and every unfinished item reports cancelled.
+func (h *JobHandler) previewWriteTargets(ctx context.Context, scope restoreScope) []restorerequest.ItemWriteTargets {
+	// A ZFS dataset destination selects only ZFS items, so none reach here.
+	destination := scope.opts.Destination
+	unavailable := func(target restoreTarget, reason string) restorerequest.ItemWriteTargets {
+		return restorerequest.ItemWriteTargets{Name: target.Name, Type: target.Type, Status: "unavailable",
+			Reason: reason, WriteTargets: []restorerequest.WriteTarget{}}
+	}
+	var selected []restoreTarget
+	for _, target := range scope.targets {
+		if target.Type == "container" || target.Type == "vm" {
+			selected = append(selected, target)
+		}
+	}
+	items := make([]restorerequest.ItemWriteTargets, len(selected))
+	reviewed := min(len(selected), maxWriteTargetItems)
+	for i, target := range selected[reviewed:] {
+		items[reviewed+i] = unavailable(target, "too_many_items")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, writeTargetsBudget)
+	defer cancel()
+	// Buffered so the reviewing goroutine never blocks after the reply.
+	results := make(chan restorerequest.ItemWriteTargets, reviewed)
+	review := previewWriteTarget
+	go func() {
+		for _, target := range selected[:reviewed] {
+			if ctx.Err() != nil {
+				return
+			}
+			results <- review(ctx, h.db, h.runner, restorerequest.Input{
+				JobID: scope.job.ID, RestorePointID: scope.point.ID, ItemName: target.Name, ItemType: target.Type, Destination: destination,
+			}, scope.passphrase)
+		}
+	}()
+	done := 0
+collect:
+	for done < reviewed {
+		select {
+		case item := <-results:
+			items[done] = item
+			done++
+		case <-ctx.Done():
+			break collect
+		}
+	}
+	for i := done; i < reviewed; i++ {
+		items[i] = unavailable(selected[i], "cancelled")
+	}
+	return items
 }
 
 type restoreTarget struct {
@@ -1417,20 +1603,61 @@ type restoreTarget struct {
 	Type string
 }
 
-func resolveNamedRestoreTargets(jobItems []db.JobItem, names []string) ([]restoreTarget, error) {
+// resolveNamedRestoreTargets resolves each requested name to a type: the
+// job's item first, then the type the Restore Point recorded, so an item that
+// has left its job can still be restored from points that hold it (#669). A
+// name the job and the point record with different types is refused.
+// Membership of the point is still checked by validateRestorePointTargets.
+func resolveNamedRestoreTargets(jobItems []db.JobItem, point db.RestorePoint, names []string) ([]restoreTarget, error) {
 	types := make(map[string]string, len(jobItems))
 	for _, item := range jobItems {
 		types[item.ItemName] = item.ItemType
 	}
+	recorded := point.RecordedItemTypes()
 	targets := make([]restoreTarget, 0, len(names))
 	for _, name := range names {
 		itemType, ok := types[name]
+		pointType := recorded[name]
 		if !ok {
-			return nil, fmt.Errorf("item not found in job: %s", name)
+			itemType, ok = pointType, pointType != ""
+		} else if pointType != "" && pointType != itemType {
+			// Browsing shows the point's recorded type; restoring the same data
+			// with the job's current type would write it in the wrong layout.
+			return nil, itemTypeChangedError(name, pointType, itemType)
+		}
+		if !ok || itemType == "" {
+			return nil, fmt.Errorf("item not found in job or restore point: %s", name)
 		}
 		targets = append(targets, restoreTarget{Name: name, Type: itemType})
 	}
 	return targets, nil
+}
+
+// removedItemWithoutLocation returns the first folder or ZFS target that is no
+// longer in the job. Its original location comes from the job's item, so
+// restoring it needs an explicit destination (#669). Containers and VMs
+// restore from their saved configuration and don't need one.
+func removedItemWithoutLocation(jobID int64, targets []restoreTarget, database *db.DB) string {
+	items, err := database.GetJobItems(jobID)
+	if err != nil {
+		return ""
+	}
+	inJob := make(map[string]bool, len(items))
+	for _, item := range items {
+		inJob[item.ItemName] = true
+	}
+	for _, t := range targets {
+		if !inJob[t.Name] && (t.Type == "folder" || t.Type == "zfs") {
+			return t.Name
+		}
+	}
+	return ""
+}
+
+// itemTypeChangedError explains why a restore was refused: the Restore Point
+// recorded the item as one type and the job or request now names another.
+func itemTypeChangedError(name, recorded, current string) error {
+	return fmt.Errorf("item type changed since this backup: %s was a %s, now a %s", name, recorded, current)
 }
 
 func validateRestorePointTargets(point db.RestorePoint, targets []restoreTarget) error {
@@ -1546,7 +1773,12 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	var targets []restoreTarget
 
 	if req.ItemName != "" && req.ItemType != "" {
-		// Legacy single-item restore.
+		// Legacy single-item restore. A type that differs from the one the
+		// Restore Point recorded is refused, as for named items.
+		if recorded := found.RecordedItemTypes()[req.ItemName]; recorded != "" && recorded != req.ItemType {
+			respondError(w, http.StatusBadRequest, itemTypeChangedError(req.ItemName, recorded, req.ItemType).Error())
+			return
+		}
 		targets = append(targets, restoreTarget{Name: req.ItemName, Type: req.ItemType})
 	} else {
 		// Look up job items to resolve types.
@@ -1556,14 +1788,20 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(req.Items) > 0 {
-			targets, err = resolveNamedRestoreTargets(jobItems, req.Items)
+			targets, err = resolveNamedRestoreTargets(jobItems, *found, req.Items)
 			if err != nil {
 				respondError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 		} else {
-			// Restore all items from the job.
+			// Restore all items from the job, with the same recorded-type
+			// check as named items.
+			recorded := found.RecordedItemTypes()
 			for _, ji := range jobItems {
+				if pointType := recorded[ji.ItemName]; pointType != "" && pointType != ji.ItemType {
+					respondError(w, http.StatusBadRequest, itemTypeChangedError(ji.ItemName, pointType, ji.ItemType).Error())
+					return
+				}
 				targets = append(targets, restoreTarget{Name: ji.ItemName, Type: ji.ItemType})
 			}
 		}
@@ -1572,6 +1810,12 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	if len(targets) == 0 {
 		respondError(w, http.StatusBadRequest, "no items to restore")
 		return
+	}
+	if req.Destination == "" {
+		if name := removedItemWithoutLocation(id, targets, h.db); name != "" {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("%s is no longer in this job, so its original location isn't recorded: choose a restore destination", name))
+			return
+		}
 	}
 
 	if req.Destination != "" {

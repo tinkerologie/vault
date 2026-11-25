@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Stop a running restore from the Restore wizard. The Stop button stops that exact Restore Run, and the result offers View run and Retry failed items (#701).
+- Restore containers, VMs and folders that have left their job, from the Restore Points that still hold them. A folder or ZFS item that has left its job needs a custom destination, because its original location isn't recorded (#669).
+- See the exact host paths each container and VM restore will write before it runs, in the Restore wizard and in the typed RESTORE confirmation (#716).
+- Choose Manual only in the job schedule builder, and preview the next three runs in the server's timezone (#682).
+- Deep links to Settings tabs (`#/settings/security`) and filters kept in the URL on History, Logs and Anomalies (#712, #693).
+- Warn on the Dashboard and Disaster Recovery when vault.key is the only way to open deduplicated backups, until a copy of the current key is saved or a backup password is set (#714).
+- Plain-language explanations with a next step for common backup errors, keeping the raw message under Details (#711).
+- A search hint (⌘K) in the sidebar. The command palette lists every page, including Replication, Disaster Recovery and Anomalies (#691).
+
+### Changed
+
+- Protection status is the same on the Dashboard and Disaster Recovery: protected, out of date, pending first backup or unprotected. Out-of-date items are no longer shown as protected. The health score counts only up-to-date items and is labelled Job health, and MCP `get_health_summary` returns the same summary as the REST API (#708, #694).
+- Restores that clear the destination list the restore locations and require typing RESTORE; restores without clearing stay one click (#700).
+- Deleting a job or destination together with its backup files requires typing DELETE (#689).
+- Going back in the Restore wizard keeps chosen Restore Points and options for unchanged jobs (#702).
+- The restore file tree supports full keyboard navigation and stays fast with 100,000+ files (#703).
+- Editing a job opens the full form with every option. Collapsed sections show when they are configured (#712).
+- Closing the job editor, storage form or Settings with unsaved changes asks first. Back closes an open dialog instead of leaving the page (#687). Settings asks on Back, Forward, the command palette and links, and covers every section that needs Save (#719).
+- Form errors appear under the field they belong to, and connection test failures stay visible in the form (#688).
+- Every password and key field has a show/hide toggle. Saved secrets are no longer pre-filled; leave the field blank to keep them (#706).
+- Warning and error messages stay until dismissed, and several messages stack instead of replacing each other (#685).
+- The connection-lost banner waits three seconds before showing and no longer covers the page heading or messages (#686).
+- History, Logs and Anomalies show first-run, no-match and disabled-feature states with a next step. Empty Restore Request panels collapse to one line (#695).
+- Clearer page layout: History shows runs sooner, Purge moved to a More actions menu, and Recover Vault uses the standard page frame (#699).
+- Consistent colours, icons and type: a 12px minimum text size, one link colour, one selected-card style, one switch component and distinct storage-type icons (#698, #710).
+
+### Fixed
+
+- Pages that fail to load show an error with Retry instead of an empty or "all clear" state (#681).
+- Links to a History run open it even when it is beyond the first page, or say when it no longer exists (#720).
+- Editing a manual-only job no longer schedules it daily at 2:00, and schedule times between the half-hour slots are kept (#682).
+- Deleting a Restore Point from the Restore wizard works and asks for confirmation (#704).
+- Restores are refused when an item's type has changed since the backup, so data is never restored in the wrong layout (#669).
+- Screen readers announce the selected type, items, days and mode in the job editor, and the stepper names each step (#683).
+- The keyboard focus ring and switches meet WCAG 3:1 contrast in every theme style (#684).
+- Screen readers no longer repeat backup progress every second, and the Logs console no longer announces while scrolling (#686).
+- History charts have readable axis labels, keyboard access and a data table for screen readers (#690).
+- Tooltips are announced by screen readers and stay open when clicked or hovered. The command palette works with screen readers (#691).
+- Expand and collapse controls report their state, and row actions name their item (#692).
+- The page no longer flashes white before dark mode applies, and native controls follow the theme (#696).
+- Anomalies, Recovery, Replication and forms fit at phone width, with touch-sized fields (#697).
+- Deduplication no longer shows overhead as savings (#713).
+- Labels: singular item types, matching restore step names, "PM" in the command palette and the version shown once (#705, #715).
+
+### Security
+
+- The vault.key copy record is tied to the current key and can only be set by downloading the key or confirming a copy from the signed-in Unraid page. A backup password counts only once each deduplicated destination has confirmed it, and that confirmation never stores or returns the password hash (#714).
+
 ## [v2026.11.03] - 2026-11-19
 
 ### Fixed

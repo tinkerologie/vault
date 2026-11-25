@@ -62,7 +62,15 @@ const CASES: Case[] = [
   { name: 'Import Backups', hash: '#/storage', opener: (p) => p.getByRole('button', { name: 'Import backups' }).first(), dialog: /Import Backups/ },
   { name: 'Storage browser', hash: '#/storage', opener: (p) => p.getByRole('button', { name: /browse destination files/i }).first(), dialog: /Browse Local Array Backup/ },
   { name: 'Purge logs', hash: '#/logs', opener: (p) => p.getByRole('button', { name: /purge/i }).first(), dialog: 'Purge All Logs' },
-  { name: 'Purge history', hash: '#/history', opener: (p) => p.getByRole('button', { name: /purge/i }).first(), dialog: 'Purge All History' },
+  // Purge lives in History's More actions menu (#699), which stays open behind
+  // the dialog so focus returns to the menu item.
+  {
+    name: 'Purge history',
+    hash: '#/history',
+    prepare: async (p) => { await p.getByRole('button', { name: 'More actions' }).click(); },
+    opener: (p) => p.getByRole('menuitem', { name: /purge/i }),
+    dialog: 'Purge All History',
+  },
   {
     name: 'Cancel queued operation',
     hash: '#/history',
@@ -81,7 +89,8 @@ const CASES: Case[] = [
     name: 'Delete Replication Target',
     hash: '#/replication',
     setup: (page) => setupVaultMockApi(page, { replicationSources: REPLICATION_SOURCES }),
-    opener: (p) => p.getByRole('button', { name: 'Delete replication target' }).first(),
+    // Row actions are named after their target (#692).
+    opener: (p) => p.getByRole('button', { name: /^Delete: / }).first(),
     dialog: 'Delete Replication Target',
   },
   {
@@ -242,7 +251,9 @@ test.describe('Nested dialogs (#528)', () => {
     await expect(editor.locator('#sname')).toHaveValue('Keep this name');
     await expect(browse).toBeFocused();
 
+    // The form has a typed name, so Escape asks before discarding it (#687).
     await page.keyboard.press('Escape');
+    await page.getByRole('dialog', { name: 'Discard changes?' }).getByRole('button', { name: 'Discard' }).click();
     await expect(editor).toHaveCount(0);
     await expect(page.locator('main').getByRole('button', { name: /add storage/i }).first()).toBeFocused();
   });
@@ -328,8 +339,10 @@ test.describe('Command palette (#528)', () => {
       await page.keyboard.press('Shift+Tab');
       expect(await focusIsInTopDialog(page), `Shift+Tab ${i + 1} left the palette`).toBe(true);
     }
+    // The options are a listbox driven from the search box (#691), so the
+    // box is the palette's one tab stop and Tab keeps focus on it.
     await page.keyboard.press('Tab');
-    await expect(search(page)).not.toBeFocused();
+    await expect(search(page)).toBeFocused();
 
     await page.keyboard.press('Escape');
     await expect(palette(page)).toHaveCount(0);
@@ -377,14 +390,16 @@ test.describe('Command palette (#528)', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Backup Jobs' })).toBeFocused();
   });
 
-  test('Enter on a tabbed-to row runs that row', async ({ page }) => {
+  test('Enter runs the option the arrow keys made active', async ({ page }) => {
     await page.goto('/#/jobs');
     await page.keyboard.press('Control+k');
     await expect(search(page)).toBeFocused();
-    await page.keyboard.press('Tab');
-    await page.keyboard.press('Tab');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('option', { name: /Go to Storage/, selected: true })).toBeVisible();
+    await expect(search(page)).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL(/#\/jobs/);
+    await expect(page).toHaveURL(/#\/storage/);
     await expect(palette(page)).toHaveCount(0);
   });
 
@@ -442,7 +457,7 @@ test.describe('Wizard step focus (#528)', () => {
     await page.getByRole('button', { name: /Continue/i }).click();
     await expect.poll(() => focusedHeading(page)).toMatch(/Step 3 of 3/);
 
-    await page.getByRole('button', { name: /Back to versions/ }).click();
+    await page.getByRole('button', { name: /Back to restore points/ }).click();
     await expect.poll(() => focusedHeading(page)).toMatch(/Step 2 of 3/);
     await page.getByRole('button', { name: /Back to items/ }).first().click();
     await expect.poll(() => focusedHeading(page)).toMatch(/Step 1 of 3/);
@@ -469,8 +484,10 @@ test.describe('Wizard step focus (#528)', () => {
     await expect.poll(() => focusedHeading(page)).toBe('Where & when');
     await expect.poll(() => focusIsInTopDialog(page)).toBe(true);
 
-    // Reopening starts fresh: no focus jump onto the heading.
+    // Reopening starts fresh: no focus jump onto the heading. The draft has
+    // changes, so Escape asks before discarding it (#687).
     await page.keyboard.press('Escape');
+    await page.getByRole('dialog', { name: 'Discard changes?' }).getByRole('button', { name: 'Discard' }).click();
     await expect(dialog).toHaveCount(0);
     await page.getByRole('button', { name: /new job/i }).click();
     await expect.poll(() => focusIsInTopDialog(page)).toBe(true);
@@ -565,7 +582,9 @@ test.describe('Toasts and tooltips above a modal (#528)', () => {
     const dialog = await toastOverDialog(page);
     const toast = page.getByRole('alert');
     await expect(toast).toBeVisible();
+    // The rejected form still holds its input, so Escape asks first (#687).
     await page.keyboard.press('Escape');
+    await page.getByRole('dialog', { name: 'Discard changes?' }).getByRole('button', { name: 'Discard' }).click();
     await expect(dialog).toHaveCount(0);
     await expect(toast).toBeVisible();
     await toast.getByRole('button', { name: 'Dismiss' }).click();

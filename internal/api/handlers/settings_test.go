@@ -547,6 +547,34 @@ func TestSettingsList_SensitiveKeysExcluded(t *testing.T) {
 	}
 }
 
+// Escrow confirmation records never reach a settings response (#714).
+func TestSettingsList_EscrowConfirmationsExcluded(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+	if err := h.db.SetSetting(db.DedupEscrowConfirmedPrefix+"3", "marker"); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.List(w, httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil))
+	if strings.Contains(w.Body.String(), db.DedupEscrowConfirmedPrefix) {
+		t.Fatalf("settings response exposes an escrow record: %s", w.Body.String())
+	}
+}
+
+// The Update response goes through List, so it drops escrow records too.
+func TestSettingsUpdate_ResponseExcludesEscrowConfirmations(t *testing.T) {
+	t.Parallel()
+	h := newTestSettingsHandler(t)
+	if err := h.db.SetSetting(db.DedupEscrowConfirmedPrefix+"3", "marker"); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.Update(w, httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"notifications_enabled":"true"}`)))
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), db.DedupEscrowConfirmedPrefix) {
+		t.Fatalf("status %d, body %s", w.Code, w.Body.String())
+	}
+}
+
 func TestSettingsUpdate_HappyPath(t *testing.T) {
 	t.Parallel()
 	h := newTestSettingsHandler(t)

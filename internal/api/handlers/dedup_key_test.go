@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
 	"github.com/tinkerologie/vault/internal/dedup"
+	"github.com/tinkerologie/vault/internal/health"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/storage"
 )
@@ -36,6 +40,13 @@ func TestGetServerKeyDownload(t *testing.T) {
 		if got := w.Header().Get(header); got != want {
 			t.Errorf("%s = %q, want %q", header, got, want)
 		}
+	}
+
+	// The download is recorded with the key's fingerprint, so the "save a copy"
+	// caution clears for this key only (#714).
+	saved, _ := h.db.GetSetting(health.ServerKeySavedSetting, "")
+	if !strings.HasSuffix(saved, " "+crypto.ServerKeyFingerprint(h.serverKey)) {
+		t.Errorf("the download was recorded as %q, want a timestamp and this key's fingerprint", saved)
 	}
 
 	h.serverKey = nil
@@ -152,5 +163,54 @@ func TestRewrapDedupKeysWithoutRunner(t *testing.T) {
 	h.RewrapDedupKeys(w, httptest.NewRequest(http.MethodPost, "/api/v1/storage/dedup-keys/rewrap", strings.NewReader(`{}`)))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d", w.Code)
+	}
+}
+
+// TestAcknowledgeServerKey checks the "I keep a copy elsewhere" confirmation
+// records this key's fingerprint, and that the generic settings endpoint can't
+// write the record or the current-key fingerprint (#714).
+func TestAcknowledgeServerKey(t *testing.T) {
+	h := newTestSettingsHandler(t)
+	w := httptest.NewRecorder()
+	h.AcknowledgeServerKey(w, httptest.NewRequest(http.MethodPost, "/api/v1/settings/server-key/acknowledge", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	saved, _ := h.db.GetSetting(health.ServerKeySavedSetting, "")
+	fields := strings.Fields(saved)
+	if len(fields) != 2 || fields[1] != crypto.ServerKeyFingerprint(h.serverKey) {
+		t.Fatalf("recorded %q, want a timestamp and this key's fingerprint", saved)
+	}
+	if _, err := time.Parse(time.RFC3339, fields[0]); err != nil {
+		t.Fatalf("recorded time %q: %v", fields[0], err)
+	}
+
+	for _, key := range []string{health.ServerKeySavedSetting, db.ServerKeyFingerprintSetting} {
+		w = httptest.NewRecorder()
+		body := strings.NewReader(`{"` + key + `":"2026-11-25T10:00:00Z ffff"}`)
+		h.Update(w, httptest.NewRequest(http.MethodPut, "/api/v1/settings", body))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("PUT /settings %s: status %d, want 400", key, w.Code)
+		}
+	}
+
+	h.serverKey = nil
+	w = httptest.NewRecorder()
+	h.AcknowledgeServerKey(w, httptest.NewRequest(http.MethodPost, "/api/v1/settings/server-key/acknowledge", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no key: status %d, want 503", w.Code)
+	}
+}
+
+type failingWriter struct{ *httptest.ResponseRecorder }
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("client went away") }
+
+// A download that never reaches the client doesn't count as a saved copy.
+func TestGetServerKeyFailedWriteIsNotRecorded(t *testing.T) {
+	h := newTestSettingsHandler(t)
+	h.GetServerKey(failingWriter{httptest.NewRecorder()}, httptest.NewRequest(http.MethodGet, "/api/v1/settings/server-key", nil))
+	if saved, _ := h.db.GetSetting(health.ServerKeySavedSetting, ""); saved != "" {
+		t.Fatalf("a failed download was recorded as a saved copy: %q", saved)
 	}
 }

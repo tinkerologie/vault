@@ -246,7 +246,7 @@ test.describe('screen reader polish (#608)', () => {
     await page.goto('/#/jobs');
     const main = page.getByRole('main');
     for (const job of ['Docker & Appdata', 'VM Backups']) {
-      for (const action of ['Run backup now', 'Duplicate job', 'Edit job', 'Delete job']) {
+      for (const action of ['Run Now', 'Duplicate job', 'Edit job', 'Delete job']) {
         await expect(main.getByRole('button', { name: `${action}: ${job}`, exact: true })).toBeVisible();
       }
     }
@@ -278,7 +278,8 @@ test.describe('screen reader polish (#608)', () => {
     await audit(page, 'Storage row actions');
 
     await page.goto('/#/anomalies');
-    for (const name of ['Backup size spike above baseline (Job #1)', 'Backup duration spike (Dest #2)']) {
+    // Scope reads as the job or destination name, not an id (#694).
+    for (const name of ['Backup size spike above baseline (Docker & Appdata)', 'Backup duration spike (Offsite S3)']) {
       await expect(main.getByRole('button', { name: `Dismiss: ${name}`, exact: true })).toBeVisible();
       await expect(main.getByRole('button', { name: `Expected: ${name}`, exact: true })).toBeVisible();
     }
@@ -286,6 +287,30 @@ test.describe('screen reader polish (#608)', () => {
     const names = walk.stops.map((s) => s.announced).filter((a) => /^button "(Dismiss|Expected)/.test(a));
     expect(names).toHaveLength(4);
     expect(new Set(names).size).toBe(4);
+  });
+
+  test('Replication row actions name their target, and Jobs reports its state (#692)', async ({ page }) => {
+    await page.route('**/api/v1/replication', (route) => route.fulfill({ json: [
+      { id: 1, name: 'Primary peer', type: 'remote_vault', url: 'https://peer-one.lan:24085', config: '{}', schedule: '0 3 * * *', enabled: true, created_at: '2026-10-01T00:00:00Z' },
+      { id: 2, name: 'Offsite peer', type: 'remote_vault', url: 'https://peer-two.lan:24085', config: '{}', schedule: '0 4 * * *', enabled: true, created_at: '2026-10-01T00:00:00Z' },
+    ] }));
+    await page.goto('/#/replication');
+    const main = page.getByRole('main');
+    for (const peer of ['Primary peer', 'Offsite peer']) {
+      for (const action of ['Edit', 'Delete', 'Jobs']) {
+        await expect(main.getByRole('button', { name: `${action}: ${peer}`, exact: true })).toBeVisible();
+      }
+    }
+    const walk = await tabWalk(page, page.mainFrame());
+    const names = walk.stops.map((s) => s.announced).filter((a) => /^button "(Edit|Delete): /.test(a));
+    expect(names).toHaveLength(4);
+    expect(new Set(names).size).toBe(4);
+    const jobs = main.getByRole('button', { name: 'Jobs: Primary peer', exact: true });
+    await expect(jobs).toHaveAttribute('aria-expanded', 'false');
+    await jobs.click();
+    await expect(jobs).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator(`#${await jobs.getAttribute('aria-controls')}`)).toBeVisible();
+    await audit(page, 'Replication row actions');
   });
 
   async function checkStorageCheckboxes(page: Page, scope: Locator, label: string) {
@@ -322,6 +347,8 @@ test.describe('screen reader polish (#608)', () => {
     await page.getByRole('button', { name: /add storage/i }).click();
     await checkStorageCheckboxes(page, page.getByRole('dialog'), 'Add Storage');
     await page.keyboard.press('Escape');
+    // Ticking the checkboxes changed the form, so Escape asks first (#687).
+    await page.getByRole('dialog', { name: 'Discard changes?' }).getByRole('button', { name: 'Discard' }).click();
 
     // Editing: deduplication is locked, and the description says why.
     await page.getByRole('button', { name: 'Edit storage: Local Array Backup', exact: true }).click();

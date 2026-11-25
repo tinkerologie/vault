@@ -1,19 +1,25 @@
 <script>
   import { onMount } from 'svelte'
+  import PasswordInput from '../components/PasswordInput.svelte'
   import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getLiveMode } from '../lib/runtime-config.js'
-  import { formatDate, describeSchedule, formatBytes } from '../lib/utils.js'
+  import { formatDate, describeSchedule, formatBytes, relTime } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
+  import LoadError from '../components/LoadError.svelte'
   import ScheduleBuilder from '../components/ScheduleBuilder.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import Tooltip from '../components/Tooltip.svelte'
+  import InlineSpinner from '../components/InlineSpinner.svelte'
+  import { ICONS, ITEM_TYPE_ICONS, PAGE_ICONS } from '../lib/icons.js'
 
   let loading = $state(true)
   let sources = $state([])
+  // A failed load must never read as "no targets" (#681).
+  let loadError = $state('')
   let showModal = $state(false)
   let editing = $state(null)
   let testing = $state(null)
@@ -21,6 +27,7 @@
   let syncing = $state(null)
   let toast = $state({ message: '', type: 'info', key: 0 })
   let confirmDelete = $state({ show: false, id: 0, name: '' })
+  let deletingSource = $state(false)
   let expandedSource = $state(null)
   let replicatedJobs = $state([])
   let loadingJobs = $state(false)
@@ -90,8 +97,11 @@
     try {
       const srcs = await api.listReplicationSources()
       sources = srcs || []
+      loadError = ''
     } catch (e) {
-      if (!background) showToast(e.message, 'error')
+      // A background refresh keeps the list it already has; with nothing
+      // loaded yet the error replaces the empty state.
+      if (!background || sources.length === 0) loadError = e.message || 'Request failed'
     } finally {
       loading = false
     }
@@ -168,14 +178,18 @@
   }
 
   async function deleteSource() {
+    const { id } = confirmDelete
+    deletingSource = true
     try {
-      await api.deleteReplicationSource(confirmDelete.id)
+      await api.deleteReplicationSource(id)
       confirmDelete = { show: false, id: 0, name: '' }
       showToast('Target deleted', 'success')
-      if (expandedSource === confirmDelete.id) expandedSource = null
+      if (expandedSource === id) expandedSource = null
       await loadData()
     } catch (e) {
       showToast(e.message, 'error')
+    } finally {
+      deletingSource = false
     }
   }
 
@@ -228,7 +242,7 @@
   }
 
   const typeIcons = {
-    remote_vault: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15',
+    remote_vault: PAGE_ICONS['/replication'],
   }
 
   const typeColors = {
@@ -278,9 +292,9 @@
       <h1 class="text-2xl font-bold text-text">Replication</h1>
       <p class="text-sm text-text-muted mt-1">Pull backups from remote Vault servers for disaster recovery</p>
     </div>
-    {#if sources.length > 0 && !isReplicaMode()}
+    {#if sources.length > 0 && !loadError && !isReplicaMode()}
       <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
-        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.plus}/></svg>
         Add Target
       </button>
     {/if}
@@ -288,17 +302,19 @@
 
   {#if isReplicaMode()}
     <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
-      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/></svg>
       <span>Read-only replica — write actions are disabled on this instance.</span>
     </div>
   {/if}
 
   {#if loading}
     <Spinner text="Loading replication targets..." />
+  {:else if loadError}
+    <LoadError title="Couldn't load replication targets" message={loadError} onretry={() => loadData()} />
   {:else if sources.length === 0}
     <EmptyState title="No replication targets" description="Add a remote Vault server to replicate backups for disaster recovery." actionLabel={isReplicaMode() ? null : "Add Target"} onaction={isReplicaMode() ? null : () => openCreate()}>
       {#snippet iconSlot()}
-        <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ICONS.refresh}/></svg>
       {/snippet}
     </EmptyState>
   {:else}
@@ -307,19 +323,17 @@
         {@const badge = statusBadge(src)}
         <div class="bg-surface-2 border border-border rounded-xl overflow-hidden hover:border-vault/30 hover:shadow-sm transition-all">
           <div class="p-5">
-            <div class="flex items-start justify-between">
-              <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-surface-3 flex items-center justify-center">
+            <div class="flex items-start justify-between gap-3">
+              <div class="flex items-center gap-3 min-w-0">
+                <div class="w-10 h-10 rounded-lg bg-surface-3 flex items-center justify-center shrink-0">
                   <svg aria-hidden="true" class="w-5 h-5 {typeColors[src.type] || 'text-vault'}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="{typeIcons[src.type] || typeIcons.remote_vault}"/></svg>
                 </div>
-                <div>
-                  <h2 class="font-semibold text-text">{src.name}</h2>
-                  <p class="text-xs text-text-dim mt-0.5 font-mono">
-                      {src.url}
-                  </p>
+                <div class="min-w-0">
+                  <h2 class="font-semibold text-text break-words">{src.name}</h2>
+                  <p class="text-xs text-text-dim mt-0.5 font-mono break-all">{src.url}</p>
                 </div>
               </div>
-              <span class="text-xs font-medium px-2.5 py-1 rounded-full {badge.cls}">{badge.label}</span>
+              <span class="shrink-0 text-xs font-medium px-2.5 py-1 rounded-full {badge.cls}">{badge.label}</span>
             </div>
 
             <div class="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
@@ -333,7 +347,11 @@
               </div>
               <div>
                 <span class="text-text-dim text-xs">Last Sync</span>
-                <p class="text-text font-medium">{src.last_sync_at ? formatDate(src.last_sync_at) : 'Never'}</p>
+                {#if src.last_sync_at}
+                  <p class="text-text font-medium tabular-nums" title={formatDate(src.last_sync_at)}>{relTime(src.last_sync_at)}</p>
+                {:else}
+                  <p class="text-text font-medium">Never</p>
+                {/if}
               </div>
               <div>
                 <span class="text-text-dim text-xs">Created</span>
@@ -352,15 +370,15 @@
               </div>
             {/if}
 
-            <div class="flex items-center gap-2 mt-4 pt-4 border-t border-border">
+            <div class="flex flex-wrap items-center gap-2 mt-4 pt-4 border-t border-border">
               {#if !isReplicaMode()}
               <button onclick={() => syncNow(src.id)} disabled={syncing === src.id}
                 class="px-3 py-1.5 bg-vault/10 hover:bg-vault/20 text-vault-text text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5">
                 {#if syncing === src.id}
-                  <svg aria-hidden="true" class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  <InlineSpinner size="xs" />
                   Syncing...
                 {:else}
-                  <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                  <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.refresh}/></svg>
                   Sync Now
                 {/if}
               </button>
@@ -369,30 +387,31 @@
                 class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5
                   {testResult?.id === src.id ? (testResult.success ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger') : 'bg-surface-3 hover:bg-surface-4 text-text'}">
                 {#if testing === src.id}
-                  <svg aria-hidden="true" class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  <InlineSpinner size="xs" />
                   Testing...
                 {:else if testResult?.id === src.id}
-                  {#if testResult.success}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg> Connected{:else}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> Failed{/if}
+                  {#if testResult.success}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check}/></svg> Connected{:else}<svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/></svg> Failed{/if}
                 {:else}
-                  <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                  <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.bolt}/></svg>
                   Test
                 {/if}
               </button>
               <div class="ml-auto flex items-center gap-2">
                 <button onclick={() => toggleExpand(src.id)}
+                  aria-expanded={expandedSource === src.id} aria-controls={expandedSource === src.id ? `repl-jobs-${src.id}` : undefined} aria-label="Jobs: {src.name}"
                   class="px-3 py-1.5 bg-surface-3 hover:bg-surface-4 text-text text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5">
-                  <svg aria-hidden="true" class="w-3 h-3 transition-transform {expandedSource === src.id ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                  <svg aria-hidden="true" class="w-3 h-3 transition-transform {expandedSource === src.id ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronDown}/></svg>
                   Jobs
                 </button>
                 {#if !isReplicaMode()}
                 <button onclick={() => openEdit(src)}
                   class="px-3 py-1.5 bg-surface-3 hover:bg-surface-4 text-text text-xs font-medium rounded-lg transition-colors"
-                  aria-label="Edit replication target">
+                  aria-label="Edit: {src.name}">
                   Edit
                 </button>
                 <button onclick={() => confirmDelete = { show: true, id: src.id, name: src.name }}
                   class="px-3 py-1.5 bg-danger/10 hover:bg-danger/20 text-danger text-xs font-medium rounded-lg transition-colors"
-                  aria-label="Delete replication target">
+                  aria-label="Delete: {src.name}">
                   Delete
                 </button>
                 {/if}
@@ -401,10 +420,10 @@
           </div>
 
           {#if expandedSource === src.id}
-            <div class="border-t border-border bg-surface px-5 py-4">
+            <div id="repl-jobs-{src.id}" class="border-t border-border bg-surface px-5 py-4">
               {#if loadingJobs}
                 <div class="flex items-center gap-2 text-sm text-text-muted">
-                  <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  <InlineSpinner size="sm" />
                   Loading replicated jobs...
                 </div>
               {:else if replicatedJobs.length === 0}
@@ -417,11 +436,11 @@
                       <div class="flex items-center gap-2">
                         <svg aria-hidden="true" class="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           {#if job.backup_type === 'container'}
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ITEM_TYPE_ICONS.container}/>
                           {:else if job.backup_type === 'vm'}
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ITEM_TYPE_ICONS.vm}/>
                           {:else}
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ICONS.folder}/>
                           {/if}
                         </svg>
                         <span class="text-sm font-medium text-text">{job.name}</span>
@@ -445,14 +464,14 @@
       <div>
         <label for="repl-name" class="block text-sm font-medium text-text mb-1">Name</label>
         <input id="repl-name" type="text" required bind:value={form.name} placeholder="e.g. Production Server"
-          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+          class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11" />
       </div>
 
       <!-- Remote Vault Fields -->
         <div>
           <label for="repl-url" class="block text-sm font-medium text-text mb-1">Remote Vault URL</label>
           <input id="repl-url" type="url" required bind:value={form.url} placeholder="http://192.168.1.100:24085"
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11" />
           <p class="text-xs text-text-dim mt-1">The base URL of the remote Vault server (include port). Only jobs created on that server are synced; jobs it replicated from other servers are skipped.</p>
           {#if form.url?.trim().toLowerCase().startsWith('http://')}
             <p class="text-xs text-warning mt-1" role="note">Plain HTTP: the API key and backup data can be read on the network. Use it only on a network you trust, or use https://.</p>
@@ -471,10 +490,11 @@
           {#if editing?.credentials_locked}
             <p class="text-xs text-danger mb-1" role="alert">This server's vault.key can't open the stored key. Enter it again, or restore the original vault.key.</p>
           {/if}
-          <input id="repl-apikey" type="password" autocomplete="off" required={!editing} value={typedKey} oninput={(e) => updateCloudConfig('api_key', e.target.value)} placeholder={editing ? 'Leave blank to keep the current key' : "Enter the remote server's API key"}
-            class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+          <PasswordInput id="repl-apikey" required={!editing} value={typedKey} oninput={(e) => updateCloudConfig('api_key', e.target.value)} placeholder={editing ? 'Leave blank to keep the current key' : "Enter the remote server's API key"}
+            toggleLabel="Show key"
+            class="w-full px-3 py-2 max-lg:min-h-11 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
           <div class="mt-2 p-2.5 bg-warning/5 border border-warning/20 rounded-lg flex items-start gap-2">
-            <svg aria-hidden="true" class="w-3.5 h-3.5 text-warning mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+            <svg aria-hidden="true" class="w-3.5 h-3.5 text-warning mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
             <p class="text-xs text-text-muted">An API key is required to authenticate with the remote Vault server. Generate one on the remote server under <strong class="text-text">Settings → API Access</strong>, then paste it here.</p>
           </div>
         </div>
@@ -484,21 +504,21 @@
           <button type="button" onclick={testModalConnection} disabled={modalTesting || !form.url}
             class="px-3 py-1.5 bg-surface-3 hover:bg-surface-4 text-text text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5">
             {#if modalTesting}
-              <svg aria-hidden="true" class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              <InlineSpinner size="xs" />
               Testing...
             {:else}
-              <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.bolt}/></svg>
               Test Connection
             {/if}
           </button>
           {#if modalTestResult}
             <span class="text-xs {modalTestResult.success ? (modalTestResult.warning ? 'text-warning' : 'text-success') : 'text-danger'}">
               {#if modalTestResult.success && modalTestResult.warning}
-                <svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')} – {modalTestResult.warning}
+                <svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg> {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')} – {modalTestResult.warning}
               {:else if modalTestResult.success}
-                <svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg> {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')}
+                <svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check}/></svg> {modalTestResult.message || (modalTestResult.version ? `Connected (v${modalTestResult.version})` : 'Connection validated')}
               {:else}
-                <svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> {modalTestResult.error}
+                <svg aria-hidden="true" class="w-3 h-3 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/></svg> {modalTestResult.error}
               {/if}
             </span>
           {/if}
@@ -535,6 +555,8 @@
   message="Are you sure you want to delete '{confirmDelete.name}'? All replicated jobs from this target will also be removed."
   confirmLabel="Delete"
   variant="danger"
+  busy={deletingSource}
+  busyLabel="Deleting…"
   onconfirm={deleteSource}
   oncancel={() => confirmDelete = { show: false, id: 0, name: '' }}
 />

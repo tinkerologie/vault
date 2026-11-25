@@ -134,6 +134,9 @@ export const api = {
 
   // Jobs
   listJobs: (details = false) => request('GET', details ? '/jobs?details=true' : '/jobs'),
+  // The restore wizard also lists items that only retained restore points
+  // still hold, such as a deleted container (#669).
+  listJobsForRestore: () => request('GET', '/jobs?details=true&history=true'),
   getJob: (id) => request('GET', `/jobs/${id}`),
   createJob: (data) => request('POST', '/jobs', data),
   updateJob: (id, data) => request('PUT', `/jobs/${id}`, data),
@@ -203,8 +206,15 @@ export const api = {
   // present, decryptable, free space) and returns { ok, checks:[{id,label,status,detail}] }.
   preflightRestore: (jobId, rpId, data) =>
     request('POST', `/jobs/${jobId}/restore-points/${rpId}/preflight`, data),
+  // restoreWriteTargets takes the pre-flight's body and returns
+  // { items:[{name,type,status,reason?,write_targets:[{kind,path?,mount?,name?,clearable?}]}] },
+  // the exact host paths each selected container or VM restore writes (#716).
+  // The server answers within 8 s, inside the normal request timeout.
+  restoreWriteTargets: (jobId, rpId, data) =>
+    request('POST', `/jobs/${jobId}/restore-points/${rpId}/write-targets`, data),
   getNextRuns: () => request('GET', '/jobs/next-runs'),
   getNextRun: (id) => request('GET', `/jobs/${id}/next-run`),
+  previewSchedule: (schedule, count = 3) => request('GET', `/jobs/schedule-preview?schedule=${encodeURIComponent(schedule)}&count=${count}`),
 
   // Runner
   getRunnerStatus: () => request('GET', '/runner/status'),
@@ -244,6 +254,8 @@ export const api = {
   // Settings
   getSettings: () => request('GET', '/settings'),
   updateSettings: (data) => request('PUT', '/settings', data),
+  // Confirms a copy of this server's vault.key is kept off the server (#714).
+  acknowledgeServerKey: () => request('POST', '/settings/server-key/acknowledge', {}),
   getEncryptionStatus: () => request('GET', '/settings/encryption'),
   setEncryption: (passphrase) => request('POST', '/settings/encryption', { passphrase }),
   verifyEncryption: (passphrase) => request('POST', '/settings/encryption/verify', { passphrase }),

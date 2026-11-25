@@ -1,4 +1,5 @@
 <script>
+  import PasswordInput from '../components/PasswordInput.svelte'
   import { api } from '../lib/api.js'
   import { createStepFocus } from '../lib/dialog.js'
   import { navigate } from '../lib/router.svelte.js'
@@ -8,6 +9,8 @@
   import StorageForm from '../components/StorageForm.svelte'
   import Toast from '../components/Toast.svelte'
   import InlineSpinner from '../components/InlineSpinner.svelte'
+  import { ICONS } from '../lib/icons.js'
+  import { cardClass } from '../lib/selectable.js'
 
   const STEPS = [
     { n: 1, label: 'Connect storage' },
@@ -187,7 +190,9 @@
   }
 </script>
 
-<div bind:this={wizardRoot} class="max-w-3xl mx-auto p-4 sm:p-6">
+<!-- The shared page frame supplies the padding, so the heading lines up with
+     every other page (#699); only the reading width is capped here. -->
+<div bind:this={wizardRoot} class="max-w-3xl">
   <h1 class="text-2xl font-bold text-text">Recover Vault</h1>
   <p class="text-sm text-text-muted mt-1 mb-6">
     Bring back your jobs, storage and history from a backup. You'll need access to your backup storage
@@ -200,7 +205,7 @@
       <div class="flex items-center gap-2" aria-current={s.n === step ? 'step' : undefined}>
         <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n <= step ? 'bg-vault text-on-vault' : 'bg-surface-3 text-text-muted'}">
           {#if s.n < step}
-            <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+            <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check}/></svg>
           {:else}
             {s.n}
           {/if}
@@ -249,15 +254,12 @@
       </p>
       <form onsubmit={(e) => { e.preventDefault(); if (passphrase && !verifying) verifyPassword() }}>
         <label for="recover-pass" class="block text-sm font-medium text-text-muted mb-1.5">Your backup password</label>
-        <div class="flex gap-2">
-          <input id="recover-pass" type={showPass ? 'text' : 'password'} bind:value={passphrase} autocomplete="off"
-            class="flex-1 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder-text-muted" />
-          <button type="button" class="btn btn-secondary" onclick={() => (showPass = !showPass)}>
-            {showPass ? 'Hide' : 'Show'}
-          </button>
-        </div>
+        <PasswordInput id="recover-pass" bind:value={passphrase} bind:show={showPass}
+          aria-invalid={passError ? 'true' : undefined}
+          aria-describedby={passError ? 'recover-pass-error' : undefined}
+          class="w-full px-3 py-2 bg-surface-3 border {passError ? 'border-danger' : 'border-border'} rounded-lg text-sm text-text placeholder-text-muted max-lg:min-h-11" />
         {#if passError}
-          <p class="text-sm text-danger mt-2">{passError}</p>
+          <p id="recover-pass-error" class="text-sm text-danger mt-2">{passError}</p>
         {/if}
         {#if verifying}
           <p class="text-sm text-text-muted mt-2">Checking your password — this takes a few seconds by design.</p>
@@ -287,7 +289,7 @@
         <legend class="sr-only">Backups found on your storage</legend>
         {#each backups as b (b.path)}
           <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors
-            {selected === b ? 'border-vault bg-vault/10' : 'border-border bg-surface-3 hover:border-border-hover'}">
+            {cardClass(selected === b)}">
             <input type="radio" name="recover-snapshot" class="accent-vault mt-1" value={b} bind:group={selected} />
             <span class="min-w-0">
               <span class="block text-sm font-medium text-text">{b.is_latest ? 'Most recent backup' : fmtWhen(b.timestamp)}</span>
@@ -341,8 +343,10 @@
           </ul>
           <form class="flex items-center gap-2" onsubmit={(e) => { e.preventDefault(); if (dedupPass && !dedupUnlocking) unlockDedup(dedupPass) }}>
             <label class="sr-only" for="dedup-pass">Backup password</label>
-            <input id="dedup-pass" type="password" bind:value={dedupPass} autocomplete="off" placeholder="Backup password"
-              class="flex-1 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text" />
+            <div class="flex-1 min-w-0">
+              <PasswordInput id="dedup-pass" bind:value={dedupPass}
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text max-lg:min-h-11" />
+            </div>
             <button type="submit" class="btn btn-primary" disabled={!dedupPass || dedupUnlocking}>
               {#if dedupUnlocking}<InlineSpinner />{/if} Unlock
             </button>
@@ -385,7 +389,7 @@
               <input id={`remap-${e.kind}-${e.id}`} type="text" list="path-candidates"
                 bind:value={remapDraft[`${e.kind}-${e.id}`]}
                 placeholder="New path, e.g. /mnt/user/…"
-                class="w-full mt-2 px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted" />
+                class="w-full mt-2 px-3 py-2 bg-surface-2 border border-border rounded-lg text-sm text-text font-mono placeholder-text-muted max-lg:min-h-11" />
               {#if remapError(e)}
                 <p class="text-xs text-danger mt-1">{remapError(e)}</p>
               {/if}
@@ -431,7 +435,8 @@
   source={replaceSummary.source}
   consequences={replaceSummary.consequences}
   confirmWord="REPLACE"
-  confirmLabel={restoring ? "Replacing…" : "Replace Database"}
+  confirmLabel="Replace Database"
+  busyLabel="Replacing…"
   busy={restoring}
   onconfirm={doRestore}
   oncancel={() => (confirmRestore = false)}

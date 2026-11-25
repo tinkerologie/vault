@@ -15,6 +15,7 @@ import (
 
 	"github.com/tinkerologie/vault/internal/crypto"
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/health"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/ws"
 )
@@ -276,6 +277,13 @@ func TestRestoreDBReopensAndReseals(t *testing.T) {
 		if err := fd.SetSetting("restore_marker", "from-backup"); err != nil {
 			t.Fatal(err)
 		}
+		// The old server's key fingerprint and its saved-copy record (#714).
+		if err := fd.SetSetting(db.ServerKeyFingerprintSetting, "0123456789abcdef"); err != nil {
+			t.Fatal(err)
+		}
+		if err := fd.SetSetting(health.ServerKeySavedSetting, "2026-11-01T00:00:00Z 0123456789abcdef"); err != nil {
+			t.Fatal(err)
+		}
 	})
 
 	body := fmt.Sprintf(`{"storage_path": %q, "passphrase": %q}`, snapPath, pass)
@@ -300,6 +308,16 @@ func TestRestoreDBReopensAndReseals(t *testing.T) {
 	unsealed, err := crypto.Unseal(serverKey, sealed)
 	if err != nil || unsealed != pass {
 		t.Fatalf("unsealed = %q (err %v), want %q", unsealed, err, pass)
+	}
+
+	// The restored record describes the old server's key: the fingerprint is
+	// republished for the key this daemon runs with, so that record no longer
+	// counts as a saved copy (#714).
+	if fp, _ := h.db.GetSetting(db.ServerKeyFingerprintSetting, ""); fp != crypto.ServerKeyFingerprint(serverKey) {
+		t.Fatalf("fingerprint after restore = %q, want the running key's", fp)
+	}
+	if health.ServerKeyCopyRecorded(h.db) {
+		t.Fatal("the old server's saved-copy record still counts after restore")
 	}
 
 	if reloads != 1 {

@@ -39,9 +39,14 @@ it('shows an empty pending state and refreshes the review links', async () => {
     .mockResolvedValue({ requests: [request] })
   render(RestoreRequestList)
   await screen.findByText('No pending Restore Requests.')
-  await fireEvent.click(screen.getByRole('button', { name: 'Refresh requests' }))
+  const panel = screen.getByRole('region', { name: 'Pending Restore Requests' })
+  expect(panel.dataset.compact).toBe('true')
+  const refresh = screen.getByRole('button', { name: 'Refresh requests' })
+  await fireEvent.click(refresh)
   const link = await screen.findByRole('link', { name: 'Documents · Folder backups' })
   expect(link.getAttribute('href')).toBe('#/restore?request=first')
+  expect(panel.dataset.compact).toBeUndefined()
+  expect(screen.getByRole('button', { name: 'Refresh requests' })).toBe(refresh)
 })
 
 it('shows expired request history, retries an error, and loads the next cursor', async () => {

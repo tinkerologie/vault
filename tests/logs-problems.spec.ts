@@ -63,7 +63,7 @@ async function openLogs(page: Page, rows: Row[] = ROWS) {
   await page.routeWebSocket('**/api/v1/ws', (ws) => { socket = ws; });
   await serveRows(page, rows);
   await page.goto('/#/logs');
-  const box = page.getByRole('log');
+  const box = page.getByRole('region', { name: 'Log console' });
   await expect(box.locator(`[data-entry-id="${rows[rows.length - 1].id}"]`)).toBeVisible();
   await expect.poll(() => socket !== null).toBe(true);
   // Let the background full-history load finish, so nothing but the test moves rows.
@@ -503,7 +503,7 @@ test.describe('fixes from review (#534)', () => {
       row(1, 'error', 'backup', 'Upload failed, file=a.tar, error=disk full'),
       row(2, 'error', 'backup', 'Upload failed, file=b.tar, error=permission denied'),
     ]);
-    const box = page.getByRole('log');
+    const box = page.getByRole('region', { name: 'Log console' });
     await expect(box.getByText(/disk full/)).toBeVisible();
     await expect(box.getByText(/permission denied/)).toBeVisible();
   });
@@ -542,7 +542,7 @@ test.describe('fixes from review (#534)', () => {
       row(4, 'info', 'system', 'Tock'),
       row(5, 'warn', 'health', 'Health check, container=plex, status=unhealthy'),
     ]);
-    const names = await page.getByRole('log').getByRole('button', { name: /^Details for Health check/ }).evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
+    const names = await page.getByRole('region', { name: 'Log console' }).getByRole('button', { name: /^Details for Health check/ }).evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
     expect(names).toHaveLength(3);
     expect(names[0]).toContain('plex');
     expect(names[1]).toContain('sonarr');

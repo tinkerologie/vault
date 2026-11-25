@@ -2,10 +2,20 @@
   import { api, isReplicaMode } from '../lib/api.js'
   import { navigate } from '../lib/router.svelte.js'
   import { formatDate } from '../lib/utils.js'
+  import { tick, untrack } from 'svelte'
   import Modal from './Modal.svelte'
   import Toast from './Toast.svelte'
+  import { shortcutModifier } from '../lib/shortcuts.js'
+  import { ICONS, ITEM_TYPE_ICONS, PAGE_ICONS } from '../lib/icons.js'
 
-  let { show = $bindable(false), onclose = () => {} } = $props()
+  /** @typedef {{ path: string, label: string, icon: string, external?: boolean, href?: string }} Page */
+  /** @type {{ show?: boolean, onclose?: () => void, pages?: Page[] }} */
+  let { show = $bindable(false), onclose = () => {}, pages = [] } = $props()
+
+  const uid = $props.id()
+  const listboxId = `${uid}-listbox`
+  const optionId = (i) => `${uid}-option-${i}`
+  const mod = shortcutModifier()
 
   let query = $state('')
   let selectedIndex = $state(0)
@@ -27,21 +37,23 @@
     toastKey++
   }
 
-  const ICON_CONTAINER = 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'
-  const ICON_VM = 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z'
-  const ICON_FOLDER = 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z'
-  const ICON_CLOCK = 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z'
 
-  // Static navigation commands
-  const navCommands = [
-    { id: 'nav-dashboard', label: 'Go to Dashboard', category: 'Pages', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6', action: () => navigate('/') },
-    { id: 'nav-jobs', label: 'Go to Jobs', category: 'Pages', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2', action: () => navigate('/jobs') },
-    { id: 'nav-storage', label: 'Go to Storage', category: 'Pages', icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4', action: () => navigate('/storage') },
-    { id: 'nav-history', label: 'Go to History', category: 'Pages', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', action: () => navigate('/history') },
-    { id: 'nav-restore', label: 'Go to Restore', category: 'Pages', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15', action: () => navigate('/restore') },
-    { id: 'nav-logs', label: 'Go to Logs', category: 'Pages', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', action: () => navigate('/logs') },
-    { id: 'nav-settings', label: 'Go to Settings', category: 'Pages', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z', action: () => navigate('/settings') },
-  ]
+  // Page commands come from the shell's own navigation (#691), so the palette
+  // offers exactly the pages the sidebar shows, with the same icons, and
+  // respects replica mode and feature flags the same way.
+  let navCommands = $derived(pages.map((page) => ({
+    id: `nav-${page.path.replace(/^\//, '') || 'dashboard'}`,
+    label: page.external ? `Open ${page.label}` : `Go to ${page.label}`,
+    category: 'Pages',
+    icon: page.icon,
+    action: page.external
+      ? () => window.open(page.href, '_blank', 'noopener')
+      : () => navigate(page.path),
+  })))
+
+  // Shown as written: the type is a word, and a time keeps the locale's own
+  // "pm" or "PM" (#715).
+  const TYPE_LABELS = { container: 'Container', vm: 'VM', folder: 'Folder' }
 
   // Load dynamic data when palette opens
   $effect(() => {
@@ -99,16 +111,16 @@
     const cmds = []
     // Backup items — jump straight to the item's restore view (issue #210 / E9).
     const items = [
-      ...containers.map(c => ({ name: c.name, type: 'container', icon: ICON_CONTAINER })),
-      ...vms.map(v => ({ name: v.name, type: 'vm', icon: ICON_VM })),
-      ...folders.map(f => ({ name: f.name, type: 'folder', icon: ICON_FOLDER })),
+      ...containers.map(c => ({ name: c.name, type: 'container', icon: ITEM_TYPE_ICONS.container })),
+      ...vms.map(v => ({ name: v.name, type: 'vm', icon: ITEM_TYPE_ICONS.vm })),
+      ...folders.map(f => ({ name: f.name, type: 'folder', icon: ITEM_TYPE_ICONS.folder })),
     ]
     for (const it of items) {
       if (!it.name) continue
       cmds.push({
         id: `item-${it.type}-${it.name}`,
         label: it.name,
-        meta: it.type,
+        meta: TYPE_LABELS[it.type] ?? it.type,
         icon: it.icon,
         category: 'Items',
         action: () => navigate(`/restore?type=${it.type}&name=${encodeURIComponent(it.name)}`),
@@ -120,7 +132,7 @@
         id: `rp-${p.jobId}`,
         label: `Restore: ${p.jobName}`,
         meta: p.date ? formatDate(p.date) : 'latest',
-        icon: ICON_CLOCK,
+        icon: PAGE_ICONS['/restore'],
         category: 'Restore Points',
         action: () => navigate(`/restore?job=${p.jobId}`),
       })
@@ -129,7 +141,7 @@
       cmds.push({
         id: `job-${job.id}`,
         label: `Run Job: ${job.name}`,
-        icon: 'M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z',
+        icon: ICONS.play,
         category: 'Jobs',
         action: async () => {
           try {
@@ -146,7 +158,7 @@
       cmds.push({
         id: `storage-${s.id}`,
         label: `Test Storage: ${s.name}`,
-        icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
+        icon: ICONS.bolt,
         category: 'Storage',
         action: async () => {
           try {
@@ -169,11 +181,10 @@
   let allCommands = $derived.by(() => {
     const cmds = [...navCommands, ...dynamicCommands]
     if (!isReplicaMode()) return cmds
-    // Replica mode: hide daemon-only routes (Jobs/Restore nav + item &
-    // restore-point deep-links, which all go to /restore) and write actions
-    // (Run Job). Read-only entries (Test Storage, other pages) stay.
+    // Replica mode: the shell already leaves daemon-only pages out of `pages`.
+    // Hide item and restore-point deep-links (they go to /restore) and write
+    // actions (Run Job). Read-only entries (Test Storage, pages) stay.
     return cmds.filter(c =>
-      c.id !== 'nav-jobs' && c.id !== 'nav-restore' &&
       c.category !== 'Items' && c.category !== 'Restore Points' && c.category !== 'Jobs'
     )
   })
@@ -186,10 +197,49 @@
     )
   })
 
-  // Reset selection when results change
+  // Contiguous runs of one category, each rendered as a labelled group.
+  let groups = $derived.by(() => {
+    /** @type {Array<{ category: string, items: Array<{ cmd: any, index: number }> }>} */
+    const out = []
+    filteredCommands.forEach((cmd, index) => {
+      const last = out.at(-1)
+      if (last && last.category === cmd.category) last.items.push({ cmd, index })
+      else out.push({ category: cmd.category, items: [{ cmd, index }] })
+    })
+    return out
+  })
+
+  // A new search starts at the top. Items that finish loading are added after
+  // the pages, so they leave the active option where it was; a shorter list
+  // only pulls the selection back inside it.
   $effect(() => {
-    filteredCommands.length
+    query
     selectedIndex = 0
+  })
+  $effect(() => {
+    const last = Math.max(0, filteredCommands.length - 1)
+    if (untrack(() => selectedIndex) > last) selectedIndex = last
+  })
+
+  // The listbox scrolls on its own, so keep the active option in view.
+  $effect(() => {
+    if (!show || filteredCommands.length === 0) return
+    const id = optionId(selectedIndex)
+    tick().then(() => document.getElementById(id)?.scrollIntoView?.({ block: 'nearest' }))
+  })
+
+  // How many results match, for screen readers. Waits for typing to pause so
+  // each keystroke doesn't interrupt the last announcement.
+  let resultCount = $state('')
+  $effect(() => {
+    if (!show) {
+      resultCount = ''
+      return
+    }
+    const n = filteredCommands.length
+    const text = n === 0 ? 'No results' : n === 1 ? '1 result' : `${n} results`
+    const timer = setTimeout(() => { resultCount = text }, 400)
+    return () => clearTimeout(timer)
   })
 
   function handleKeydown(e) {
@@ -218,58 +268,74 @@
       <!-- Search input -->
       <div class="flex items-center gap-3 px-4 py-3 border-b border-border">
         <svg aria-hidden="true" class="w-5 h-5 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.search}/>
         </svg>
         <input
           data-autofocus
           aria-label="Search commands"
           type="text"
+          role="combobox"
+          aria-expanded="true"
+          aria-controls={listboxId}
+          aria-autocomplete="list"
+          aria-activedescendant={filteredCommands.length > 0 ? optionId(selectedIndex) : undefined}
+          autocomplete="off"
+          spellcheck="false"
           bind:value={query}
           placeholder="Type a command or search..."
-          class="flex-1 bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none"
+          class="flex-1 bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none max-lg:min-h-11"
         />
         <kbd class="text-xs text-text-muted bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">Esc</kbd>
       </div>
+      <div role="status" class="sr-only">{resultCount}</div>
 
       <!-- Results -->
-      <div class="max-h-80 overflow-y-auto py-2">
+      <div id={listboxId} role="listbox" aria-label="Commands" class="max-h-80 overflow-y-auto py-2">
         {#if filteredCommands.length === 0}
           <div class="px-4 py-6 text-center">
             <p class="text-sm text-text-muted">No matching commands</p>
           </div>
         {:else}
-          {#each filteredCommands as cmd, i (cmd.id)}
-            {#if cmd.category && cmd.category !== filteredCommands[i - 1]?.category}
-              <div class="px-4 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-text-dim select-none">{cmd.category}</div>
-            {/if}
-            <button
-              type="button"
-              class="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors
-                {i === selectedIndex ? 'bg-vault/10 text-text' : 'text-text-muted hover:bg-surface-3'}"
-              onmouseenter={() => selectedIndex = i}
-              onfocus={() => selectedIndex = i}
-              onclick={() => executeCommand(cmd)}
-            >
-              <svg aria-hidden="true" class="w-4 h-4 shrink-0 {i === selectedIndex ? 'text-vault' : 'text-text-dim'}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={cmd.icon}/>
-              </svg>
-              <span class="text-sm flex-1 truncate">{cmd.label}</span>
-              {#if cmd.meta}
-                <span class="text-xs text-text-muted capitalize shrink-0">{cmd.meta}</span>
-              {/if}
-              {#if i === selectedIndex}
-                <kbd class="text-xs text-text-muted bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">↵</kbd>
-              {/if}
-            </button>
+          {#each groups as group, g (`${g}-${group.category}`)}
+            <div role="group" aria-labelledby="{uid}-group-{g}">
+              <div id="{uid}-group-{g}" role="presentation" class="px-4 pt-2 pb-1 text-xs font-semibold uppercase tracking-wider text-text-dim select-none">{group.category}</div>
+              {#each group.items as { cmd, index } (cmd.id)}
+                <!-- Focus stays in the input (aria-activedescendant); the pointer can still pick an option. -->
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <div
+                  id={optionId(index)}
+                  role="option"
+                  tabindex="-1"
+                  aria-selected={index === selectedIndex}
+                  class="w-full flex items-center gap-3 px-4 py-2.5 text-left cursor-pointer transition-colors
+                    {index === selectedIndex ? 'bg-vault/10 text-text' : 'text-text-muted hover:bg-surface-3'}"
+                  onmouseenter={() => selectedIndex = index}
+                  onclick={() => executeCommand(cmd)}
+                >
+                  <svg aria-hidden="true" class="w-4 h-4 shrink-0 {index === selectedIndex ? 'text-vault-text' : 'text-text-dim'}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={cmd.icon}/>
+                  </svg>
+                  <span class="text-sm flex-1 truncate">{cmd.label}</span>
+                  {#if cmd.meta}
+                    <span class="text-xs text-text-muted shrink-0">{cmd.meta}</span>
+                  {/if}
+                  {#if index === selectedIndex}
+                    <kbd aria-hidden="true" class="text-xs text-text-muted bg-surface-3 px-1.5 py-0.5 rounded border border-border font-mono">↵</kbd>
+                  {/if}
+                </div>
+              {/each}
+            </div>
           {/each}
         {/if}
       </div>
 
       <!-- Footer -->
-      <div class="px-4 py-2 border-t border-border flex items-center gap-4 text-xs text-text-muted">
+      <div class="px-4 py-2 border-t border-border flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-text-muted">
         <span class="flex items-center gap-1"><kbd class="bg-surface-3 px-1 py-0.5 rounded border border-border font-mono">↑↓</kbd> Navigate</span>
-        <span class="flex items-center gap-1"><kbd class="bg-surface-3 px-1 py-0.5 rounded border border-border font-mono">↵</kbd> Execute</span>
+        <span class="flex items-center gap-1"><kbd class="bg-surface-3 px-1 py-0.5 rounded border border-border font-mono">↵</kbd> Run</span>
         <span class="flex items-center gap-1"><kbd class="bg-surface-3 px-1 py-0.5 rounded border border-border font-mono">Esc</kbd> Close</span>
+        <span class="flex items-center gap-1"><kbd class="bg-surface-3 px-1 py-0.5 rounded border border-border font-mono">{mod}K</kbd> Open or close</span>
+        <span class="flex items-center gap-1"><kbd class="bg-surface-3 px-1 py-0.5 rounded border border-border font-mono">{mod}Shift+L</kbd> Colour mode</span>
       </div>
     </div>
 </Modal>

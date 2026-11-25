@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tinkerologie/vault/internal/db"
+	"github.com/tinkerologie/vault/internal/health"
 	"github.com/tinkerologie/vault/internal/safepath"
 	"github.com/tinkerologie/vault/internal/unraid"
 )
@@ -50,7 +51,7 @@ func (h *RecoveryHandler) SetConfigChangeHook(fn ConfigChangeHook) {
 //
 //	GET /api/v1/recovery/plan
 func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
-	jobs, err := h.db.ListJobs()
+	jobs, err := h.db.ListJobsContext(r.Context())
 	if err != nil {
 		respondInternalError(w, err)
 		return
@@ -76,7 +77,10 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 		StorageName     string     `json:"storage_name"`
 		SizeBytes       int64      `json:"size_bytes"`
 		HasRestorePoint bool       `json:"has_restore_point"`
-		Preset          string     `json:"preset,omitempty"`
+		// OutOfDate marks an item whose newest Restore Point is older than its
+		// job's schedule allows, by the same rule as the health summary (#708).
+		OutOfDate bool   `json:"out_of_date"`
+		Preset    string `json:"preset,omitempty"`
 	}
 
 	type step struct {
@@ -102,20 +106,26 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 	merged := make(map[string]*stepItem)
 	var order []string // first-seen order keeps step output deterministic
 	settingsWarned := make(map[string]bool)
+	// Protection is decided per item from Restore Point membership, shared with
+	// the health summary so Dashboard and Disaster Recovery agree (#708).
+	now := time.Now()
+	classes := health.NewProtectionClassifier(now)
 
 	for _, job := range jobs {
 		// Include all jobs regardless of schedule-enabled state: a disabled
 		// schedule does not mean past restore points should disappear from
 		// the recovery plan. We surface protection based on actual restore
 		// points, not on whether the next run is scheduled.
-		items, err := h.db.GetJobItems(job.ID)
+		items, err := h.db.GetJobItemsContext(r.Context(), job.ID)
 		if err != nil {
 			continue
 		}
-		rps, err := h.db.ListRestorePoints(job.ID)
+		rps, err := h.db.ListRestorePointsContext(r.Context(), job.ID)
 		if err != nil {
 			rps = nil
 		}
+
+		classes.AddJob(job, items, rps)
 
 		var latestRP *db.RestorePoint
 		if len(rps) > 0 {
@@ -175,10 +185,18 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 	for _, key := range order {
 		si := merged[key]
 		totalProtected++
-		if si.LastBackup == nil {
+		si.HasRestorePoint = classes.IsBacked(key)
+		si.OutOfDate = classes.IsOutOfDate(key)
+		if newest, ok := classes.NewestBackup(key); ok {
+			si.LastBackup = &newest
+		} else {
+			si.LastBackup = nil
+		}
+		switch {
+		case !si.HasRestorePoint:
 			warnings = append(warnings, si.Name+" has no restore points")
-		} else if time.Since(*si.LastBackup) > 7*24*time.Hour {
-			warnings = append(warnings, si.Name+" last backed up "+si.LastBackup.Format("Jan 2")+" (>7 days ago)")
+		case si.OutOfDate:
+			warnings = append(warnings, si.Name+" is out of date: last backed up "+si.LastBackup.Format("Jan 2"))
 		}
 		switch si.Type {
 		case "container":
@@ -207,7 +225,7 @@ func (h *RecoveryHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
 	// "ready" even when later items would fail the restore.
 	stepStatus := func(items []stepItem) string {
 		for _, it := range items {
-			if !it.HasRestorePoint {
+			if !it.HasRestorePoint || it.OutOfDate {
 				return "warning"
 			}
 		}

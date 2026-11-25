@@ -64,3 +64,50 @@ func (rp RestorePoint) ItemSizes() (map[string]int64, bool) {
 	}
 	return meta.ItemSizes, true
 }
+
+// RecordedItemTypes returns the type of each item this Restore Point records,
+// so an item that has since left its job can still be browsed and restored
+// (#669). item_types is authoritative; VM checkpoints and manifest items fill
+// gaps for older points. Names recorded with no single type are left out.
+func (rp RestorePoint) RecordedItemTypes() map[string]string {
+	types := map[string]string{}
+	if rp.Metadata == "" {
+		return types
+	}
+	var meta struct {
+		ItemTypes     map[string]string `json:"item_types"`
+		VMCheckpoints map[string]string `json:"vm_checkpoints"`
+		ManifestItems []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"manifest_items"`
+	}
+	if err := json.Unmarshal([]byte(rp.Metadata), &meta); err != nil {
+		return types
+	}
+	conflicting := map[string]bool{}
+	for _, entry := range meta.ManifestItems {
+		if entry.Name == "" || entry.Type == "" || conflicting[entry.Name] {
+			continue
+		}
+		if prev, seen := types[entry.Name]; seen && prev != entry.Type {
+			delete(types, entry.Name)
+			conflicting[entry.Name] = true
+			continue
+		}
+		types[entry.Name] = entry.Type
+	}
+	for name, checkpoint := range meta.VMCheckpoints {
+		if checkpoint != "" && !conflicting[name] {
+			types[name] = "vm"
+		}
+	}
+	for name, kind := range meta.ItemTypes {
+		if kind != "" {
+			types[name] = kind
+		} else {
+			delete(types, name)
+		}
+	}
+	return types
+}

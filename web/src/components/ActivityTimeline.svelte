@@ -1,5 +1,7 @@
 <script>
   import { statusBadge, relTime, formatBytes, runSpeed, formatDurationFromDates, getFailureReason, formatDate } from '../lib/utils.js'
+  import { runStatusLabel } from '../lib/statusLabels.js'
+  import { ICONS } from '../lib/icons.js'
 
   let { runs = [], maxItems = 8 } = $props()
 
@@ -28,16 +30,17 @@
     if (status === 'success' || status === 'completed') return 'bg-success'
     if (status === 'running') return 'bg-info animate-pulse'
     if (status === 'partial') return 'bg-warning'
+    // Skipped and cancelled runs didn't fail.
+    if (status === 'skipped' || status === 'cancelled') return 'bg-surface-5'
     return 'bg-danger'
   }
 
+  // Labels come from the shared helper, so every page words a status the same
+  // way (#694). A clean restore reads "Restored".
   function activityStatusLabel(run) {
-    if (run.run_type !== 'restore') return run.status
-
     const status = run.status?.toLowerCase()
-    if (status === 'success' || status === 'completed') return 'restored'
-    if (status === 'running') return 'running'
-    return run.status
+    if (run.run_type === 'restore' && (status === 'success' || status === 'completed')) return 'Restored'
+    return runStatusLabel(run.status)
   }
 
   function activityStatusClass(run) {
@@ -105,11 +108,11 @@
                           <!-- Neutral dash: the backup succeeded but captured no
                                changed content, so neither a tick nor a cross is
                                honest (issue #326). -->
-                          <svg aria-hidden="true" class="w-3 h-3 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 12h14"/></svg>
+                          <svg aria-hidden="true" class="w-3 h-3 text-text-dim shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d={ICONS.minus}/></svg>
                         {:else if item.status === 'ok'}
-                          <svg aria-hidden="true" class="w-3 h-3 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                          <svg aria-hidden="true" class="w-3 h-3 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d={ICONS.check}/></svg>
                         {:else}
-                          <svg aria-hidden="true" class="w-3 h-3 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+                          <svg aria-hidden="true" class="w-3 h-3 text-danger shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d={ICONS.close}/></svg>
                         {/if}
                         {item.name}
                         {#if item.status === 'ok' && item.unchanged}

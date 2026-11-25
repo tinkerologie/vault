@@ -1,7 +1,9 @@
 package db
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -34,6 +36,28 @@ func (d *DB) SetSetting(key, value string) error {
 // SFTPHostKeyPinPrefix prefixes the settings keys holding trust-on-first-use
 // SFTP host key fingerprints, one per host:port.
 const SFTPHostKeyPinPrefix = "sftp_host_key_pin:"
+
+// ServerKeyFingerprintSetting holds the fingerprint of the vault.key the
+// daemon loaded at start-up. A confirmed off-server copy only counts while it
+// matches, so a regenerated key brings the "save a copy" caution back (#714).
+const ServerKeyFingerprintSetting = "server_key_fingerprint"
+
+// DedupEscrowConfirmedPrefix + a destination ID records which backup
+// passphrase the destination's escrow was last confirmed for, as
+// EscrowConfirmation of its hash. The passphrase protects deduplicated backups
+// only once this matches (#714). Never returned by the settings API.
+const DedupEscrowConfirmedPrefix = "dedup_escrow_confirmed:"
+
+// EscrowConfirmation is the value recorded under DedupEscrowConfirmedPrefix:
+// a truncated SHA-256 of the passphrase hash. It identifies the passphrase
+// without storing the bcrypt hash, which could be attacked offline.
+func EscrowConfirmation(passphraseHash string) string {
+	if passphraseHash == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("vault-escrow-confirmation:" + passphraseHash))
+	return hex.EncodeToString(sum[:])[:16]
+}
 
 // PinSFTPHostKey records fingerprint as the host key for address unless one
 // is already on record, and returns the fingerprint on record. The conditional

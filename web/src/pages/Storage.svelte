@@ -13,6 +13,12 @@
   import EmptyState from '../components/EmptyState.svelte'
   import CapacityTrend from '../components/CapacityTrend.svelte'
   import StorageForm from '../components/StorageForm.svelte'
+  import PasswordInput from '../components/PasswordInput.svelte'
+  import TypedConfirmField from '../components/TypedConfirmField.svelte'
+  import { dedupSummary } from '../lib/dedupSummary.js'
+  import { createDialogHistory, guardUnload } from '../lib/unsaved.js'
+  import { ICONS, STORAGE_TYPE_COLORS, STORAGE_TYPE_ICONS } from '../lib/icons.js'
+  import Switch from '../components/Switch.svelte'
 
   let loading = $state(true)
   let loadError = $state('')
@@ -24,7 +30,61 @@
   let testResults = $state(new SvelteMap())
   let toast = $state({ message: '', type: 'info', key: 0 })
   let confirmDelete = $state({ show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 })
+  // Deleting the backup files too needs the typed word (#689).
+  let deleteWord = $state('')
   let depCounts = $state(new SvelteMap())
+
+  // ---- Unsaved changes and Back (#687) ----
+  let formDirty = $state(false)
+  let confirmDiscard = $state(false)
+  const formHistory = createDialogHistory()
+  const replaceHistory = createDialogHistory()
+
+  function requestCloseForm() {
+    if (formDirty) {
+      confirmDiscard = true
+      return
+    }
+    showModal = false
+  }
+
+  // Close one at a time, so focus unwinds through both to the opener.
+  async function discardForm() {
+    confirmDiscard = false
+    formDirty = false
+    await tick()
+    showModal = false
+  }
+
+  function onFormBack() {
+    if (formDirty) {
+      formHistory.keepOpen(onFormBack)
+      confirmDiscard = true
+      return
+    }
+    showModal = false
+  }
+
+  $effect(() => {
+    if (showModal) formHistory.open(onFormBack)
+    else formHistory.close()
+  })
+
+  // Back while the database is being replaced must not drop the dialog
+  // mid-request: keep it, and say why.
+  function onReplaceBack() {
+    if (restoringDB) {
+      replaceHistory.keepOpen(onReplaceBack)
+      showToast('The database is being replaced. Wait for it to finish before leaving.', 'warning')
+      return
+    }
+    confirmReplaceDB = null
+  }
+
+  $effect(() => {
+    if (confirmReplaceDB) replaceHistory.open(onReplaceBack)
+    else replaceHistory.close()
+  })
 
   // Import state
   let showImport = $state(false)
@@ -115,7 +175,14 @@
     })
     // Refresh dedup stats every 30s for dedup-enabled destinations.
     const pollHandle = setInterval(refreshDedupStats, 30000)
-    return () => { unsub(); clearInterval(pollHandle) }
+    const stopUnloadGuard = guardUnload(() => (showModal && formDirty) || restoringDB)
+    return () => {
+      unsub()
+      clearInterval(pollHandle)
+      stopUnloadGuard()
+      formHistory.destroy()
+      replaceHistory.destroy()
+    }
   })
 
   async function refreshDedupStats() {
@@ -253,11 +320,13 @@
 
   function openCreate() {
     editing = null
+    formDirty = false
     showModal = true
   }
 
   function openEdit(dest) {
     editing = dest
+    formDirty = false
     showModal = true
   }
 
@@ -265,6 +334,7 @@
   // toast copy as before, close the modal and reload the list.
   async function onFormSaved() {
     showToast(editing ? 'Storage updated successfully' : 'Storage created successfully', 'success')
+    formDirty = false
     showModal = false
     await loadData()
   }
@@ -276,11 +346,13 @@
       const result = await api.getDependentJobs(id)
       jobCount = result?.job_count || 0
     } catch { /* ignore */ }
+    deleteWord = ''
     confirmDelete = { show: true, id, name, deleteFiles: false, jobCount }
   }
 
   async function doDeleteStorage() {
     const { id, deleteFiles, jobCount } = confirmDelete
+    if (deleteFiles && deleteWord !== 'DELETE') return
     confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 }
     try {
       const res = await api.deleteStorage(id, { deleteFiles, force: jobCount > 0 })
@@ -401,23 +473,8 @@
     }
   }
 
-  const storageIcons = {
-    local: 'M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z',
-    sftp: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
-    smb: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
-    nfs: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z',
-    webdav: 'M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z',
-    s3: 'M5 19a2 2 0 01-2-2V7a2 2 0 012-2h3.586a1 1 0 01.707.293l1.414 1.414A1 1 0 0011.414 7H19a2 2 0 012 2v8a2 2 0 01-2 2H5z',
-  }
-
-  const storageColors = {
-    local: 'text-hue-blue',
-    sftp: 'text-hue-emerald',
-    smb: 'text-hue-purple',
-    nfs: 'text-hue-amber',
-    webdav: 'text-hue-cyan',
-    s3: 'text-hue-orange',
-  }
+  const storageIcons = STORAGE_TYPE_ICONS
+  const storageColors = STORAGE_TYPE_COLORS
 </script>
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />
@@ -430,7 +487,7 @@
     </div>
     {#if destinations.length > 0 && !isReplicaMode()}
       <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
-        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.plus}/></svg>
         Add Storage
       </button>
     {/if}
@@ -438,7 +495,7 @@
 
   {#if isReplicaMode()}
     <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
-      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/></svg>
       <span>Read-only replica — write actions are disabled on this instance.</span>
     </div>
   {/if}
@@ -447,7 +504,7 @@
     <Spinner text="Loading storage..." />
   {:else if loadError && destinations.length === 0}
     <div class="bg-danger/10 border border-danger/30 text-danger rounded-xl p-4 flex items-center gap-3">
-      <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.error}/></svg>
       <span class="text-sm">{loadError}</span>
     </div>
   {:else if destinations.length === 0}
@@ -485,7 +542,7 @@
             <div class="flex items-center gap-1">
               <!-- Browse is read-only, so it stays available in replica mode. -->
               <button onclick={() => browseDest = dest} class="p-1.5 text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Browse files" aria-label="Browse destination files: {dest.name}">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.folder}/></svg>
               </button>
               {#if !isReplicaMode()}
               <button onclick={() => openImport(dest.id, dest.name)} class="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-text-muted hover:text-vault-text hover:bg-vault/10 rounded-lg transition-colors" title="Import Backups" aria-label="Import backups: {dest.name}">
@@ -493,10 +550,10 @@
                 Import
               </button>
               <button onclick={() => openEdit(dest)} class="p-1.5 text-text-muted hover:text-text hover:bg-surface-3 rounded-lg transition-colors" title="Edit" aria-label="Edit storage: {dest.name}">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.edit}/></svg>
               </button>
               <button onclick={() => deleteStorage(dest.id, dest.name)} class="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete" aria-label="Delete storage: {dest.name}">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.trash}/></svg>
               </button>
               {/if}
             </div>
@@ -564,8 +621,8 @@
                     <div
                       class="h-full rounded-full transition-all"
                       class:bg-vault={pct < 80}
-                      class:bg-amber-500={pct >= 80 && pct < 90}
-                      class:bg-rose-500={pct >= 90}
+                      class:bg-hue-amber-bg={pct >= 80 && pct < 90}
+                      class:bg-hue-rose-bg={pct >= 90}
                       style="width: {Math.min(pct, 100).toFixed(1)}%"
                     ></div>
                   </div>
@@ -612,21 +669,14 @@
           <div class="flex items-center justify-between gap-3 py-2 border-t border-border">
             <div class="min-w-0">
               <p class="text-xs font-medium text-text">Include in DB backup</p>
-              <p class="text-[11px] text-text-dim mt-0.5">Receive the daily encrypted Vault database snapshot.</p>
+              <p class="text-2xs text-text-dim mt-0.5">Receive the daily encrypted Vault database snapshot.</p>
             </div>
-            <button
-              type="button"
-              onclick={() => toggleDBBackup(dest)}
+            <Switch
+              checked={!!dest.backup_database_enabled}
+              onchange={() => toggleDBBackup(dest)}
               disabled={dbBackupBusy.has(dest.id)}
-              class="relative inline-flex items-center shrink-0 cursor-pointer disabled:opacity-50"
-              role="switch"
-              aria-checked={!!dest.backup_database_enabled}
-              aria-label="Toggle database backup fan-out"
-            >
-              <div class="w-9 h-5 rounded-full transition-colors {dest.backup_database_enabled ? 'bg-vault' : 'bg-surface-4'}">
-                <div class="absolute top-[2px] left-[2px] w-4 h-4 bg-white rounded-full shadow transition-transform {dest.backup_database_enabled ? 'translate-x-4' : 'translate-x-0'}"></div>
-              </div>
-            </button>
+              label="Toggle database backup fan-out"
+            />
           </div>
           {/if}
 
@@ -634,21 +684,40 @@
             {@const s = dedupStats.get(dest.id)}
             <div class="border-t border-border pt-3 mb-3 text-xs space-y-1">
               {#if s}
-                <div class="flex justify-between">
-                  <span class="text-text-muted">Dedup</span>
-                  <span class="font-medium text-text">{(s.dedup_ratio || 1).toFixed(1)}× ({formatBytes(s.logical_bytes)} → {formatBytes(s.physical_bytes)})</span>
-                </div>
-                {#if s.logical_bytes > 0}
-                  {@const storedPct = Math.min(100, (s.physical_bytes / s.logical_bytes) * 100)}
-                  {@const saved = Math.max(0, s.logical_bytes - s.physical_bytes)}
+                {@const sum = dedupSummary(s)}
+                {#if sum.kind === 'savings'}
+                  <div class="flex justify-between">
+                    <span class="text-text-muted">Dedup</span>
+                    <span class="font-medium text-text tabular-nums">{sum.ratio.toFixed(1)}× ({formatBytes(sum.logical)} → {formatBytes(sum.physical)})</span>
+                  </div>
                   <!-- Savings bar: filled portion = bytes actually stored, the
                        remainder visualises what dedup avoided writing. -->
-                  <div class="h-2 bg-emerald-500/20 rounded-full overflow-hidden" title="{storedPct.toFixed(1)}% of logical data is physically stored">
-                    <div class="h-full bg-vault rounded-full transition-all" style="width: {storedPct.toFixed(1)}%"></div>
+                  <div class="h-2 bg-hue-emerald-bg/20 rounded-full overflow-hidden" title="{sum.storedPct.toFixed(1)}% of logical data is physically stored">
+                    <div class="h-full bg-vault rounded-full transition-all" style="width: {sum.storedPct.toFixed(1)}%"></div>
                   </div>
-                  <div class="flex justify-between text-text-dim">
-                    <span>Stored {storedPct.toFixed(0)}%</span>
-                    <span class="text-hue-emerald">Saved {formatBytes(saved)}</span>
+                  <div class="flex justify-between text-text-dim tabular-nums">
+                    <span>Stored {sum.storedPct.toFixed(0)}%</span>
+                    <span class="text-hue-emerald">Saved {formatBytes(sum.saved)}</span>
+                  </div>
+                {:else if sum.kind === 'overhead'}
+                  <!-- More stored than the data it holds: overhead, in neutral
+                       colour and plain words, never a ratio below 1× (#713). -->
+                  <div class="flex justify-between">
+                    <span class="text-text-muted">Dedup</span>
+                    <span class="font-medium text-text tabular-nums">Overhead {formatBytes(sum.overhead)}</span>
+                  </div>
+                  <p class="text-text-muted" data-testid="dedup-overhead">
+                    Using {formatBytes(sum.physical)} to store {formatBytes(sum.logical)} so far. Savings grow as more backups share data.{#if sum.reclaimable > 0} Run cleanup to reclaim unused space.{/if}
+                  </p>
+                {:else if sum.kind === 'even'}
+                  <div class="flex justify-between">
+                    <span class="text-text-muted">Dedup</span>
+                    <span class="font-medium text-text tabular-nums">No savings yet ({formatBytes(sum.logical)} → {formatBytes(sum.physical)})</span>
+                  </div>
+                {:else}
+                  <div class="flex justify-between">
+                    <span class="text-text-muted">Dedup</span>
+                    <span class="text-text-dim">No backup data yet</span>
                   </div>
                 {/if}
                 <div class="flex justify-between text-text-dim">
@@ -731,7 +800,7 @@
               {#if testing === dest.id}
                 Testing…
               {:else if tr}
-                {#if tr.success}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg> Connected{:else}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> Failed{/if}
+                {#if tr.success}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d={ICONS.check}/></svg> Connected{:else}<svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.close}/></svg> Failed{/if}
               {:else}
                 Test
               {/if}
@@ -744,21 +813,33 @@
 </div>
 
 <!-- Create/Edit Modal -->
-<Modal show={showModal} title={editing ? 'Edit Storage' : 'Add Storage'} onclose={() => showModal = false}>
+<Modal show={showModal} title={editing ? 'Edit Storage' : 'Add Storage'} onclose={requestCloseForm}>
   <StorageForm
     initial={editing}
     submitLabel={editing ? 'Save Changes' : 'Add Storage'}
     onsaved={onFormSaved}
-    oncancel={() => showModal = false}
+    oncancel={requestCloseForm}
     ontoast={showToast}
+    bind:dirty={formDirty}
   />
 </Modal>
+
+<ConfirmDialog
+  show={confirmDiscard}
+  title="Discard changes?"
+  message="Your changes to this destination haven't been saved."
+  confirmLabel="Discard"
+  cancelLabel="Keep editing"
+  onconfirm={discardForm}
+  oncancel={() => { confirmDiscard = false }}
+/>
 
 <!-- Enhanced Delete Dialog -->
 <ConfirmDialog
   show={confirmDelete.show}
   title="Delete Storage"
   confirmLabel={confirmDelete.deleteFiles ? 'Delete Storage & Files' : 'Delete Storage'}
+  confirmDisabled={confirmDelete.deleteFiles && deleteWord !== 'DELETE'}
   onconfirm={doDeleteStorage}
   oncancel={() => { confirmDelete = { show: false, id: 0, name: '', deleteFiles: false, jobCount: 0 } }}
 >
@@ -766,12 +847,13 @@
 
     {#if confirmDelete.jobCount > 0}
       <div class="mt-3 p-3 bg-warning/10 border border-warning/30 rounded-lg">
-        <p class="text-sm text-warning font-medium flex items-center gap-1.5"><svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> {confirmDelete.jobCount} job{confirmDelete.jobCount !== 1 ? 's' : ''} use{confirmDelete.jobCount === 1 ? 's' : ''} this storage</p>
+        <p class="text-sm text-warning font-medium flex items-center gap-1.5"><svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg> {confirmDelete.jobCount} job{confirmDelete.jobCount !== 1 ? 's' : ''} use{confirmDelete.jobCount === 1 ? 's' : ''} this storage</p>
         <p class="text-xs text-text-dim mt-1">Those jobs will no longer have a storage destination and will fail to run.</p>
       </div>
     {/if}
 
-    <div class="mt-4 space-y-2">
+    <fieldset class="mt-4 space-y-2">
+      <legend class="text-sm font-medium text-text mb-2">Backup files</legend>
       <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {!confirmDelete.deleteFiles ? 'border-vault bg-vault/5' : 'border-border hover:border-vault/30'}">
         <input type="radio" name="delStorageMode" checked={!confirmDelete.deleteFiles}
           onchange={() => confirmDelete.deleteFiles = false}
@@ -790,7 +872,10 @@
           <p class="text-xs text-text-dim mt-0.5">Remove the storage destination <strong class="text-danger">and permanently delete the Vault-managed restore points</strong> on it. Other files and folders in the destination are left untouched.</p>
         </div>
       </label>
-    </div>
+    </fieldset>
+    {#if confirmDelete.deleteFiles}
+      <TypedConfirmField bind:value={deleteWord} onenter={doDeleteStorage} />
+    {/if}
 </ConfirmDialog>
 
 <!-- Import Backups Modal -->
@@ -806,7 +891,7 @@
         type="text"
         bind:value={importBasePath}
         placeholder="e.g. appdata-backups or appdata/ab_archives"
-        class="flex-1 px-3 py-2 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault"
+        class="flex-1 px-3 py-2 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault max-lg:min-h-11"
         onkeydown={(e) => e.key === 'Enter' && !scanning && scanStorage()}
       />
       <button
@@ -828,7 +913,7 @@
   {:else if scannedBackups.length === 0}
     <EmptyState title="No backups found" description="No backup manifests were found. Try entering the subfolder where your AppData Backup archives are stored above.">
       {#snippet iconSlot()}
-        <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+        <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={ICONS.folder}/></svg>
       {/snippet}
     </EmptyState>
     <div class="flex justify-end mt-4">
@@ -845,18 +930,21 @@
         <div class="p-3 bg-vault/5 border border-vault/30 rounded-lg space-y-2">
           <div class="flex items-center gap-2 text-xs font-medium text-vault-text">
             <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/>
             </svg>
             <span>One or more backups are encrypted. Enter the passphrase to unlock manifest details and import.</span>
           </div>
+          <label for="import-passphrase" class="sr-only">Encryption passphrase</label>
           <div class="flex gap-2">
-            <input
-              type="password"
-              bind:value={importPassphrase}
-              placeholder="Enter encryption passphrase"
-              class="flex-1 px-3 py-1.5 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault"
-              onkeydown={(e) => e.key === 'Enter' && !scanning && importPassphrase && scanStorage()}
-            />
+            <div class="flex-1 min-w-0">
+              <PasswordInput
+                id="import-passphrase"
+                bind:value={importPassphrase}
+                toggleLabel="Show passphrase"
+                class="w-full px-3 py-1.5 max-lg:min-h-11 text-sm bg-surface-3 border border-border rounded-lg text-text placeholder-text-muted focus:outline-none focus:border-vault"
+                onkeydown={(e) => e.key === 'Enter' && !scanning && importPassphrase && scanStorage()}
+              />
+            </div>
             <button
               type="button"
               onclick={scanStorage}
@@ -894,12 +982,12 @@
                 {#if backup.compression}<span>{backup.compression}</span>{/if}
                 {#if backup.encrypted}
                   <span class="inline-flex items-center gap-1 text-warning">
-                    <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                    <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/></svg>
                     Locked ({backup.key})
                   </span>
                 {:else if backup.encryption && backup.encryption !== 'none'}
                   <span class="inline-flex items-center gap-1">
-                    <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                    <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.lock}/></svg>
                     {backup.encryption}
                   </span>
                 {/if}
@@ -915,7 +1003,7 @@
       {#if vaultDBInfo}
         <details class="group">
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
-            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            <svg aria-hidden="true" class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.chevronRight}/></svg>
             Restore Full Database
           </summary>
           <div class="mt-3 pl-6 space-y-2">
@@ -956,7 +1044,8 @@
   show={!!confirmReplaceDB}
   title="Replace Vault Database"
   message="Replace the current Vault database with this backup copy?"
-  confirmLabel={restoringDB ? 'Replacing…' : 'Replace Database'}
+  confirmLabel="Replace Database"
+  busyLabel="Replacing…"
   confirmWord="REPLACE"
   source={replaceDBSummary.source}
   consequences={replaceDBSummary.consequences}

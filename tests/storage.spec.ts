@@ -265,6 +265,9 @@ test.describe('Storage Management & Target Setup Wizard', () => {
       const dialog = page.getByRole('dialog');
       await expect(dialog.getByText(/Other files and folders in the destination are left untouched/)).toBeVisible();
       await dialog.getByText('Delete Vault backup files').click();
+      // Deleting the files needs the typed word (#689).
+      await expect(dialog.getByRole('button', { name: 'Delete Storage & Files' })).toBeDisabled();
+      await dialog.getByRole('textbox', { name: /Type DELETE to confirm/ }).fill('DELETE');
       await dialog.getByRole('button', { name: 'Delete Storage & Files' }).click();
       await expect(page.getByText(/some backup files were not removed/i)).toBeVisible();
       await expect(page.getByText('Storage and Vault backup files deleted')).toHaveCount(0);

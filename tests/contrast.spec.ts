@@ -159,7 +159,7 @@ for (const { style, mode, label } of THEMES) {
       await expect(page.locator('main .pointer-events-none.bg-surface-3')).toBeVisible();
       await expectNoContrastViolations(page, `${label} History chart tooltip`);
 
-      await page.getByRole('button', { name: /^Docker & Appdata completed/ }).first().click();
+      await page.getByRole('button', { name: /^Docker & Appdata Completed/ }).first().click();
       await expect(page.getByText('Deduplication savings 53%')).toBeVisible();
       await expectNoContrastViolations(page, `${label} run inspector`);
     });
@@ -188,23 +188,25 @@ for (const { style, mode, label } of THEMES) {
       await page.getByRole('tab', { name: 'Notifications', exact: true }).click();
       await page.locator('#discord-url').fill('https://discord.com/api/webhooks/123456/abcdef');
       await page.locator('#discord-url').locator('..').getByRole('button', { name: 'Test' }).click();
-      const toast = page.getByRole('alert');
-      await expect(toast.filter({ hasText: /Test notification sent/i })).toBeVisible();
-      await expect(toast.locator('[data-toast-icon="success"]')).toHaveAttribute('aria-hidden', 'true');
-      await expectNoContrastViolations(page, `${label} success toast`, { include: '[role="alert"]' });
+      // Success is a polite status, an error an alert (#685); both stack.
+      const success = page.getByRole('status').filter({ hasText: /Test notification sent/i });
+      await expect(success).toBeVisible();
+      await expect(success.locator('[data-toast-icon="success"]')).toHaveAttribute('aria-hidden', 'true');
+      await expectNoContrastViolations(page, `${label} success toast`, { include: '[data-toast]' });
 
       await page.route('**/api/v1/settings/discord/test', (route) =>
         route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'webhook rejected' }) }),
       );
       await page.locator('#discord-url').locator('..').getByRole('button', { name: 'Test' }).click();
+      const toast = page.getByRole('alert');
       await expect(toast.filter({ hasText: /webhook rejected/i })).toBeVisible();
       await expect(toast.locator('[data-toast-icon="error"]')).toBeVisible();
-      await expectNoContrastViolations(page, `${label} error toast`, { include: '[role="alert"]' });
+      await expectNoContrastViolations(page, `${label} error toast`, { include: '[data-toast]' });
     });
 
     test('job wizard, delete dialog and run queued toast', async ({ page }) => {
       await page.goto('/#/jobs');
-      await page.getByRole('button', { name: /run backup now/i }).first().click();
+      await page.getByRole('button', { name: /^Run Now:/ }).first().click();
       await expect(page.getByText(/queued for execution/i).first()).toBeVisible();
       await expectNoContrastViolations(page, `${label} job queued`);
 

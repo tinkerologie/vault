@@ -942,6 +942,15 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = os.Remove(tmpPath)
 
+	// The restored database may come from another server: publish the key
+	// this daemon runs with, so that server's saved-copy record no longer
+	// silences the vault.key caution (#714).
+	if len(h.serverKey) > 0 {
+		if err := h.db.SetSetting(db.ServerKeyFingerprintSetting, crypto.ServerKeyFingerprint(h.serverKey)); err != nil {
+			log.Printf("RestoreDB: recording the server key fingerprint: %v", err)
+		}
+	}
+
 	// The restored DB's sealed passphrase used the old server's vault.key.
 	// Re-seal with the current key so scheduled DB backups stay encrypted.
 	resealed := false

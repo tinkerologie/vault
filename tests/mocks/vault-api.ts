@@ -53,6 +53,8 @@ export interface MockJob {
   created_at?: string;
   items: MockJobItem[];
   baseline?: { job_id: number; sample_count: number };
+  /** Items only retained restore points still hold (GET /jobs?history=true, #669). */
+  historical_items?: { item_name: string; item_type: string; last_backup_at?: string; restore_points?: number }[];
 }
 
 export interface MockStorageDestination {
@@ -165,6 +167,27 @@ export const mockJob2Points = [
 /**
  * Tar-index listing returned for an item's restore-point contents.
  */
+// The per-item write targets (#716) for the mock containers and
+// VM. A custom destination remaps each data path under it, as the server does.
+export const mockWriteTargets = (name: string, destination: string) => {
+  const under = (path: string) => destination ? `${destination.replace(/\/+$/, '')}/${path.split('/').pop()}` : path;
+  const containers: Record<string, string> = { plex: '/mnt/user/appdata/plex', nextcloud: '/mnt/user/appdata/nextcloud' };
+  if (containers[name]) {
+    return { name, type: 'container', status: 'resolved', write_targets: [
+      { kind: 'volume', path: under(containers[name]), mount: '/config', clearable: true },
+      { kind: 'template', path: `/boot/config/plugins/dockerMan/templates-user/my-${name}.xml` },
+    ] };
+  }
+  if (name === 'home-assistant') {
+    return { name, type: 'vm', status: 'resolved', write_targets: [
+      { kind: 'disk', path: under('/mnt/user/domains/home-assistant/vdisk1.img'), mount: 'vda' },
+      { kind: 'nvram', path: under('/etc/libvirt/qemu/nvram/home-assistant_VARS-pure-efi.fd') },
+      { kind: 'domain', name },
+    ] };
+  }
+  return null;
+};
+
 export const mockRestorePointContents = (item: string) => ({
   version: 1,
   archive: `${item}.tar.zst`,
@@ -221,6 +244,31 @@ export const createInitialMockStorage = (): MockStorageDestination[] => [
     capacity: { free_bytes: 0, total_bytes: 0 },
   },
 ];
+
+/**
+ * `count` completed backup runs of job 1, newest first like GET /history:
+ * run `count` started most recently and run 1 first, one hour apart.
+ */
+export function createMockHistoryRuns(count: number, from = Date.UTC(2026, 9, 30, 12)): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, i) => {
+    const id = count - i;
+    const started = new Date(from - i * 3_600_000);
+    return {
+      id,
+      job_id: 1,
+      run_type: 'backup',
+      status: 'completed',
+      backup_type: 'full',
+      items_total: 1,
+      items_done: 1,
+      items_failed: 0,
+      size_bytes: 1024 ** 3,
+      log: JSON.stringify([{ name: `item-${id}`, type: 'container', status: 'completed' }]),
+      started_at: started.toISOString(),
+      completed_at: new Date(started.getTime() + 60_000).toISOString(),
+    };
+  });
+}
 
 /**
  * Intercepts Vault API endpoints to provide deterministic, hermetic responses for Playwright tests.
@@ -430,6 +478,13 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
         ? route.fulfill({ status: result, json: { error: 'Run not available' } })
         : route.fulfill({ json: result });
     }
+    // Without an override, serve a run from the history fixtures, or 404 like the daemon.
+    if (runResultMatch && method === 'GET') {
+      const run = historyRuns.find((r) => Number(r.id) === Number(runResultMatch[1]));
+      return run
+        ? route.fulfill({ json: run })
+        : route.fulfill({ status: 404, json: { error: 'run not found' } });
+    }
 
     // Dedup key rewrap after a recovery (#451): nothing locked by default.
     // Tests override this with page.route() to simulate locked destinations.
@@ -439,6 +494,11 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
         contentType: 'application/json',
         body: JSON.stringify({ destinations: [] }),
       });
+    }
+
+    // Off-server copy of vault.key confirmed (#714).
+    if (path.endsWith('/settings/server-key/acknowledge') && method === 'POST') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ acknowledged: true }) });
     }
 
     // Server key download (#451): the raw 32-byte vault.key file.
@@ -451,7 +511,16 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       });
     }
 
-    // Restore Preflight
+    // Restore write targets: each selected container's and VM's exact host
+    // paths (#716), remapped under a custom destination.
+    if (/\/restore-points\/\d+\/write-targets$/.test(path)) {
+      let selection: { items?: string[]; destination?: string } = {};
+      try { selection = request.postDataJSON() || {}; } catch { /* empty body */ }
+      const items = (selection.items || []).map(name => mockWriteTargets(name, selection.destination || '')).filter(Boolean);
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items }) });
+    }
+
+    // Restore Preflight: the checks only.
     if (path.includes('/preflight')) {
       return route.fulfill({
         status: 200,
@@ -622,6 +691,20 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       });
     }
 
+    // Schedule preview (#682): fixed server-clock runs, or none for manual only.
+    if (path.endsWith('/jobs/schedule-preview')) {
+      const schedule = url.searchParams.get('schedule') || '';
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          runs: schedule.trim() ? ['2026-10-07T02:15:00+02:00', '2026-10-08T02:15:00+02:00', '2026-10-09T02:15:00+02:00'] : [],
+          timezone: 'CEST',
+          utc_offset: '+02:00',
+        }),
+      });
+    }
+
     // Job Next Run
     const nextRunMatch = path.match(/\/jobs\/(\d+)\/next-run$/);
     if (nextRunMatch) {
@@ -641,6 +724,11 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
           total_points: 10,
           keep_points: 5,
           prune_points: 5,
+          // The fields GET /jobs/{id}/retention-preview really returns.
+          total_restore_points: 10,
+          kept_directly: [1, 2, 3, 4],
+          kept_with_ancestors: [1, 2, 3, 4, 5],
+          would_delete: [6, 7, 8, 9, 10],
         }),
       });
     }

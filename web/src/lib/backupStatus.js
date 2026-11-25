@@ -3,10 +3,14 @@
 //
 // The server's health score only weighs items already in a job and recent run
 // outcomes, so it can read 100 while discovered items are in no job at all.
-// That is why the verdict never comes from the score alone. Below HEALTHY_SCORE
-// neither the banner nor the health tile may call backups healthy.
+// That is why the verdict never comes from the score alone, and why the tile is
+// labelled "Job health" and names items in no job as unscored (#694). Below
+// HEALTHY_SCORE neither the banner nor the health tile may call backups healthy.
 
 const HEALTHY_SCORE = 80
+
+// Where vault.key is downloaded: the Settings Security tab (#712, #714).
+export const SERVER_KEY_HREF = '/settings/security'
 
 const plural = (count, one, many = `${one}s`) => `${count} ${count === 1 ? one : many}`
 
@@ -110,7 +114,7 @@ function setupVerdict({ hasStorage, replica }) {
   ])
 }
 
-function attentionIssues({ failures, warnings, skipped, cancelled, unhealthy, stale, unprotected, total, summary, replica }) {
+function attentionIssues({ failures, warnings, skipped, cancelled, unhealthy, stale, unprotected, outOfDate, total, summary, replica }) {
   const issues = []
   if (failures > 0) {
     issues.push({ key: 'failures', summary: plural(failures, 'recent failure'), action: 'Review failures', href: '/history?status=failed&review=outstanding' })
@@ -137,6 +141,15 @@ function attentionIssues({ failures, warnings, skipped, cancelled, unhealthy, st
   if (summary && !replica && unprotected > 0) {
     issues.push({ key: 'unprotected', summary: `${unprotected} of ${plural(total, 'item')} unprotected`, action: 'Add to a backup job', href: '/jobs' })
   }
+  // A Restore Point exists but is older than its schedule allows (#708). A
+  // replica has no Disaster Recovery page; its History shows the same dates.
+  if (summary && outOfDate > 0) {
+    issues.push({ key: 'outOfDate', summary: `${outOfDate} of ${plural(total, 'item')} out of date`, action: 'Review out-of-date items', href: replica ? '/history' : '/recovery' })
+  }
+  // vault.key would be lost with the server it protects (#714).
+  if (summary?.server_key_at_risk && !replica) {
+    issues.push({ key: 'serverKey', summary: 'vault.key is the only key to your deduplicated backups', action: 'Save vault.key', href: SERVER_KEY_HREF })
+  }
   if (isLowScore(summary)) {
     issues.push({ key: 'score', summary: `Health score ${summary.health_score ?? 0} of 100`, action: 'View history', href: '/history' })
   }
@@ -156,6 +169,7 @@ function attentionIssues({ failures, warnings, skipped, cancelled, unhealthy, st
  * @param {number} [input.cancelled] Recent runs cancelled.
  * @param {string[]} [input.unhealthy] Names of unhealthy storage destinations.
  * @param {number} [input.unprotected] Items in no job and no restore point.
+ * @param {number} [input.outOfDate] Items whose newest restore point is older than their schedule allows.
  * @param {number} [input.pending] Items in a job, waiting for their first backup.
  * @param {number} [input.protectedCount] Items in a restore point.
  * @param {number} [input.total] Items tracked on this server.
@@ -164,7 +178,7 @@ function attentionIssues({ failures, warnings, skipped, cancelled, unhealthy, st
  */
 export function deriveBackupStatus({
   loading = false, error = false, replica = false, hasStorage = false, hasJobs = false, failures = 0, warnings = 0,
-  skipped = 0, cancelled = 0, unhealthy = [], unprotected = 0, pending = 0, protectedCount = 0, total = 0, summary = null, incomplete = false,
+  skipped = 0, cancelled = 0, unhealthy = [], unprotected = 0, outOfDate = 0, pending = 0, protectedCount = 0, total = 0, summary = null, incomplete = false,
 }) {
   if (loading) return verdict('loading', 'neutral', 'Checking backup status…', '')
   if (error) {
@@ -177,7 +191,7 @@ export function deriveBackupStatus({
   const waiting = pending > 0 ? plural(pending, 'item') + ' waiting for first backup' : ''
   const unknown = !summary || incomplete
   const stale = summary?.stale_jobs || []
-  const issues = attentionIssues({ failures, warnings, skipped, cancelled, unhealthy, stale, unprotected, total, summary, replica })
+  const issues = attentionIssues({ failures, warnings, skipped, cancelled, unhealthy, stale, unprotected, outOfDate, total, summary, replica })
   if (issues.length > 0) {
     const parts = issues.map((issue) => issue.summary)
     if (waiting) parts.push(waiting)
@@ -225,9 +239,11 @@ function healthProblems({ skipped = 0, cancelled = 0, unhealthy = 0 }, summary) 
   return parts
 }
 
-function healthQualifiers({ unprotected = 0, pending = 0, warnings = 0, incomplete = false }) {
+function healthQualifiers({ unprotected = 0, outOfDate = 0, pending = 0, warnings = 0, incomplete = false }) {
   const parts = []
-  if (unprotected > 0) parts.push(`${unprotected} unprotected`)
+  // The score only weighs items in a job, so say these aren't in it (#694).
+  if (unprotected > 0) parts.push(`${plural(unprotected, 'item')} in no job`)
+  if (outOfDate > 0) parts.push(`${outOfDate} out of date`)
   if (warnings > 0) parts.push(`${warnings} with warnings`)
   if (pending > 0) parts.push(`${pending} pending`)
   if (incomplete) parts.push('some data unavailable')
@@ -240,8 +256,9 @@ function isScoreUnassessed(summary) {
 }
 
 /**
- * The health tile's sentence. Plain "healthy" only when nothing qualifies it, and
- * it uses the banner's words for anything the banner flags (#527).
+ * The Job health tile's sentence. Plain "healthy" only when nothing qualifies it,
+ * and it uses the banner's words for anything the banner flags (#527). With a
+ * good score it says "Jobs OK", since the score covers job items only (#694).
  */
 export function healthText(summary, counts = {}) {
   if (!summary) return 'Health unavailable'
@@ -254,11 +271,11 @@ export function healthText(summary, counts = {}) {
   // anything went wrong, so "needs attention" there would be a false alarm.
   if (!hasBackupHistory(summary)) return 'No backups completed yet'
   if (isScoreUnassessed(summary)) {
-    return ['Backups OK', ranInWindow(summary) ? 'no scored runs' : 'no recent runs', ...qualifiers].join(' · ')
+    return ['Jobs OK', ranInWindow(summary) ? 'no scored runs' : 'no recent runs', ...qualifiers].join(' · ')
   }
   if (summary.protected_items === 0 && ranInWindow(summary)) return ['No items backed up yet', ...qualifiers].join(' · ')
   if ((summary.health_score ?? 0) < HEALTHY_SCORE) return ['Needs attention', ...qualifiers].join(' · ')
-  return qualifiers.length ? ['Backups OK', ...qualifiers].join(' · ') : 'All backups healthy'
+  return qualifiers.length ? ['Jobs OK', ...qualifiers].join(' · ') : 'All backups healthy'
 }
 
 /** Colour category for the gauge. A high score with open problems isn't green. */
@@ -272,11 +289,21 @@ export function healthTone(summary, counts = {}) {
   return 'success'
 }
 
+/**
+ * Where the Needs attention tile leads (#693): the failed runs when there are
+ * any, Disaster Recovery when the count comes from items, History otherwise.
+ */
+export function attentionHref({ failures = 0, unprotected = 0, outOfDate = 0, replica = false }) {
+  if (failures > 0) return '/history?status=failed&review=outstanding'
+  if (!replica && (unprotected > 0 || outOfDate > 0)) return '/recovery'
+  return '/history'
+}
+
 /** The Needs attention tile's caption. Claims full protection only when it's true. */
-export function attentionCaption({ failures = 0, unprotected = 0, other = 0, fullyProtected = false, known = true }) {
-  const others = other > 0 ? ` · ${plural(other, 'other issue')}` : ''
+export function attentionCaption({ failures = 0, unprotected = 0, outOfDate = 0, other = 0, fullyProtected = false, known = true }) {
+  const others = (outOfDate > 0 ? ` · ${outOfDate} out of date` : '') + (other > 0 ? ` · ${plural(other, 'other issue')}` : '')
   if (failures > 0 || unprotected > 0) return `${plural(failures, 'recent failure')} · ${unprotected} unprotected${others}`
-  if (other > 0) return `No failures${others}`
+  if (others) return `No failures${others}`
   if (!known) return 'No failures · protection unknown'
   return fullyProtected ? 'No failures · all items protected' : 'No failures'
 }
