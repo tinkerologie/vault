@@ -442,7 +442,7 @@ test.describe('Wizard step focus (#528)', () => {
     await page.getByRole('button', { name: /Continue/i }).click();
     await expect.poll(() => focusedHeading(page)).toMatch(/Step 3 of 3/);
 
-    await page.getByRole('button', { name: /Back to versions/ }).click();
+    await page.getByRole('button', { name: /Back to restore points/ }).click();
     await expect.poll(() => focusedHeading(page)).toMatch(/Step 2 of 3/);
     await page.getByRole('button', { name: /Back to items/ }).first().click();
     await expect.poll(() => focusedHeading(page)).toMatch(/Step 1 of 3/);

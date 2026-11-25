@@ -342,18 +342,43 @@ test.describe('Typed confirmation: RestoreWizard details (#525)', () => {
     await expect(dialog).not.toContainText('are removed for');
   });
 
-  test('normal restores keep their review step, with no typed dialog', async ({ page }) => {
+  // #700 revisits #525: a restore that clears its destination now needs a
+  // typed RESTORE listing the locations; one that only merges stays one click.
+  test('a merge-only restore keeps its one-click review step', async ({ page }) => {
     await setupVaultMockApi(page);
     const calls: Request[] = [];
     page.on('request', (r) => { if (flow.isAction(r)) calls.push(r); });
     await reachRestoreReview(page);
     await expect(page.getByLabel('passed').first()).toBeVisible();
+    const clearing = page.getByRole('checkbox', { name: /clear/i });
+    await clearing.first().uncheck();
+    await clearing.nth(1).uncheck();
     await expect(page.getByText(/This will overwrite existing data/)).toBeVisible();
     expect(calls).toHaveLength(0);
     await expect(page.getByRole('button', { name: 'Restore anyway' })).toHaveCount(0);
     await page.getByRole('button', { name: /^Start Restore/ }).click();
     await expect.poll(() => calls.length).toBe(2);
     await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
+  test('a clearing restore asks for typed RESTORE naming each location', async ({ page }) => {
+    await setupVaultMockApi(page);
+    const calls: Request[] = [];
+    page.on('request', (r) => { if (flow.isAction(r)) calls.push(r); });
+    await reachRestoreReview(page);
+    await expect(page.getByLabel('passed').first()).toBeVisible();
+    await expect(page.getByText(/This will delete files that are not in the backup/)).toBeVisible();
+    await page.getByRole('button', { name: /^Start Restore/ }).click();
+    const dialog = page.getByRole('dialog', { name: 'Restore and Delete Extra Files' });
+    await expect(dialog).toContainText('plex (Container), Docker & Appdata');
+    await expect(dialog).toContainText('home-assistant (VM), VM Backups');
+    await expect(dialog).toContainText('Files at these locations that are not in the backup are deleted.');
+    const confirm = dialog.getByRole('button', { name: 'Start Restore', exact: true });
+    await expect(confirm).toBeDisabled();
+    expect(calls).toHaveLength(0);
+    await dialog.getByRole('textbox').fill('RESTORE');
+    await confirm.click();
+    await expect.poll(() => calls.length).toBe(2);
   });
 
   test('only the job whose pre-flight failed is listed as failed', async ({ page }) => {

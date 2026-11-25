@@ -134,6 +134,9 @@ export const api = {
 
   // Jobs
   listJobs: (details = false) => request('GET', details ? '/jobs?details=true' : '/jobs'),
+  // The restore wizard also lists items that only retained restore points
+  // still hold, such as a deleted container (#669).
+  listJobsForRestore: () => request('GET', '/jobs?details=true&history=true'),
   getJob: (id) => request('GET', `/jobs/${id}`),
   createJob: (data) => request('POST', '/jobs', data),
   updateJob: (id, data) => request('PUT', `/jobs/${id}`, data),

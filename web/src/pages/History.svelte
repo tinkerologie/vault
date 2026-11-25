@@ -170,6 +170,19 @@
     const status = params.get('status')
     selectedStatus = statusFilters.some(([value]) => value === status) ? status : 'all'
     needsReview = params.get('review') === 'outstanding'
+    // #/history?run=<id> opens that run, e.g. "View run" from the restore wizard (#701).
+    const run = Number(params.get('run'))
+    focusRunId = Number.isInteger(run) && run > 0 ? run : null
+    revealFocusedRun()
+  }
+
+  let focusRunId = $state(null)
+  function revealFocusedRun() {
+    if (focusRunId == null || !allRuns.some(r => r.id === focusRunId)) return
+    const id = focusRunId
+    focusRunId = null
+    expandedRunIds.add(id)
+    tick().then(() => document.getElementById(`run-${id}`)?.scrollIntoView({ block: 'center' }))
   }
 
   onMount(() => {
@@ -209,6 +222,7 @@
       }
       error = ''
       autoExpandRecentFailures()
+      revealFocusedRun()
     } catch (e) {
       if (generation === dataRequestGeneration) error = e.message || 'Failed to load history'
     } finally {
@@ -623,7 +637,7 @@
                 {@const anomalyCounts = runAnomalyCounts(run.id)}
                 {@const speed = runSpeed(run)}
                 {@const expandable = hasLogDetails(run) || Boolean(run.acknowledged_at)}
-                <div class="bg-surface-2 border border-border rounded-xl p-4 hover:border-vault/30 transition-all">
+                <div id="run-{run.id}" class="bg-surface-2 border border-border rounded-xl p-4 hover:border-vault/30 transition-all">
                   <!-- With details to show, the run's name is the disclosure button and its
                        ::after stretches over this row, so the whole summary stays clickable
                        while the anomaly badge remains a sibling control, not a nested one. -->
