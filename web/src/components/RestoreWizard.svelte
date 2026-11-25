@@ -1276,14 +1276,18 @@
   let confirmRestoreAnyway = $state(false)
 
   // Where each item of a unit is restored, and whether clearing deletes files there (#700).
+  // A fresh pre-flight adds the exact container and VM host paths the server resolved (#716).
   function unitTargets(unit) {
     const s = getUnitSettings(unit.jobId)
     const custom = s.showDestOverride ? s.restoreDestination : ''
+    const fresh = isUnitPreflightFresh(unit)
+    const previews = fresh ? (s.preflightResult?.items || []) : []
     return unit.items.map(item => ({
       key: itemKey(item),
       name: itemDisplayLabel(item),
       typeLabel: itemTypeSingularLabel(item.type),
-      ...restoreTargetFor(item, custom),
+      awaitingPaths: !fresh && (item.type === 'container' || item.type === 'vm'),
+      ...restoreTargetFor(item, custom, previews.find(p => p.name === item.name && p.type === item.type)),
     }))
   }
 
@@ -1913,18 +1917,54 @@
               <li class="bg-surface-1 border border-border rounded-lg p-2.5 text-xs">
                 <span class="font-medium text-text">{t.name}</span>
                 <span class="text-text-dim">({t.typeLabel})</span>
-                {#if t.path}
-                  <code class="block mt-1 font-mono text-text [overflow-wrap:anywhere]">{t.path}</code>
-                {:else}
+                {#if t.paths}
                   <span class="block mt-1 text-text-muted">{t.description}</span>
-                {/if}
-                {#if clears}
-                  <span class="mt-1 flex items-center gap-1 text-danger font-medium">
-                    <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
-                    Files here that are not in the backup will be deleted
-                  </span>
+                  <ul class="mt-1.5 space-y-1.5" data-testid="restore-write-targets">
+                    {#each t.paths as p (p.path)}
+                      <li>
+                        <span class="text-text-muted">{p.label}</span>
+                        <code class="block font-mono text-text [overflow-wrap:anywhere]">{p.path}</code>
+                        {#if p.effect === 'clearable' && clears}
+                          <span class="flex items-center gap-1 text-danger font-medium">
+                            <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
+                            Files here that are not in the backup will be deleted
+                          </span>
+                        {:else if p.effect === 'overwrite'}
+                          <span class="block text-text-muted">Replaced with the backed-up copy</span>
+                        {:else if p.effect === 'merge' && clears}
+                          <span class="block text-text-muted">Too high in the folder tree to clear safely. Files here that are not in the backup are kept</span>
+                        {:else}
+                          <span class="block text-text-muted">Files here that are not in the backup are kept</span>
+                        {/if}
+                      </li>
+                    {/each}
+                    {#if t.domain}
+                      <li>
+                        <span class="text-text-muted">Domain definition</span>
+                        <code class="block font-mono text-text [overflow-wrap:anywhere]">{t.domain}</code>
+                        <span class="block text-text-muted">Replaced with the backed-up definition</span>
+                      </li>
+                    {/if}
+                  </ul>
                 {:else}
-                  <span class="block mt-1 text-text-muted">Files here that are not in the backup are kept</span>
+                  {#if t.path}
+                    <code class="block mt-1 font-mono text-text [overflow-wrap:anywhere]">{t.path}</code>
+                  {:else}
+                    <span class="block mt-1 text-text-muted">{t.description}</span>
+                  {/if}
+                  {#if t.unresolved}
+                    <span class="block mt-1 text-text-muted">{t.unresolved}</span>
+                  {:else if t.awaitingPaths}
+                    <span class="block mt-1 text-text-dim">Run the pre-flight checks to see the exact host paths.</span>
+                  {/if}
+                  {#if clears}
+                    <span class="mt-1 flex items-center gap-1 text-danger font-medium">
+                      <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={ICONS.warning}/></svg>
+                      Files here that are not in the backup will be deleted
+                    </span>
+                  {:else}
+                    <span class="block mt-1 text-text-muted">Files here that are not in the backup are kept</span>
+                  {/if}
                 {/if}
               </li>
             {/each}

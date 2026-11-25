@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/tinkerologie/vault/internal/dedup"
 	"github.com/tinkerologie/vault/internal/engine"
 	jobintake "github.com/tinkerologie/vault/internal/jobs"
+	"github.com/tinkerologie/vault/internal/restorerequest"
 	"github.com/tinkerologie/vault/internal/runner"
 	"github.com/tinkerologie/vault/internal/storage"
 )
@@ -1453,13 +1455,14 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 		respondError(w, http.StatusNotFound, "restore point not found")
 		return
 	}
+	var targets []restoreTarget
 	if len(req.Items) > 0 {
 		jobItems, err := h.db.GetJobItems(id)
 		if err != nil {
 			respondInternalError(w, fmt.Errorf("fetching job items: %w", err))
 			return
 		}
-		targets, err := resolveNamedRestoreTargets(jobItems, rp, req.Items)
+		targets, err = resolveNamedRestoreTargets(jobItems, rp, req.Items)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
@@ -1480,7 +1483,67 @@ func (h *JobHandler) RestorePointPreflight(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
-	respondJSON(w, http.StatusOK, h.runner.PreflightRestore(job, rp, opts))
+	result := h.runner.PreflightRestore(job, rp, opts)
+	respondJSON(w, http.StatusOK, preflightResponse{
+		PreflightResult: result,
+		Items:           h.previewWriteTargets(r.Context(), job, rp, targets, opts, req.Passphrase, storageReachable(result)),
+	})
+}
+
+// preflightResponse adds the selected container and VM restores' host
+// paths to the pre-flight checks (#716). Assistant Keys cannot reach the
+// pre-flight route, so these paths stay out of assistant responses.
+type preflightResponse struct {
+	runner.PreflightResult
+	Items []restorerequest.ItemWriteTargets `json:"items,omitempty"`
+}
+
+// maxPreflightWriteTargetItems bounds the bounded-metadata reviews one
+// pre-flight runs; later items report too_many_items. A var for tests.
+var maxPreflightWriteTargetItems = 32
+
+const preflightWriteTargetBudget = 45 * time.Second
+
+func storageReachable(result runner.PreflightResult) bool {
+	for _, check := range result.Checks {
+		if check.ID == "reachable" {
+			return check.Status == "ok"
+		}
+	}
+	return false
+}
+
+// previewWriteTargets resolves each selected container and VM restore's host
+// paths with the review the restore itself applies. Other item types are
+// left out: the wizard already knows their location.
+func (h *JobHandler) previewWriteTargets(ctx context.Context, job db.Job, rp db.RestorePoint, targets []restoreTarget, opts runner.PreflightRestoreOptions, passphrase string, reachable bool) []restorerequest.ItemWriteTargets {
+	destination := opts.Destination
+	if opts.DestinationIsZFS {
+		destination = ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, preflightWriteTargetBudget)
+	defer cancel()
+	var items []restorerequest.ItemWriteTargets
+	for _, target := range targets {
+		if target.Type != "container" && target.Type != "vm" {
+			continue
+		}
+		unavailable := func(reason string) restorerequest.ItemWriteTargets {
+			return restorerequest.ItemWriteTargets{Name: target.Name, Type: target.Type, Status: "unavailable",
+				Reason: reason, WriteTargets: []restorerequest.WriteTarget{}}
+		}
+		switch {
+		case !reachable:
+			items = append(items, unavailable("storage_unavailable"))
+		case len(items) >= maxPreflightWriteTargetItems:
+			items = append(items, unavailable("too_many_items"))
+		default:
+			items = append(items, restorerequest.PreviewWriteTargets(ctx, h.db, h.runner, restorerequest.Input{
+				JobID: job.ID, RestorePointID: rp.ID, ItemName: target.Name, ItemType: target.Type, Destination: destination,
+			}, passphrase))
+		}
+	}
+	return items
 }
 
 type restoreTarget struct {

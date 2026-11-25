@@ -204,6 +204,8 @@ export const api = {
   restoreJob: (id, data) => request('POST', `/jobs/${id}/restore`, data),
   // preflightRestore runs cheap pre-restore checks (storage reachable, backup
   // present, decryptable, free space) and returns { ok, checks:[{id,label,status,detail}] }.
+  // With `items`, it adds items:[{name,type,status,reason?,write_targets:[{kind,path?,mount?,name?,clearable?}]}]
+  // listing the exact host paths each selected container or VM restore writes (#716).
   preflightRestore: (jobId, rpId, data) =>
     request('POST', `/jobs/${jobId}/restore-points/${rpId}/preflight`, data),
   getNextRuns: () => request('GET', '/jobs/next-runs'),

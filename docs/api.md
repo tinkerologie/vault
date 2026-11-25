@@ -116,6 +116,56 @@ and the copy of each item that uses staging. For selected classic archive items,
 expansion, so sufficient recorded space alone leaves the capacity check skipped.
 A space warning is advisory and leaves `ok` true when the other checks pass.
 
+When `items` names a container or VM, the response adds an `items` array with
+one entry per selected container or VM. Each entry lists the exact host paths
+that restore writes. Vault resolves them from the Restore Point with the same
+review a Restore Request uses. A custom `destination` remaps them the way the
+restore does. Folder, plugin and ZFS items are left out, and the field is
+omitted when no container or VM is selected.
+
+```json
+{
+  "ok": true,
+  "checks": [],
+  "items": [
+    {
+      "name": "plex",
+      "type": "container",
+      "status": "resolved",
+      "write_targets": [
+        { "kind": "volume", "path": "/mnt/user/appdata/plex", "mount": "/config", "clearable": true },
+        { "kind": "file", "path": "/mnt/user/appdata/plex/hook.sh", "mount": "/hook.sh" },
+        { "kind": "template", "path": "/boot/config/plugins/dockerMan/templates-user/my-plex.xml" }
+      ]
+    },
+    {
+      "name": "win11",
+      "type": "vm",
+      "status": "resolved",
+      "write_targets": [
+        { "kind": "disk", "path": "/mnt/user/domains/win11/vdisk1.img", "mount": "vda" },
+        { "kind": "nvram", "path": "/etc/libvirt/qemu/nvram/win11_VARS-pure-efi.fd" },
+        { "kind": "domain", "name": "win11" }
+      ]
+    }
+  ]
+}
+```
+
+- `kind` is `volume`, `file` or `template` for a container, and `disk`,
+  `nvram` or `domain` for a VM. A `domain` entry has a `name` and no `path`.
+- `clearable` is true for a volume that `clean_destination` empties first.
+  A volume too shallow to clear is merged instead. Files, disks and NVRAM are
+  replaced with the backed-up copy.
+- `status` is `unavailable` when the paths could not be resolved before the
+  restore. `write_targets` is then empty and `reason` gives a code, such as
+  `backup_metadata_locked` (supply `passphrase`), `vm_host_unavailable`,
+  `storage_unavailable`, `destination_disallowed`, `busy` or a Restore
+  Request ineligibility reason.
+
+Assistant Keys cannot call this endpoint, so these paths never reach an
+assistant response.
+
 A Restore Request run uses the [exact-run stop action](#restore-requests).
 
 ## Storage
