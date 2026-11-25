@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright';
 import { test, expect, type Page } from '@playwright/test';
 import { createInitialMockJobs, setupVaultMockApi } from './mocks/vault-api';
 
@@ -98,6 +99,20 @@ test.describe('Going back keeps chosen restore points and options (#702)', () =>
 test.describe('Restore point timeline (#704)', () => {
   test.beforeEach(async ({ page }) => {
     await setupVaultMockApi(page);
+  });
+
+  test('step 2 has no nested controls, small targets or skipped headings', async ({ page }) => {
+    await page.route('**/jobs/1/restore-points', route => route.fulfill({ json: [
+      { id: 1003, job_id: 1, backup_type: 'incremental', created_at: '2026-10-03T02:00:00Z', size_bytes: 10, chain_depth: 2, metadata: JSON.stringify({ item_sizes: { plex: 5 } }) },
+      { id: 1002, job_id: 1, backup_type: 'full', created_at: '2026-10-02T02:00:00Z', size_bytes: 10, chain_depth: 1, metadata: JSON.stringify({ item_sizes: { plex: 5 } }) },
+      { id: 1001, job_id: 1, backup_type: 'full', created_at: '2026-10-01T02:00:00Z', size_bytes: 10, chain_depth: 1, metadata: JSON.stringify({ item_sizes: { plex: 5 } }) },
+    ] }));
+    await pickItems(page, /plex/i);
+    await expect(page.getByRole('group', { name: 'Backup activity by day' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /restore point \(incremental\)/ })).toBeVisible();
+    const { violations } = await new AxeBuilder({ page })
+      .withRules(['nested-interactive', 'target-size', 'heading-order', 'aria-allowed-attr', 'button-name']).analyze();
+    expect(violations.flatMap(v => v.nodes.map(n => `${v.id}: ${n.target.join(' ')}`))).toEqual([]);
   });
 
   test('deleting a point needs typed confirmation naming the date and job', async ({ page }) => {
