@@ -377,8 +377,10 @@ test.describe('layout (#697, #699, #715)', () => {
     const user = await editor.locator('#cfg_user').boundingBox();
     const pass = await editor.locator('#cfg_pass').boundingBox();
     expect(pass!.y).toBeGreaterThan(user!.y + user!.height - 1);
-    expect(user!.height).toBeGreaterThanOrEqual(44);
-    expect((await editor.locator('#sname').boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    // offsetHeight ignores the dialog's entrance scale.
+    for (const id of ['#cfg_user', '#cfg_pass', '#sname', '#cfg_host']) {
+      expect(await editor.locator(id).evaluate((el) => (el as HTMLElement).offsetHeight), id).toBeGreaterThanOrEqual(44);
+    }
   });
 
   test('the S3 type button is not truncated', async ({ page }) => {
@@ -412,10 +414,16 @@ test.describe('layout (#697, #699, #715)', () => {
   });
 
   test('Recover Vault heading lines up with other pages', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' }); // no route fade-up mid-measure
     await page.setViewportSize({ width: 1440, height: 900 });
+    const settled = () => page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'));
     await page.goto('/#/jobs');
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await settled();
     const jobs = await page.getByRole('heading', { level: 1 }).boundingBox();
     await page.goto('/#/recover');
+    await expect(page.getByRole('heading', { level: 1, name: 'Recover Vault' })).toBeVisible();
+    await settled();
     const recover = await page.getByRole('heading', { level: 1, name: 'Recover Vault' }).boundingBox();
     // Before #699 it sat at 48/488 against 24/304. Allow subpixel header alignment.
     expect(Math.abs(recover!.x - jobs!.x)).toBeLessThanOrEqual(2);

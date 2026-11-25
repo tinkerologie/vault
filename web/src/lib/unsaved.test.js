@@ -114,6 +114,17 @@ describe('createDialogHistory', () => {
     expect(win.listenerCount('popstate')).toBe(0)
   })
 
+  it('ignores a pop that arrives after Back already closed the dialog', async () => {
+    const win = fakeWindow()
+    const dh = createDialogHistory(win)
+    // A second pop lands while the first is still being handled.
+    const onBack = vi.fn(() => win.dispatch('popstate'))
+    dh.open(onBack)
+    win.dispatch('popstate')
+    expect(onBack).toHaveBeenCalledTimes(1)
+    expect(win.listenerCount('popstate')).toBe(0)
+  })
+
   it('ignores stray pops and stops listening on destroy', async () => {
     const win = fakeWindow()
     const dh = createDialogHistory(win)

@@ -63,6 +63,7 @@ describe('nameFieldError', () => {
 
   it('leaves other errors alone', () => {
     expect(nameFieldError('storage destination not found')).toBeNull()
+    expect(nameFieldError('name must not contain slashes')).toBeNull()
     expect(nameFieldError('')).toBeNull()
     expect(nameFieldError(undefined)).toBeNull()
   })
