@@ -21,6 +21,7 @@
   import { restoreAnywaySummary } from '../lib/risky-actions.js'
   import { deleteRestorePointSummary, restoreTargetFor, clearingRestoreSummary } from '../lib/restore-confirm.js'
   import FileTree from './FileTree.svelte'
+  import PasswordInput from './PasswordInput.svelte'
 
   let { jobs = [], onrestore = () => {}, initialJobId = null, initialType = null, initialName = null, onmount = null } = $props()
 
@@ -1952,10 +1953,13 @@
         {#if needsAgePassphrase}
           <div>
             <label for="rw_passphrase_{unit.jobId}" class="block text-sm font-medium text-text-muted mb-2">Encryption Passphrase ({unit.jobName})</label>
-            <input id="rw_passphrase_{unit.jobId}" type="password" autocomplete="off" value={s.passphrase}
-              oninput={(e) => updateUnitSetting(unit.jobId, { passphrase: e.target.value })}
-              placeholder="Enter passphrase used to encrypt this backup"
-              class="w-full sm:w-96 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+            <div class="w-full sm:w-96">
+              <PasswordInput id="rw_passphrase_{unit.jobId}" value={s.passphrase}
+                toggleLabel="Show passphrase"
+                oninput={(e) => updateUnitSetting(unit.jobId, { passphrase: e.target.value })}
+                placeholder="Enter passphrase used to encrypt this backup"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+            </div>
             <p class="text-xs text-text-dim mt-1">This backup uses age encryption. A passphrase is required to decrypt.</p>
           </div>
         {/if}

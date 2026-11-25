@@ -415,7 +415,7 @@ describe('vault.key caution (#714)', () => {
     expect(status.state).toBe('attention')
     expect(status.tone).toBe('warning')
     const issue = status.issues.find((it) => it.key === 'serverKey')
-    expect(issue).toMatchObject({ action: 'Save vault.key', href: '/settings' })
+    expect(issue).toMatchObject({ action: 'Save vault.key', href: '/settings/security' })
     expect(status.detail).toMatch(/vault\.key is the only key/)
   })
 

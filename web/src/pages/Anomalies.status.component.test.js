@@ -87,7 +87,7 @@ describe('Anomalies page states', () => {
     api.listAnomalies.mockResolvedValue({ anomalies: [], next_cursor: '' })
     render(Anomalies)
     expect(await screen.findByText('Anomaly detection is off')).toBeTruthy()
-    expect(screen.getByRole('link', { name: /settings/i }).getAttribute('href')).toBe('#/settings')
+    expect(screen.getByRole('link', { name: /settings/i }).getAttribute('href')).toBe('#/settings/general')
     expect(screen.queryByLabelText('Severity')).toBeNull()
   })
 })

@@ -389,7 +389,7 @@
     <div class="bg-surface-2 border border-border rounded-xl px-5 py-10 text-center">
       <h2 class="text-base font-semibold text-text">Anomaly detection is off</h2>
       <p class="text-sm text-text-muted mt-1 max-w-md mx-auto">Vault isn't checking backup runs for unusual size, duration or reliability, so no new anomalies are recorded.</p>
-      <a href="#/settings" class="inline-flex items-center mt-4 min-h-[36px] px-4 py-2 text-sm font-medium text-text bg-surface-3 border border-border hover:bg-surface-4 rounded-lg transition-colors">Turn it on in Settings</a>
+      <a href="#/settings/general" class="inline-flex items-center mt-4 min-h-[36px] px-4 py-2 text-sm font-medium text-text bg-surface-3 border border-border hover:bg-surface-4 rounded-lg transition-colors">Turn it on in Settings</a>
     </div>
   {:else}
   <!-- Filters -->
