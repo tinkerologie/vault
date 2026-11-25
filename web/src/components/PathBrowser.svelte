@@ -7,7 +7,18 @@
   // destination roots, #514). The root listing itself is never selectable:
   // it is a list of shortcuts, not a directory, and selecting it used to
   // yield an empty path.
-  let { value = $bindable(''), onselect = () => {}, includeZfs = false, label = 'Path', validate = () => '' } = $props()
+  // id, describedby and invalid let a host form link its own hint or error
+  // to the text field (#688).
+  let {
+    value = $bindable(''),
+    onselect = () => {},
+    includeZfs = false,
+    label = 'Path',
+    validate = () => '',
+    id = undefined,
+    describedby = undefined,
+    invalid = false,
+  } = $props()
 
   const titleId = $props.id()
   let open = $state(false)
@@ -80,10 +91,13 @@
   <div class="flex gap-2">
     <input
       type="text"
+      {id}
       bind:value
       aria-label={label}
-      placeholder="/mnt/user/backups"
-      class="flex-1 bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50"
+      aria-describedby={describedby}
+      aria-invalid={invalid ? 'true' : undefined}
+      placeholder="e.g. /mnt/user/backups"
+      class="flex-1 min-w-0 bg-surface-3 border {invalid ? 'border-danger' : 'border-border'} rounded-lg px-3 py-2 max-lg:min-h-11 text-sm text-text placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50"
     />
     <button
       type="button"

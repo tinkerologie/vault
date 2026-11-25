@@ -624,6 +624,20 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
       });
     }
 
+    // Schedule preview (#682): fixed server-clock runs, or none for manual only.
+    if (path.endsWith('/jobs/schedule-preview')) {
+      const schedule = url.searchParams.get('schedule') || '';
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          runs: schedule.trim() ? ['2026-10-07T02:15:00+02:00', '2026-10-08T02:15:00+02:00', '2026-10-09T02:15:00+02:00'] : [],
+          timezone: 'CEST',
+          utc_offset: '+02:00',
+        }),
+      });
+    }
+
     // Job Next Run
     const nextRunMatch = path.match(/\/jobs\/(\d+)\/next-run$/);
     if (nextRunMatch) {
@@ -643,6 +657,11 @@ export async function setupVaultMockApi(page: Page, options: VaultMockOptions = 
           total_points: 10,
           keep_points: 5,
           prune_points: 5,
+          // The fields GET /jobs/{id}/retention-preview really returns.
+          total_restore_points: 10,
+          kept_directly: [1, 2, 3, 4],
+          kept_with_ancestors: [1, 2, 3, 4, 5],
+          would_delete: [6, 7, 8, 9, 10],
         }),
       });
     }

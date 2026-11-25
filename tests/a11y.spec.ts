@@ -246,7 +246,7 @@ test.describe('screen reader polish (#608)', () => {
     await page.goto('/#/jobs');
     const main = page.getByRole('main');
     for (const job of ['Docker & Appdata', 'VM Backups']) {
-      for (const action of ['Run backup now', 'Duplicate job', 'Edit job', 'Delete job']) {
+      for (const action of ['Run Now', 'Duplicate job', 'Edit job', 'Delete job']) {
         await expect(main.getByRole('button', { name: `${action}: ${job}`, exact: true })).toBeVisible();
       }
     }
@@ -347,6 +347,8 @@ test.describe('screen reader polish (#608)', () => {
     await page.getByRole('button', { name: /add storage/i }).click();
     await checkStorageCheckboxes(page, page.getByRole('dialog'), 'Add Storage');
     await page.keyboard.press('Escape');
+    // Ticking the checkboxes changed the form, so Escape asks first (#687).
+    await page.getByRole('dialog', { name: 'Discard changes?' }).getByRole('button', { name: 'Discard' }).click();
 
     // Editing: deduplication is locked, and the description says why.
     await page.getByRole('button', { name: 'Edit storage: Local Array Backup', exact: true }).click();

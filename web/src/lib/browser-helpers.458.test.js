@@ -122,6 +122,17 @@ describe('hash router', () => {
     expect(router.getRawHash()).toBe('/logs?run=5')
   })
 
+  it('routes a sub-path to its page and exposes the rest (#712)', async () => {
+    const win = fakeWindow('#/settings/security?x=1')
+    const router = await import('./router.svelte.js')
+    expect(router.getRoute()).toBe('/settings')
+    expect(router.getSubpath()).toBe('security')
+    win.location.hash = '#/settings'
+    win.listeners.hashchange()
+    expect(router.getRoute()).toBe('/settings')
+    expect(router.getSubpath()).toBe('')
+  })
+
   it('navigates by setting the hash and tracks hashchange events', async () => {
     const win = fakeWindow('#/')
     const router = await import('./router.svelte.js')

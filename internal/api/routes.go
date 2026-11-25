@@ -239,6 +239,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/", jobH.List)
 			r.Post("/", jobH.Create)
 			r.Get("/next-runs", jobH.AllNextRuns)
+			r.Get("/schedule-preview", jobH.SchedulePreview)
 			r.Get("/{id}", jobH.Get)
 			r.Put("/{id}", jobH.Update)
 			r.Delete("/{id}", jobH.Delete)

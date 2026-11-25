@@ -84,6 +84,7 @@ const routes = [
   ['preflightRestore', () => api.preflightRestore(2, 9, { x: 1 }), 'POST', '/api/v1/jobs/2/restore-points/9/preflight', { x: 1 }],
   ['getNextRuns', () => api.getNextRuns(), 'GET', '/api/v1/jobs/next-runs'],
   ['getNextRun', () => api.getNextRun(2), 'GET', '/api/v1/jobs/2/next-run'],
+  ['previewSchedule', () => api.previewSchedule('15 2 * * 1,3', 5), 'GET', '/api/v1/jobs/schedule-preview?schedule=15%202%20*%20*%201%2C3&count=5'],
   ['getRunnerStatus', () => api.getRunnerStatus(), 'GET', '/api/v1/runner/status'],
   ['getRun', () => api.getRun(7), 'GET', '/api/v1/runs/7'],
   ['listMounts all', () => api.listMounts(false), 'GET', '/api/v1/mounts?active=false'],

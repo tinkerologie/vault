@@ -150,7 +150,7 @@
         <label class="min-w-40 flex-1 text-sm font-medium text-text">
           Assistant name
           <input type="text" bind:value={name} maxlength="100" required autocomplete="off" disabled={creating}
-            class="mt-1.5 block w-full rounded-lg border border-border bg-surface px-3 py-2 text-text focus:border-vault focus:outline-none" />
+            class="mt-1.5 block w-full rounded-lg border border-border bg-surface px-3 py-2 text-text focus:border-vault focus:outline-none max-lg:min-h-11" />
         </label>
         <button type="submit" disabled={creating || !name.trim()}
           class="hit-target rounded-lg bg-vault px-4 py-2 text-sm font-semibold text-on-vault hover:bg-vault-dark disabled:opacity-50">

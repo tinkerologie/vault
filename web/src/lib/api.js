@@ -208,6 +208,7 @@ export const api = {
     request('POST', `/jobs/${jobId}/restore-points/${rpId}/preflight`, data),
   getNextRuns: () => request('GET', '/jobs/next-runs'),
   getNextRun: (id) => request('GET', `/jobs/${id}/next-run`),
+  previewSchedule: (schedule, count = 3) => request('GET', `/jobs/schedule-preview?schedule=${encodeURIComponent(schedule)}&count=${count}`),
 
   // Runner
   getRunnerStatus: () => request('GET', '/runner/status'),

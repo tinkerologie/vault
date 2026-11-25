@@ -46,8 +46,8 @@ test.describe('Jobs Management & Creation Wizard', () => {
   test('triggers Run Now and verifies queued execution state', async ({ page }) => {
     await page.goto('/#/jobs');
 
-    // Find the Run Now button on the first job row
-    const runBtn = page.getByRole('button', { name: /run backup now/i }).first();
+    // Find the Run Now button on the first job row (the Dashboard's treatment, #699)
+    const runBtn = page.getByRole('button', { name: /^Run Now:/ }).first();
     await expect(runBtn).toBeVisible();
     await runBtn.click();
 
@@ -178,19 +178,21 @@ test.describe('Jobs Management & Creation Wizard', () => {
       await expect(toggle).not.toHaveAccessibleDescription(describedBy(warningTitle));
     });
 
-    test('warns in the express full form, where there is no toggle', async ({ page }) => {
+    // The full form now holds every option, the toggle included (#712).
+    test('warns in the full form, beside the toggle and again in the review', async ({ page }) => {
       await page.goto('/#/jobs');
       await page.getByRole('button', { name: /new job/i }).click();
       await page.getByRole('button', { name: 'Switch to full form' }).click();
 
-      const storage = page.locator('#ex_storage');
+      const storage = page.locator('#storage');
       await storage.selectOption({ label: 'Local Array Backup (local)' });
       await expect(page.getByText(warningTitle)).toHaveCount(0);
 
       await storage.selectOption({ label: 'Offsite S3 (s3)' });
-      await expect(page.getByText(warningTitle)).toBeVisible();
-      await expect(page.getByText('(under Backup Verification in the step-by-step form)', { exact: false })).toBeVisible();
-      await expect(storage).toHaveAccessibleDescription(describedBy(warningTitle));
+      await expect(page.getByText(warningTitle)).toHaveCount(2);
+      await expect(page.getByText('(under Backup Verification above)', { exact: false })).toBeVisible();
+      const toggle = page.getByRole('checkbox', { name: 'Verify backups after writing' });
+      await expect(toggle).toHaveAccessibleDescription(describedBy(warningTitle));
     });
 
     test('names the deferred-upload switch and the review-step enabled toggle', async ({ page }) => {

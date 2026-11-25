@@ -65,7 +65,7 @@
         type="text"
         bind:value
         {placeholder}
-        class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text font-mono placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 pr-8"
+        class="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-text font-mono placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 pr-8 max-lg:min-h-11"
       />
       {#if value}
         <button

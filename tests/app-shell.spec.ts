@@ -51,7 +51,7 @@ test.describe('connection-lost banner (#686)', () => {
     await page.goto('/#/jobs');
     await page.clock.runFor(3500);
     await expect(banner(page)).toBeVisible();
-    await page.getByRole('button', { name: /run backup now/i }).first().click();
+    await page.getByRole('button', { name: /^Run Now:/ }).first().click();
     const toast = page.locator('[data-toast]').first();
     await expect(toast).toBeVisible();
     const b = (await page.locator('[data-connection-banner]').boundingBox())!;

@@ -1,4 +1,5 @@
 <script>
+  import PasswordInput from './PasswordInput.svelte'
   import { getApiKey, setApiKey } from '../lib/auth.svelte.js'
   import ApiKeyLocalOnlyNotice from './ApiKeyLocalOnlyNotice.svelte'
   import Modal from './Modal.svelte'
@@ -17,6 +18,7 @@
     }
     location.reload()
   }
+  const uid = $props.id()
 </script>
 
 <!-- Nothing behind this works without a key, so there is nothing to close to:
@@ -33,10 +35,11 @@
     {#if storageBlocked}
       <p role="alert" class="text-sm text-danger">This browser is blocking session storage, so the key can't be kept.</p>
     {/if}
-    <label class="block text-sm font-medium text-text">
-      API key
-      <input data-autofocus type="password" autocomplete="off" bind:value={key} class="mt-1 w-full px-3 py-2 bg-surface border border-border rounded-lg text-sm text-text" />
-    </label>
+    <label for="{uid}-key" class="block text-sm font-medium text-text">API key</label>
+    <div class="mt-1">
+      <PasswordInput id="{uid}-key" data-autofocus bind:value={key} toggleLabel="Show API key"
+        class="w-full px-3 py-2 bg-surface border border-border rounded-lg text-sm text-text max-lg:min-h-11" />
+    </div>
     <button type="submit" class="px-4 py-2 bg-vault text-on-vault rounded-lg text-sm font-medium">Continue</button>
   </form>
 </Modal>

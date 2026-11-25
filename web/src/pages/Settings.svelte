@@ -19,6 +19,9 @@
   import RetryDelaysEditor from '../components/RetryDelaysEditor.svelte'
   import ChangelogModal from '../components/ChangelogModal.svelte'
   import { setAnomalyEnabled, setReplicationEnabled } from '../lib/settings.svelte.js'
+  import PasswordInput from '../components/PasswordInput.svelte'
+  import { getSubpath, navigate } from '../lib/router.svelte.js'
+  import { snapshot, guardUnload, guardLinks } from '../lib/unsaved.js'
 
   let loading = $state(true)
   let health = $state(null)
@@ -31,15 +34,25 @@
   // but non-editable so operators can still read the current values.
   const readOnly = isReplicaMode()
 
-  // Tab navigation
-  /** @type {string} */
-  let activeTab = $state('general')
+  // Tab navigation. The tab lives in the URL (#/settings/security), so docs,
+  // toasts and other pages can link to it and Back/Forward move between tabs
+  // (#712). '#/settings' and unknown tabs show General.
   const tabs = [
     { id: 'general', label: 'General' },
     { id: 'security', label: 'Security' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'reference', label: 'Reference' },
   ]
+  /** @type {string} */
+  let activeTab = $derived(tabs.some((t) => t.id === getSubpath()) ? getSubpath() : 'general')
+
+  // A click adds a history entry; arrow keys replace it, so walking the tab
+  // list with the keyboard doesn't fill Back with every tab passed.
+  function selectTab(id, { replace = false } = {}) {
+    if (id === activeTab && getSubpath() === id) return
+    if (replace) window.location.replace(`#/settings/${id}`)
+    else navigate(`/settings/${id}`)
+  }
 
   // Jump-list for the long General tab (issue #208 / E11). Everyday settings up
   // front, power-user knobs after; clicking scrolls to the section's card.
@@ -62,8 +75,20 @@
     const next = tabFromKey(e, tabs.map((t) => t.id), activeTab)
     if (!next) return
     e.preventDefault()
-    activeTab = next
+    selectTab(next, { replace: true })
     document.getElementById(`settings-tab-${next}`)?.focus()
+  }
+
+  // Height of the sticky Jump-to bar. Fields and cards scroll clear of it
+  // when focused or jumped to (#715).
+  let stickyHeight = $state(0)
+  // Measured on mount and on resize (the bar wraps at narrow widths). Not
+  // bind:offsetHeight, which needs ResizeObserver.
+  function measureHeight(node) {
+    const measure = () => { stickyHeight = node.offsetHeight }
+    measure()
+    window.addEventListener('resize', measure)
+    return { destroy: () => window.removeEventListener('resize', measure) }
   }
 
   function jumpToSetting(id) {
@@ -103,13 +128,16 @@
   let encConfirm = $state('')
   let encSaving = $state(false)
   let showEncPassphrase = $state(false)
+  let showChangePassphrase = $state(false)
   let confirmEncRemoval = $state(false)
   let revealedPassphrase = $state('')
   let showingPassphrase = $state(false)
   let loadingPassphrase = $state(false)
   let changingPassphrase = $state(false)
+  let encMismatch = $derived(!!encPassphrase && !!encConfirm && encPassphrase !== encConfirm)
   let changeNewPass = $state('')
   let changeConfirmPass = $state('')
+  let changeMismatch = $derived(!!changeNewPass && !!changeConfirmPass && changeNewPass !== changeConfirmPass)
 
   // Staging state
   let stagingInfo = $state(null)
@@ -295,6 +323,9 @@
       anomalyEnabled = s?.anomaly_detection_enabled !== 'false'
       anomalySensitivityDefault = s?.anomaly_sensitivity_default || 'balanced'
       anomalyNotifyMinSeverity = s?.anomaly_notify_min_severity || 'critical'
+      savedThrottle = throttleSnap()
+      savedExclusions = exclusionsSnap()
+      savedAnomaly = anomalySnap()
       // Replication enable (mirrors settings.svelte.js derive).
       if (s?.replication_enabled === 'true') {
         replicationEnabledSetting = true
@@ -648,6 +679,7 @@
         auto_throttle_link_mbps: String(link),
         auto_throttle_floor_mbps: String(floor),
       })
+      savedThrottle = throttleSnap()
       showToast('Upload throttling saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -682,6 +714,7 @@
         label_exclusions_enabled: labelExclusionsEnabled ? 'true' : 'false',
       })
       globalExcludes = parseExcludeList(settings?.global_exclude_paths)
+      savedExclusions = exclusionsSnap()
       showToast('Exclusions saved', 'success')
     } catch (e) {
       showToast(e.message, 'error')
@@ -949,6 +982,35 @@
   let anomalyEnabled = $state(true)
   let anomalySensitivityDefault = $state('balanced')
   let anomalyNotifyMinSeverity = $state('critical')
+
+  // Three sections hold their switch until the section's Save is pressed.
+  // Each remembers what was last loaded or saved, so a pending edit shows as
+  // unsaved and leaving the page asks first (#687). The other switches save
+  // as soon as they're flipped.
+  const throttleSnap = () => snapshot([autoThrottleEnabled, String(autoThrottleLink ?? ''), String(autoThrottleFloor ?? '')])
+  const exclusionsSnap = () => snapshot([globalExcludes, labelExclusionsEnabled])
+  const anomalySnap = () => snapshot([anomalyEnabled, anomalySensitivityDefault, anomalyNotifyMinSeverity])
+  let savedThrottle = $state(null)
+  let savedExclusions = $state(null)
+  let savedAnomaly = $state(null)
+  let throttleDirty = $derived(savedThrottle !== null && throttleSnap() !== savedThrottle)
+  let exclusionsDirty = $derived(savedExclusions !== null && exclusionsSnap() !== savedExclusions)
+  let anomalyDirty = $derived(savedAnomaly !== null && anomalySnap() !== savedAnomaly)
+  let anyUnsaved = $derived(!readOnly && (throttleDirty || exclusionsDirty || anomalyDirty))
+  let unsavedSections = $derived([
+    throttleDirty && 'Upload Throttling',
+    exclusionsDirty && 'Backup Exclusions',
+    anomalyDirty && 'Anomaly Detection',
+  ].filter(Boolean))
+
+  // Where a held link was going, while "Leave without saving?" is open.
+  let leaveTarget = $state('')
+  function leaveSettings() {
+    const target = leaveTarget
+    leaveTarget = ''
+    savedThrottle = savedExclusions = savedAnomaly = null
+    window.location.hash = target
+  }
   let anomalySaving = $state(false)
 
   // Replication enable/disable (feature visibility)
@@ -993,6 +1055,7 @@
         anomaly_sensitivity_default: anomalySensitivityDefault,
         anomaly_notify_min_severity: anomalyNotifyMinSeverity,
       })
+      savedAnomaly = anomalySnap()
       showToast('Anomaly detection settings saved', 'success')
       setAnomalyEnabled(anomalyEnabled)
     } catch (e) {
@@ -1053,7 +1116,21 @@
     }
   }
 
+  $effect(() => {
+    const stopUnload = guardUnload(() => anyUnsaved)
+    const stopLinks = guardLinks('/settings', () => anyUnsaved, (hash) => { leaveTarget = hash })
+    return () => { stopUnload(); stopLinks() }
+  })
 </script>
+
+{#snippet unsavedNote(dirty, key)}
+  <span id="unsaved-{key}" role="status" class="text-xs font-medium text-warning flex items-center gap-1.5">
+    {#if dirty}
+      <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      Unsaved changes
+    {/if}
+  </span>
+{/snippet}
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />
 
@@ -1083,7 +1160,7 @@
           aria-selected={activeTab === tab.id}
           aria-controls={activeTab === tab.id ? `settings-panel-${tab.id}` : undefined}
           tabindex={activeTab === tab.id ? 0 : -1}
-          onclick={() => activeTab = tab.id}
+          onclick={() => selectTab(tab.id)}
           onkeydown={onTabKeydown}
           class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap {activeTab === tab.id ? 'border-vault text-vault-text' : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -1092,11 +1169,11 @@
       {/each}
     </div>
 
-    <div role="tabpanel" id="settings-panel-{activeTab}" aria-labelledby="settings-tab-{activeTab}" tabindex="0" class="space-y-6">
+    <div role="tabpanel" id="settings-panel-{activeTab}" aria-labelledby="settings-tab-{activeTab}" tabindex="0" class="settings-panel space-y-6" style="--sticky-offset: {activeTab === 'general' ? stickyHeight + 12 : 0}px">
       <!-- === GENERAL TAB === -->
       {#if activeTab === 'general'}
       <!-- Jump-to bar (#208 / E11) — sticky so long-tab settings stay reachable -->
-      <div class="sticky top-0 z-10 -mx-1 px-1 py-2 bg-surface/95 backdrop-blur border-b border-border flex flex-wrap items-center gap-2">
+      <div use:measureHeight class="sticky top-0 z-10 -mx-1 px-1 py-2 bg-surface/95 backdrop-blur border-b border-border flex flex-wrap items-center gap-2">
         <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted shrink-0">Jump to</span>
         {#each generalSections.filter(s => s.id !== 'set-database' || databaseInfo) as sec (sec.id)}
           <button type="button" onclick={() => jumpToSetting(sec.id)}
@@ -1107,7 +1184,7 @@
       </div>
 
       <!-- Appearance / Theme -->
-      <div id="set-appearance" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-appearance" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Appearance</h2>
         </div>
@@ -1165,7 +1242,7 @@
       </div>
 
       <!-- Backup Targets -->
-      <div id="set-targets" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-targets" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Backup Targets</h2>
           <p class="text-xs text-text-muted mt-0.5">Select what Vault should monitor. Disabled items won't show as unprotected on Dashboard or Recovery.</p>
@@ -1275,7 +1352,7 @@
       </div>
 
       <!-- Retry policy -->
-      <div id="set-retry" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-retry" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-retry-policy-heading"><span id="settings-retry-policy-heading">Retry Policy</span> <Tooltip label="Retry Policy" text="Failed runs are retried in the background with the delays below before being marked permanently failed. Individual jobs can override these defaults." /></h2>
           <p class="text-xs text-text-muted mt-0.5">How failed runs are retried before being marked permanently failed.</p>
@@ -1295,7 +1372,7 @@
                 bind:value={retryMax}
                 disabled={readOnly}
                 placeholder="2"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
               />
             </div>
             <div>
@@ -1324,7 +1401,7 @@
       </div>
 
       <!-- Adaptive Upload Throttling (issue #237) -->
-      <div id="set-throttle" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-throttle" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-upload-throttling-heading"><span id="settings-upload-throttling-heading">Upload Throttling</span> <Tooltip label="Upload Throttling" text="When enabled, Vault continuously measures non-Vault traffic on the network link and slows its own uploads so streaming services like Plex or Jellyfin keep their bandwidth. Vault speeds back up when the link goes quiet." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Automatically yield upload bandwidth to other services using your internet link.</p>
@@ -1353,7 +1430,7 @@
               </div>
               <input id="throttle-link" type="number" min="1" bind:value={autoThrottleLink} disabled={readOnly}
                 placeholder="e.g. 40"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11" />
             </div>
             <div>
               <div class="block text-sm font-medium text-text-muted mb-1.5">
@@ -1362,13 +1439,14 @@
               </div>
               <input id="throttle-floor" type="number" min="0" bind:value={autoThrottleFloor} disabled={readOnly}
                 placeholder="5"
-                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11" />
             </div>
           </div>
           <p class="text-xs text-text-dim">Applies to uploads to network destinations (SFTP, SMB, NFS, WebDAV, S3). Per-destination bandwidth caps still apply — the stricter limit wins. Takes effect within a few seconds of saving, no restart needed.</p>
           {#if !readOnly}
-          <div class="flex justify-end">
-            <button onclick={saveAutoThrottle} disabled={autoThrottleSaving}
+          <div class="flex flex-wrap items-center justify-end gap-3">
+            {@render unsavedNote(throttleDirty, 'throttle')}
+            <button onclick={saveAutoThrottle} disabled={autoThrottleSaving} aria-describedby={throttleDirty ? 'unsaved-throttle' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
               {#if autoThrottleSaving}<InlineSpinner />{/if}
               Save Upload Throttling
@@ -1379,7 +1457,7 @@
       </div>
 
       <!-- Backup Exclusions (issues #257, #258) -->
-      <div id="set-exclusions" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-exclusions" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-backup-exclusions-heading"><span id="settings-backup-exclusions-heading">Backup Exclusions</span> <Tooltip label="Backup Exclusions" text="Paths listed here are skipped by every folder and container backup, so you don't have to repeat them on each job. They are added to whatever a job already excludes rather than replacing it." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Skip the same paths everywhere, without editing every job.</p>
@@ -1414,8 +1492,9 @@
             </button>
           </div>
           {#if !readOnly}
-          <div class="flex justify-end">
-            <button onclick={saveExclusions} disabled={exclusionsSaving}
+          <div class="flex flex-wrap items-center justify-end gap-3">
+            {@render unsavedNote(exclusionsDirty, 'exclusions')}
+            <button onclick={saveExclusions} disabled={exclusionsSaving} aria-describedby={exclusionsDirty ? 'unsaved-exclusions' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
               {#if exclusionsSaving}<InlineSpinner />{/if}
               Save Exclusions
@@ -1426,7 +1505,7 @@
       </div>
 
       <!-- Dedup Compaction Threshold -->
-      <div id="set-dedup" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-dedup" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-dedup-compaction-heading"><span id="settings-dedup-compaction-heading">Dedup Compaction</span> <Tooltip label="Dedup Compaction" text="With deduplication on, deleting backups leaves gaps inside storage files. 'Run cleanup' rewrites a file once this % of it is wasted space, reclaiming it. Recommended: 50. Lower reclaims sooner (more rewriting); 100 never compacts." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Threshold for repacking partially-dead dedup packs during cleanup.</p>
@@ -1450,7 +1529,7 @@
                 bind:value={compactionThreshold}
                 disabled={readOnly}
                 placeholder="50"
-                class="w-24 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-24 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
               />
               <span class="text-sm text-text-muted">%</span>
               {#if !readOnly}
@@ -1470,7 +1549,7 @@
       </div>
 
       <!-- Anomaly Detection -->
-      <div id="set-anomaly" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-anomaly" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-anomaly-detection-heading"><span id="settings-anomaly-detection-heading">Anomaly Detection</span> <Tooltip label="Anomaly Detection" text="Vault monitors backup size, duration, and reliability for statistical anomalies. Anomalies are surfaced in the Anomalies page and optionally sent as notifications." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Automatically detect unusual patterns in backup behaviour.</p>
@@ -1505,7 +1584,7 @@
               id="anomaly-sensitivity"
               bind:value={anomalySensitivityDefault}
               disabled={readOnly}
-              class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
             >
               <option value="strict">Strict – flag small deviations</option>
               <option value="balanced">Balanced – moderate threshold (recommended)</option>
@@ -1522,7 +1601,7 @@
               id="anomaly-notify-severity"
               bind:value={anomalyNotifyMinSeverity}
               disabled={readOnly}
-              class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
             >
               <option value="info">Info – notify on all anomalies</option>
               <option value="warning">Warning – skip informational</option>
@@ -1531,10 +1610,12 @@
           </div>
           <!-- Save button -->
           {#if !readOnly}
-          <div class="px-5 py-3 flex justify-end">
+          <div class="px-5 py-3 flex flex-wrap items-center justify-end gap-3">
+            {@render unsavedNote(anomalyDirty, 'anomaly')}
             <button
               onclick={saveAnomalySettings}
               disabled={anomalySaving}
+              aria-describedby={anomalyDirty ? 'unsaved-anomaly' : undefined}
               class="px-4 py-2 text-sm font-semibold text-on-vault bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {#if anomalySaving}
@@ -1578,7 +1659,7 @@
       {/if}
 
       <!-- Storage & Daemon Logging -->
-      <div id="set-logging" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-logging" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-logging-heading"><span id="settings-logging-heading">Logging</span> <Tooltip label="Logging" text="Configure log output verbosity for the Vault daemon and storage adapters." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Control daemon log levels and verbose storage tracing.</p>
@@ -1596,7 +1677,7 @@
                 bind:value={logLevel}
                 onchange={saveLogLevel}
                 disabled={readOnly || logLevelSaving}
-                class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault disabled:opacity-60 cursor-pointer"
+                class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault disabled:opacity-60 cursor-pointer max-lg:min-h-11"
               >
                 <option value="debug">Debug</option>
                 <option value="info">Informational</option>
@@ -1681,7 +1762,7 @@
                 bind:value={discordWebhookUrl}
                 disabled={readOnly}
                 placeholder="https://discord.com/api/webhooks/..."
-                class="flex-1 text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="flex-1 text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
               />
               <button
                 onclick={testDiscord}
@@ -1706,7 +1787,7 @@
               id="discord-notify"
               bind:value={discordNotifyOn}
               disabled={readOnly}
-              class="text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+              class="text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
             >
               <option value="always">All backups (success & failure)</option>
               <option value="failure">Failures only</option>
@@ -1730,7 +1811,7 @@
                 bind:value={discordBotUsername}
                 disabled={readOnly}
                 placeholder="Vault"
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
               />
             </div>
             <div>
@@ -1744,7 +1825,7 @@
                 bind:value={discordBotAvatarUrl}
                 disabled={readOnly}
                 placeholder="https://example.com/avatar.png"
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
               />
             </div>
           </div>
@@ -1761,7 +1842,7 @@
                 bind:value={discordMentionRoleId}
                 disabled={readOnly}
                 placeholder="123456789012345678"
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
               />
             </div>
             <div>
@@ -1773,7 +1854,7 @@
                 id="discord-mention-on"
                 bind:value={discordMentionOn}
                 disabled={readOnly}
-                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
               >
                 <option value="never">Never</option>
                 <option value="failure">Failures only</option>
@@ -1868,14 +1949,17 @@
                   <p class="text-xs text-warning">Existing encrypted backups will still require the old passphrase to restore.</p>
                   <div>
                     <label for="change-pass" class="block text-xs font-medium text-text-muted mb-1">New passphrase</label>
-                    <input id="change-pass" type="password" autocomplete="new-password" bind:value={changeNewPass} placeholder="Enter new passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                    <PasswordInput id="change-pass" bind:value={changeNewPass} bind:show={showChangePassphrase} toggleLabel="Show passphrases" class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
                   </div>
                   <div>
                     <label for="change-confirm" class="block text-xs font-medium text-text-muted mb-1">Confirm new passphrase</label>
-                    <input id="change-confirm" type="password" autocomplete="new-password" bind:value={changeConfirmPass} placeholder="Confirm new passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                    <PasswordInput id="change-confirm" bind:value={changeConfirmPass} bind:show={showChangePassphrase} toggleLabel="Show passphrases"
+                      aria-invalid={changeMismatch ? 'true' : undefined}
+                      aria-describedby={changeMismatch ? 'change-mismatch' : undefined}
+                      class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface border {changeMismatch ? 'border-danger' : 'border-border'} rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
                   </div>
-                  {#if changeNewPass && changeConfirmPass && changeNewPass !== changeConfirmPass}
-                    <p class="text-xs text-danger">Passphrases do not match</p>
+                  {#if changeMismatch}
+                    <p id="change-mismatch" class="text-xs text-danger">Passphrases do not match</p>
                   {/if}
                   <div class="flex items-center gap-2">
                     <button onclick={saveChangePassphrase} disabled={encSaving || !changeNewPass || !changeConfirmPass || changeNewPass !== changeConfirmPass} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
@@ -1908,19 +1992,17 @@
               <div class="space-y-3 max-w-sm">
                 <div>
                   <label for="enc-pass" class="block text-xs font-medium text-text-muted mb-1">Passphrase</label>
-                  <div class="relative">
-                    <input id="enc-pass" type={showEncPassphrase ? 'text' : 'password'} autocomplete="new-password" bind:value={encPassphrase} placeholder="Enter encryption passphrase" class="w-full px-3 py-2 pr-10 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
-                    <button type="button" onclick={() => showEncPassphrase = !showEncPassphrase} class="absolute right-2 top-1/2 -translate-y-1/2 text-text-dim hover:text-text p-1" aria-label="Toggle passphrase visibility">
-                      <svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={showEncPassphrase ? 'M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21' : 'M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z'} /></svg>
-                    </button>
-                  </div>
+                  <PasswordInput id="enc-pass" bind:value={encPassphrase} bind:show={showEncPassphrase} toggleLabel="Show passphrases" class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
                 </div>
                 <div>
                   <label for="enc-confirm" class="block text-xs font-medium text-text-muted mb-1">Confirm Passphrase</label>
-                  <input id="enc-confirm" type={showEncPassphrase ? 'text' : 'password'} bind:value={encConfirm} placeholder="Confirm passphrase" class="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
+                  <PasswordInput id="enc-confirm" bind:value={encConfirm} bind:show={showEncPassphrase} toggleLabel="Show passphrases"
+                    aria-invalid={encMismatch ? 'true' : undefined}
+                    aria-describedby={encMismatch ? 'enc-mismatch' : undefined}
+                    class="w-full px-3 py-2 max-lg:min-h-11 text-sm bg-surface border {encMismatch ? 'border-danger' : 'border-border'} rounded-lg text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
                 </div>
-                {#if encPassphrase && encConfirm && encPassphrase !== encConfirm}
-                  <p class="text-xs text-danger">Passphrases do not match</p>
+                {#if encMismatch}
+                  <p id="enc-mismatch" class="text-xs text-danger">Passphrases do not match</p>
                 {/if}
                 <button onclick={saveEncryption} disabled={encSaving || !encPassphrase || !encConfirm || encPassphrase !== encConfirm} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-on-vault hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                   {#if encSaving}<InlineSpinner />{/if}
@@ -2066,7 +2148,7 @@
       {#if activeTab === 'general'}
 
       <!-- Docker Appdata Path -->
-      <div id="set-appdata" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-appdata" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text" aria-labelledby="settings-docker-appdata-path-heading"><span id="settings-docker-appdata-path-heading">Docker Appdata Path</span> <Tooltip label="Docker Appdata Path" text="The root directory where Docker containers store their configuration and runtime data on Unraid. Container backup jobs derive included mounts from this path by default." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Where Docker container configurations live. Non-appdata mounts are excluded from container backups by default to prevent accidental multi-terabyte media backups.</p>
@@ -2155,14 +2237,14 @@
       {/if}
 
       <!-- History Retention -->
-      <div id="set-history" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-history" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 id="set-history-heading" class="text-base font-semibold text-text">History Retention</h2>
           <p class="text-xs text-text-muted mt-0.5">How long to keep backup/restore run history. Recoverable backups are not affected - they follow each job's own retention.</p>
         </div>
         <div class="p-5 flex items-center gap-2">
           <select bind:value={historyRetention} disabled={readOnly} aria-labelledby="set-history-heading"
-            class="px-2.5 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
+            class="px-2.5 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer max-lg:min-h-11">
             <option value="30">30 days</option>
             <option value="90">90 days</option>
             <option value="180">6 months</option>
@@ -2181,7 +2263,7 @@
       </div>
 
       <!-- Server Info -->
-      <div id="set-server" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-server" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Server Information</h2>
         </div>
@@ -2367,7 +2449,7 @@
 
       <!-- Database Location -->
       {#if databaseInfo}
-      <div id="set-database" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-database" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Database Location</h2>
           <p class="text-xs text-text-muted mt-0.5">Vault's database tracks your jobs, schedules, and restore points. The storage mode determines where this data is written.</p>
@@ -2443,7 +2525,7 @@
       {/if}
 
       <!-- Memory (issue #500) -->
-      <div id="set-memory" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-memory" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border flex items-start justify-between gap-3">
           <div>
             <h2 class="text-base font-semibold text-text" aria-labelledby="settings-memory-heading"><span id="settings-memory-heading">Memory</span> <Tooltip label="Memory" text="Live memory and garbage-collector figures for the Vault daemon. Use them to size the memory limit and to spot regressions." /></h2>
@@ -2498,7 +2580,7 @@
                 bind:value={memoryLimitMb}
                 disabled={readOnly}
                 placeholder="0"
-                class="w-full sm:w-48 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
+                class="w-full sm:w-48 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault max-lg:min-h-11"
               />
               {#if !readOnly}
               <button
@@ -2538,7 +2620,7 @@
       </div>
 
       <!-- Diagnostics -->
-      <div id="set-diagnostics" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-diagnostics" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Diagnostics</h2>
         </div>
@@ -2565,12 +2647,12 @@
       </div>
 
       <!-- About Vault – single merged card -->
-      <div id="set-about" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-about" class="bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">About Vault</h2>
         </div>
         <div class="p-5">
-          <p class="text-sm text-text-muted leading-relaxed">
+          <p class="text-sm text-text-muted leading-relaxed max-w-[70ch]">
             Vault is a backup and restore manager for Unraid servers. It automates scheduled, encrypted backups of Docker containers, libvirt VMs, plugins, ZFS datasets, and arbitrary folders (including the Unraid flash drive) to a wide range of storage destinations &mdash; local paths, SFTP, SMB/CIFS, NFS, WebDAV, and S3-compatible object stores (AWS S3, Backblaze B2, MinIO, Cloudflare R2, Wasabi).
           </p>
 
@@ -2633,3 +2715,22 @@
   onconfirm={doRemoveEncryption}
   oncancel={() => { confirmEncRemoval = false }}
 />
+
+<ConfirmDialog
+  show={!!leaveTarget}
+  title="Leave without saving?"
+  message={`Unsaved changes in ${unsavedSections.join(', ')} will be lost.`}
+  confirmLabel="Leave"
+  cancelLabel="Stay"
+  variant="warning"
+  onconfirm={leaveSettings}
+  oncancel={() => { leaveTarget = '' }}
+/>
+
+<style>
+  /* Fields and cards stop clear of the sticky Jump-to bar when focused or
+     jumped to (#715). The offset is the bar's measured height. */
+  .settings-panel :global(:is(input, select, textarea, button, summary, [id^='set-'])) {
+    scroll-margin-top: var(--sticky-offset, 0px);
+  }
+</style>

@@ -489,7 +489,7 @@ for (const viewport of VIEWPORTS) {
       await expect(h1(frame, 'Backup Jobs')).toBeVisible();
       await settledFrameHeight(page);
       await page.evaluate(() => window.scrollTo(0, 250));
-      await frame.getByRole('button', { name: /run backup now/i }).first().click();
+      await frame.getByRole('button', { name: /^Run Now:/ }).first().click();
       // A queued run is good news: a polite status toast (#685).
       const toast = frame.getByRole('status').filter({ has: frame.locator('[data-toast-icon]') });
       await expect(toast).toBeVisible();
