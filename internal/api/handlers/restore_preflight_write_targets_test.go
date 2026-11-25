@@ -108,7 +108,6 @@ func (f writeTargetsFixture) call(handler http.HandlerFunc, path, body string) *
 	return w
 }
 
-
 func decodeWriteTargets(t *testing.T, w *httptest.ResponseRecorder) []restorerequest.ItemWriteTargets {
 	t.Helper()
 	if w.Code != http.StatusOK {

@@ -1548,10 +1548,8 @@ func (h *JobHandler) parseRestoreScope(w http.ResponseWriter, r *http.Request) (
 // one goroutine; when the budget ends the reply goes out at once, even if a
 // review ignores cancellation, and every unfinished item reports cancelled.
 func (h *JobHandler) previewWriteTargets(ctx context.Context, scope restoreScope) []restorerequest.ItemWriteTargets {
+	// A ZFS dataset destination selects only ZFS items, so none reach here.
 	destination := scope.opts.Destination
-	if scope.opts.DestinationIsZFS {
-		destination = ""
-	}
 	unavailable := func(target restoreTarget, reason string) restorerequest.ItemWriteTargets {
 		return restorerequest.ItemWriteTargets{Name: target.Name, Type: target.Type, Status: "unavailable",
 			Reason: reason, WriteTargets: []restorerequest.WriteTarget{}}
@@ -1572,13 +1570,13 @@ func (h *JobHandler) previewWriteTargets(ctx context.Context, scope restoreScope
 	defer cancel()
 	// Buffered so the reviewing goroutine never blocks after the reply.
 	results := make(chan restorerequest.ItemWriteTargets, reviewed)
+	review := previewWriteTarget
 	go func() {
-		defer close(results)
 		for _, target := range selected[:reviewed] {
 			if ctx.Err() != nil {
 				return
 			}
-			results <- previewWriteTarget(ctx, h.db, h.runner, restorerequest.Input{
+			results <- review(ctx, h.db, h.runner, restorerequest.Input{
 				JobID: scope.job.ID, RestorePointID: scope.point.ID, ItemName: target.Name, ItemType: target.Type, Destination: destination,
 			}, scope.passphrase)
 		}
@@ -1587,10 +1585,7 @@ func (h *JobHandler) previewWriteTargets(ctx context.Context, scope restoreScope
 collect:
 	for done < reviewed {
 		select {
-		case item, ok := <-results:
-			if !ok {
-				break collect
-			}
+		case item := <-results:
 			items[done] = item
 			done++
 		case <-ctx.Done():
