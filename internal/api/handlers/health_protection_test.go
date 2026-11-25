@@ -69,6 +69,10 @@ func TestHealthSummary_OutOfDateItems(t *testing.T) {
 	if got := stringList(t, resp, "pending_keys"); !slices.Equal(got, []string{"container:new"}) {
 		t.Errorf("pending_keys = %v", got)
 	}
+	last, ok := resp["item_last_backup_at"].(map[string]any)
+	if !ok || len(last) != 2 || last["container:stale"] == nil || last["container:new"] != nil {
+		t.Errorf("item_last_backup_at = %v, want fresh and stale only", resp["item_last_backup_at"])
+	}
 }
 
 func TestHealthSummary_OutOfDateItemsLowerTheScore(t *testing.T) {

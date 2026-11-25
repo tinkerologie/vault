@@ -102,6 +102,16 @@ func (c *protectionClassifier) newestBackup(key string) (time.Time, bool) {
 	return at, ok
 }
 
+// newestBackups maps each backed-up item to its newest Restore Point, so a
+// page can say "Last backup 9 days ago" for an out-of-date item.
+func (c *protectionClassifier) newestBackups() map[string]time.Time {
+	out := make(map[string]time.Time, len(c.newest))
+	for key, at := range c.newest {
+		out[key] = at.UTC()
+	}
+	return out
+}
+
 // keys returns the sorted keys of every item in the given state.
 func (c *protectionClassifier) keys(include func(key string) bool) []string {
 	out := []string{}

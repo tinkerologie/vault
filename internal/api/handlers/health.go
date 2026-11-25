@@ -267,6 +267,7 @@ func (h *HealthHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		"out_of_date_keys":      outOfDateKeys,
 		"out_of_date_items":     len(outOfDateKeys),
 		"up_to_date_items":      upToDateItems,
+		"item_last_backup_at":   classes.newestBackups(),
 		"server_key_at_risk":    h.serverKeyAtRisk(jobs),
 		"protection_pct":        protectionPct,
 		"success_rate":          successRate,
