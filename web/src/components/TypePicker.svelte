@@ -140,6 +140,7 @@
       loading = false
     }
   })
+  const uid = $props.id()
 </script>
 
 {#if loading}
@@ -149,8 +150,8 @@
   </div>
 {:else}
   <div class="space-y-3">
-    <p class="text-sm text-text-muted">Select one or more backup types.</p>
-    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+    <p id="{uid}-hint" class="text-sm text-text-muted">Select one or more backup types.</p>
+    <div role="group" aria-label="Backup types" aria-describedby="{uid}-hint" class="grid grid-cols-2 sm:grid-cols-3 gap-3">
       {#each backupTypes as type (type.id)}
         {@const sel = isSelected(type.id)}
         {@const count = getCount(type.id)}
@@ -158,6 +159,7 @@
         <button
           type="button"
           onclick={() => toggle(type.id)}
+          aria-pressed={sel}
           disabled={!avail && count === 0}
           class="relative flex flex-col items-start gap-2 p-4 rounded-xl border-2 transition-all text-left
             {sel ? `${type.colorBorder} ${type.colorBg}` : 'border-border hover:border-border-hover bg-surface-3/50'}

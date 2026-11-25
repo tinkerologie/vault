@@ -36,6 +36,26 @@
 
   let singleTab = $derived(allowedTypes && allowedTypes.length === 1 ? allowedTypes[0] : null)
 
+  const uid = $props.id()
+
+  // Tabs pattern: arrow keys, Home and End move between the visible tabs and
+  // select the one they land on (#683).
+  function onTabKeydown(e) {
+    const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End']
+    if (!keys.includes(e.key)) return
+    const tabs = [...e.currentTarget.querySelectorAll('[role="tab"]')]
+    if (tabs.length === 0) return
+    const current = tabs.findIndex((t) => t.getAttribute('aria-selected') === 'true')
+    let next
+    if (e.key === 'ArrowLeft') next = (current - 1 + tabs.length) % tabs.length
+    else if (e.key === 'ArrowRight') next = (current + 1) % tabs.length
+    else if (e.key === 'Home') next = 0
+    else next = tabs.length - 1
+    e.preventDefault()
+    tabs[next].click()
+    tabs[next].focus()
+  }
+
   // Map allowedTypes IDs to item_type values used in the selected map
   function itemTypeAllowed(item) {
     if (item.item_type === 'container') return allowedTypes.includes('containers')
@@ -395,12 +415,18 @@
   {:else}
     <!-- Tabs (hidden when single type selected) -->
     {#if !singleTab}
-    <div class="flex items-center gap-1 border-b border-border overflow-x-auto">
+    <div class="flex items-center gap-1 border-b border-border">
+    <div role="tablist" aria-label="Item types" tabindex="-1" onkeydown={onTabKeydown} class="flex items-center gap-1 overflow-x-auto min-w-0">
       {#if containersAvailable && isTabAllowed('containers')}
         <button
           type="button"
+          role="tab"
+          id="{uid}-tab-containers"
+          aria-selected={activeTab === 'containers'}
+          aria-controls="{uid}-panel"
+          tabindex={activeTab === 'containers' ? 0 : -1}
           onclick={() => (activeTab = 'containers')}
-          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'containers'
+          class="px-4 py-2.5 max-lg:min-h-11 text-sm font-medium border-b-2 transition-colors {activeTab === 'containers'
             ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -415,8 +441,13 @@
       {#if vmsAvailable && isTabAllowed('vms')}
         <button
           type="button"
+          role="tab"
+          id="{uid}-tab-vms"
+          aria-selected={activeTab === 'vms'}
+          aria-controls="{uid}-panel"
+          tabindex={activeTab === 'vms' ? 0 : -1}
           onclick={() => (activeTab = 'vms')}
-          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'vms'
+          class="px-4 py-2.5 max-lg:min-h-11 text-sm font-medium border-b-2 transition-colors {activeTab === 'vms'
             ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -431,8 +462,13 @@
       {#if foldersAvailable && isTabAllowed('folders')}
         <button
           type="button"
+          role="tab"
+          id="{uid}-tab-folders"
+          aria-selected={activeTab === 'folders'}
+          aria-controls="{uid}-panel"
+          tabindex={activeTab === 'folders' ? 0 : -1}
           onclick={() => (activeTab = 'folders')}
-          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'folders'
+          class="px-4 py-2.5 max-lg:min-h-11 text-sm font-medium border-b-2 transition-colors {activeTab === 'folders'
             ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -447,8 +483,13 @@
       {#if flashItems.length > 0 && isTabAllowed('flash')}
         <button
           type="button"
+          role="tab"
+          id="{uid}-tab-flash"
+          aria-selected={activeTab === 'flash'}
+          aria-controls="{uid}-panel"
+          tabindex={activeTab === 'flash' ? 0 : -1}
           onclick={() => (activeTab = 'flash')}
-          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'flash'
+          class="px-4 py-2.5 max-lg:min-h-11 text-sm font-medium border-b-2 transition-colors {activeTab === 'flash'
             ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -463,8 +504,13 @@
       {#if pluginsAvailable && isTabAllowed('plugins')}
         <button
           type="button"
+          role="tab"
+          id="{uid}-tab-plugins"
+          aria-selected={activeTab === 'plugins'}
+          aria-controls="{uid}-panel"
+          tabindex={activeTab === 'plugins' ? 0 : -1}
           onclick={() => (activeTab = 'plugins')}
-          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'plugins'
+          class="px-4 py-2.5 max-lg:min-h-11 text-sm font-medium border-b-2 transition-colors {activeTab === 'plugins'
             ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -479,8 +525,13 @@
       {#if zfsAvailable && isTabAllowed('zfs')}
         <button
           type="button"
+          role="tab"
+          id="{uid}-tab-zfs"
+          aria-selected={activeTab === 'zfs'}
+          aria-controls="{uid}-panel"
+          tabindex={activeTab === 'zfs' ? 0 : -1}
           onclick={() => (activeTab = 'zfs')}
-          class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {activeTab === 'zfs'
+          class="px-4 py-2.5 max-lg:min-h-11 text-sm font-medium border-b-2 transition-colors {activeTab === 'zfs'
             ? 'border-vault text-vault-text'
             : 'border-transparent text-text-muted hover:text-text'}"
         >
@@ -492,14 +543,18 @@
           {/if}
         </button>
       {/if}
+    </div>
       <div class="flex-1"></div>
-      <span class="text-xs text-text-muted pr-2">{selectedCount} selected</span>
+      <span class="text-xs text-text-muted pr-2 shrink-0">{selectedCount} selected</span>
     </div>
     {/if}
+
+    <div id="{uid}-panel" role={singleTab ? undefined : 'tabpanel'} aria-labelledby={singleTab ? undefined : `${uid}-tab-${activeTab}`} class="space-y-3">
 
     <!-- Search -->
     <div class="relative">
       <svg
+        aria-hidden="true"
         class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-dim"
         fill="none"
         viewBox="0 0 24 24"
@@ -512,10 +567,11 @@
         /></svg
       >
       <input
-        type="text"
+        type="search"
+        aria-label="Search {activeTab === 'containers' ? 'containers' : activeTab === 'vms' ? 'VMs' : activeTab === 'plugins' ? 'plugins' : activeTab === 'flash' ? 'flash drive' : activeTab === 'zfs' ? 'ZFS datasets' : 'folders'}"
         bind:value={search}
         placeholder="Search {activeTab === 'containers' ? 'containers' : activeTab === 'vms' ? 'VMs' : activeTab === 'plugins' ? 'plugins' : activeTab === 'flash' ? 'flash drive' : activeTab === 'zfs' ? 'ZFS datasets' : 'folders'}..."
-        class="w-full bg-surface-3 border border-border rounded-lg pl-10 pr-3 py-2 text-sm text-text placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50"
+        class="w-full bg-surface-3 border border-border rounded-lg pl-10 pr-3 py-2 max-lg:min-h-11 text-sm text-text placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-vault/50"
       />
     </div>
 
@@ -536,6 +592,7 @@
             {@const sel = isSelected('container', container.name)}
             <button
               type="button"
+              aria-pressed={sel}
               onclick={() => toggle('container', container)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
                 ? 'border-vault/50 bg-vault/5'
@@ -593,6 +650,7 @@
             {@const sel = isSelected('vm', vm.name)}
             <button
               type="button"
+              aria-pressed={sel}
               onclick={() => toggle('vm', vm)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
                 ? 'border-vault/50 bg-vault/5'
@@ -673,6 +731,7 @@
             {@const sel = isSelected('folder', folder.name)}
             <button
               type="button"
+              aria-pressed={sel}
               onclick={() => toggle('folder', folder)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
                 ? 'border-vault/50 bg-vault/5'
@@ -725,6 +784,7 @@
             {@const sel = isSelected('folder', flash.name)}
             <button
               type="button"
+              aria-pressed={sel}
               onclick={() => toggle('folder', flash)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
                 ? 'border-vault/50 bg-vault/5'
@@ -769,6 +829,7 @@
             {@const sel = isSelected('plugin', plugin.name)}
             <button
               type="button"
+              aria-pressed={sel}
               onclick={() => toggle('plugin', plugin)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
                 ? 'border-vault/50 bg-vault/5'
@@ -815,6 +876,7 @@
             {@const sel = isSelected('zfs', dataset.name)}
             <button
               type="button"
+              aria-pressed={sel}
               onclick={() => toggle('zfs', dataset)}
               class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left {sel
                 ? 'border-vault/50 bg-vault/5'
@@ -858,6 +920,8 @@
         {activeTab === 'containers' ? 'Docker service not available' : activeTab === 'vms' ? 'Virtual Machine service not available' : activeTab === 'plugins' ? 'Plugins not available' : activeTab === 'flash' ? 'Flash drive not available' : activeTab === 'zfs' ? 'ZFS is not available' : 'No folders available'}
       </p>
     {/if}
+
+    </div>
 
     <!-- Selected Items Order -->
     {#if selectedCount > 0}
