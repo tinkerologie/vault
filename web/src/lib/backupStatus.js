@@ -301,10 +301,10 @@ export function attentionHref({ failures = 0, unprotected = 0, outOfDate = 0, re
 }
 
 /** The Needs attention tile's caption. Claims full protection only when it's true. */
-export function attentionCaption({ failures = 0, unprotected = 0, other = 0, fullyProtected = false, known = true }) {
-  const others = other > 0 ? ` · ${plural(other, 'other issue')}` : ''
+export function attentionCaption({ failures = 0, unprotected = 0, outOfDate = 0, other = 0, fullyProtected = false, known = true }) {
+  const others = (outOfDate > 0 ? ` · ${outOfDate} out of date` : '') + (other > 0 ? ` · ${plural(other, 'other issue')}` : '')
   if (failures > 0 || unprotected > 0) return `${plural(failures, 'recent failure')} · ${unprotected} unprotected${others}`
-  if (other > 0) return `No failures${others}`
+  if (others) return `No failures${others}`
   if (!known) return 'No failures · protection unknown'
   return fullyProtected ? 'No failures · all items protected' : 'No failures'
 }

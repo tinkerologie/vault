@@ -378,6 +378,8 @@ describe('attentionCaption with other issues', () => {
   it.each([
     [{ other: 2 }, 'No failures · 2 other issues'],
     [{ failures: 1, other: 1 }, '1 recent failure · 0 unprotected · 1 other issue'],
+    [{ outOfDate: 3 }, 'No failures · 3 out of date'],
+    [{ unprotected: 1, outOfDate: 2, other: 1 }, '0 recent failures · 1 unprotected · 2 out of date · 1 other issue'],
   ])('%j', (input, expected) => {
     expect(attentionCaption(input)).toBe(expected)
   })
