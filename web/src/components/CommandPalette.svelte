@@ -2,7 +2,7 @@
   import { api, isReplicaMode } from '../lib/api.js'
   import { navigate } from '../lib/router.svelte.js'
   import { formatDate } from '../lib/utils.js'
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import Modal from './Modal.svelte'
   import Toast from './Toast.svelte'
   import { shortcutModifier } from '../lib/shortcuts.js'
@@ -212,10 +212,16 @@
     return out
   })
 
-  // Reset selection when results change
+  // A new search starts at the top. Items that finish loading are added after
+  // the pages, so they leave the active option where it was; a shorter list
+  // only pulls the selection back inside it.
   $effect(() => {
-    filteredCommands.length
+    query
     selectedIndex = 0
+  })
+  $effect(() => {
+    const last = Math.max(0, filteredCommands.length - 1)
+    if (untrack(() => selectedIndex) > last) selectedIndex = last
   })
 
   // The listbox scrolls on its own, so keep the active option in view.

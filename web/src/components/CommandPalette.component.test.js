@@ -96,6 +96,29 @@ describe('CommandPalette', () => {
     expect(scrolled.at(-1)).toBe(options()[1].id)
   })
 
+  it('keeps the active option when items finish loading', async () => {
+    let release
+    api.listContainers.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ items: [{ name: 'late' }] }) }))
+    render(CommandPalette, { show: true, pages: PAGES })
+    await tick()
+    await fireEvent.keyDown(input(), { key: 'ArrowDown' })
+    await tick()
+    const before = input().getAttribute('aria-activedescendant')
+    release()
+    await flush()
+    expect(options().some((o) => o.textContent.includes('late'))).toBe(true)
+    expect(input().getAttribute('aria-activedescendant')).toBe(before)
+    expect(document.getElementById(before).textContent).toContain('Go to Jobs')
+  })
+
+  it('starts again at the top when the search changes', async () => {
+    await open()
+    await fireEvent.keyDown(input(), { key: 'ArrowDown' })
+    await fireEvent.input(input(), { target: { value: 'go' } })
+    await tick()
+    expect(input().getAttribute('aria-activedescendant')).toBe(options()[0].id)
+  })
+
   it('announces how many results match', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     await open()
